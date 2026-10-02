@@ -1,0 +1,23 @@
+{
+  "name": "selfimpulse-protocol",
+  "version": "0.10.7",
+  "private": true,
+  "type": "module",
+  "description": "SelfImpulse Protocol v0.10.7 (Scope-Bounded Delegation, Designated Authority, Authority Provenance, Rotation Possession \u0026 Revocation Authority) \u2014 the fixed device-to-device communication + trust substrate under the SelfImpulse agent OS: selective sharing, signature-verified selfimpulseing, hybrid-PQ content transfer, authorization/reputation/revocation for humans and AI agents.",
+  "main": "src/server/selfimpulse.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node src/server/selfimpulse.js",
+    "test": "node test/selftest.js"
+  },
+  "dependencies": {
+    "@hpke/core": "^1.9.0",
+    "@noble/post-quantum": "^0.7.1",
+    "express": "^4.19.2",
+    "helmet": "^8.0.0",
+    "socket.io": "^4.7.5",
+    "socket.io-client": "^4.7.5"
+  }
+}

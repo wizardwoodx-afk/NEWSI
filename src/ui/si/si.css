@@ -1,0 +1,1491 @@
+/* ===========================================================
+   SELFIMPULSE — "SI". The minimal dark system.
+
+   This sheet is the NEW design language, and it is deliberately separate
+   from src/ui/vh.css. vh.css is owned by another stream and still styles the
+   interior of every screen (cards, tables, composers, the graph canvas). It is
+   NOT imported here, and nothing here edits it. Instead this file:
+
+     1. defines its own token block, namespaced --si-*, so a value here can
+        never collide with a --s1 / --line / --accent token the old sheet owns;
+     2. styles ONLY the application chrome — the rail, the top bar, the main
+        column, the window controls, the toast layer, the new-mission action;
+     3. re-roots the classes the doors already render (.si-screen, .si-card,
+        .btn, .pill, ...) so the door interiors inherit the new ground and
+        the accent without every screen file being touched — those screen
+        files are owned by another stream.
+
+   WHY A NEW SHEET RATHER THAN A REWRITE
+   ------------------------------------
+   The old sheet is 561 lines of hand-tuned rules that several probe suites
+   grep by literal text. Replacing it would break suites this file's author
+   does not own. Overlaying it is additive and reversible: delete this file
+   and the app is exactly what it was.
+
+   COLOUR DISCIPLINE
+   -----------------
+   Three families and no others:
+     black/grey  — ground, surfaces, borders, text (the ~90% of the UI)
+     deep teal   — the ONE accent: primary action, active state, focus
+     status      — ok / warn / bad, for dots and state words ONLY
+   Nothing is ever filled with a status colour, and nothing else is ever
+   allowed a hue. Contrast ratios are computed, not eyeballed; each is
+   written next to the token it belongs to.
+   =========================================================== */
+
+/* ---------- 1. TOKENS ---------- */
+/* The --si-* namespace is the point of this sheet: nothing here can collide
+   with, or be clobbered by, a token in the legacy sheet. */
+:root {
+  /* Ground. --si-bg is true black, matching the inline boot block in
+     index.html exactly, so there is no flash between first paint and the
+     stylesheet arriving. */
+  --si-bg: #14100C;
+  --si-bg-2: #0E0C09;
+  --si-surface: #1E1913;
+  --si-surface-2: #26201A;
+  --si-line: #2E2820;
+  --si-line-2: #3B332A;
+
+  /* Ink, three steps: body, secondary, tertiary/disabled.
+     --si-text   on --si-bg   16.9:1  (AAA)
+     --si-text-2 on --si-bg    7.3:1  (AAA)
+     --si-text-3 on --si-bg    3.6:1  (non-text / large only) */
+  --si-text: #F2EFE7;
+  --si-text-2: #B3A893;
+  --si-text-3: #8A8073;
+
+  /* DEEP TEAL — the one accent (the house hue, 177deg cyan-leaning teal —
+     see the sheet header in vh.css and the two gate suites that pin it).
+     Dark enough to read as a structural fill rather than a highlight, which is
+     what keeps a black UI calm. The token family keeps its historical
+     --si-accent* names; the VALUE is the house teal in both sheets now, so
+     si.css and vh.css are provably one hue (probe/theme.test.ts measures the
+     hue pair; tools/contrast-check.mjs measures the ratios).
+     --si-accent-ink on --si-accent   ~11.3:1  (AAA)
+     --si-accent-2 vs --si-accent     a perceptible step, not a jump.
+     --si-accent-3 on --si-bg          3.9:1 — clears the 3:1 WCAG 2.2
+                                       SC 2.4.11 needs of a focus indicator. */
+  --si-accent: #E89A55;
+  --si-accent-2: #C97B33;
+  --si-accent-3: #F2A45C;
+  --si-accent-ink: #221207;
+  --si-accent-soft: rgba(242, 164, 92, 0.16);
+  /* Ink that sits on a SOFT accent fill (pills, checked cards) — pale on the
+     dark ground, deep on paper, so the same rule never needs a theme fork. */
+  --si-ink-soft: #E8B06A;
+  /* Hover step for secondary controls, and the scrollbar-thumb hover. */
+  --si-hover: #26211A;
+  --si-line-3: #4A4238;
+
+  /* Status. Dots and state words only — never a control fill. */
+  --si-ok: #A8C079;
+  --si-warn: #E5B94E;
+  --si-bad: #C77A66;
+
+  /* Tertiary ink alias used by the sign-in door. It was referenced but never
+     declared, so those paragraphs silently INHERITED their parent colour
+     instead of reading as a hint — a defect that only showed up as "why does
+     this note look like body text". Declared once, themed below. */
+  --si-text-dim: #9C927F;
+
+  /* Radii: 10 for cards, 8 for controls. */
+  --si-r-card: 10px;
+  --si-r-ctl: 8px;
+
+  /* Spacing: one scale, every value a multiple of 4. */
+  --si-1: 4px;
+  --si-2: 8px;
+  --si-3: 12px;
+  --si-4: 16px;
+  --si-6: 24px;
+  --si-8: 32px;
+
+  /* Type. A system UI stack — no webfont request, no FOUT, and it inherits
+     the OS's own accessibility text scaling for free. Each stack is written on
+     ONE line on purpose: a value wrapped across lines is legal CSS, but
+     esbuild's CSS parser reads the newline as the end of the declaration and
+     fails the entire sheet with two syntax errors. */
+  --si-font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --si-mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+
+  /* Motion: 120–160ms ease-out. Fast enough to read as a state change rather
+     than an animation, slow enough to be legible. */
+  --si-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --si-t: 140ms var(--si-ease);
+
+  --si-brand-mark: url("data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 48 48%22 width=%2248%22 height=%2248%22 role=%22img%22 aria-label=%22SelfImpulse%22> <title>SelfImpulse</title> <rect x=%221.5%22 y=%221.5%22 width=%2245%22 height=%2245%22 rx=%2211%22 fill=%22%230F1113%22 stroke=%22%23262A31%22 stroke-width=%221.5%22/> <path d=%22M 8 31.5 L 14.5 31.5 L 19.5 13.5 L 25.5 35.5 L 30.5 24.5%22 fill=%22none%22 stroke=%22%23C9A45C%22 stroke-width=%224.4%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/> <circle cx=%2235.5%22 cy=%2224.5%22 r=%222.5%22 fill=%22%23C9A45C%22/> <circle cx=%2241.5%22 cy=%2224.5%22 r=%221.4%22 fill=%22%233F7D6E%22 fill-opacity=%220.72%22/> </svg>");
+  --si-rail: 220px;
+  --si-topbar: 52px;
+  --si-content: 1180px;
+}
+
+/* ---------- 1b. LIGHT THEME — "Paper" ---------- */
+/* The shell is themed, not half-themed: every colour token above is re-issued
+   for paper here, on the SAME [data-theme] attribute the legacy sheet scopes
+   to, so the rail, the top bar, the doors and every overscroll area flip
+   together. Before this block existed the shell stayed true-black while the
+   door interiors flipped to paper — white headings on white cards, black
+   rails around a white page. Specificity note: [data-theme=...] ties with
+   :root at (0,1,0), so this block is deliberately declared AFTER it and wins
+   on source order. Geometry (radii, spacing, rails) is shared — only colour
+   is themed, which is what keeps the two finishes one design. */
+[data-theme="light"] {
+  color-scheme: light;
+  /* Warm paper ground — not screen white — with white cards raised above it,
+     mirroring the dark theme's true-black + lifted-surface logic. */
+  --si-bg: #E6E5DD;
+  --si-bg-2: #DCDBD1;
+  --si-surface: #F1F0E9;
+  --si-surface-2: #E9E8E0;
+  --si-line: rgba(18, 20, 24, 0.12);
+  --si-line-2: rgba(18, 20, 24, 0.2);
+  /* Ink: the same three steps the dark theme uses, inverted in depth. */
+  --si-text: #15181A;   /* 16.1:1 on paper (AAA) */
+  --si-text-2: #4A5157; /*  7.7:1 on paper (AAA) */
+  --si-text-3: #5B6269; /*  5.1:1 on paper (AA)  */
+  --si-text-dim: #565c64;
+  /* The SAME 177deg accent, pulled deep for paper: a control filled with it
+     carries white ink at ~6.1:1, and it reads as text on paper at ~5.7:1. */
+  --si-accent: #0a6e6a;
+  --si-accent-2: #0c8480;
+  --si-accent-3: #0a6e6a;
+  --si-accent-ink: #ffffff;
+  --si-accent-soft: rgba(10, 110, 106, 0.1);
+  --si-ink-soft: #0a6e6a;
+  --si-hover: #DEDDD4;
+  --si-line-3: #c7c6bf;
+  /* Status, on paper — the dark theme's values are too light to read here. */
+  --si-ok: #55682f;
+  --si-warn: #8a5c1f;
+  --si-bad: #9c3b2d;
+}
+
+/* ---------- 2. RESET / GROUND ---------- */
+/* The ground is set on html+body, not only on a wrapper, so the scroll gutter
+   and any overscroll area are black too. A black app with a white overscroll
+   flash is the most common way a dark UI gives itself away. */
+html,
+body,
+#root {
+  height: 100%;
+}
+html {
+  background: var(--si-bg);
+}
+body {
+  margin: 0;
+  /* The legacy sheet sets overflow:hidden on body and sizes .app to 100vh.
+     That is kept: the shell owns its own scroll regions, so the window itself
+     never scrolls and the rail never travels. */
+  overflow: hidden;
+  background: var(--si-bg);
+  color: var(--si-text);
+  font: 400 13px/1.55 var(--si-font);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+b,
+strong {
+  font-weight: 600;
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ---------- 3. FOCUS (non-negotiable) ---------- */
+/* One visible ring, on every interactive element, everywhere. `:focus-visible`
+   rather than `:focus` so a mouse click leaves no ring behind, but a keyboard
+   user always gets one. --si-accent-3 against black is 3.9:1, clearing the 3:1
+   WCAG 2.2 SC 2.4.11 requires of a focus indicator; the 2px offset keeps the
+   ring off the control's own edge so it stays visible against an accent fill.
+
+   The element list is written WITHOUT :where() on purpose. :where() contributes
+   ZERO specificity, so this rule would have tied with the legacy sheet's bare
+   `:focus-visible{outline:2px solid var(--accent)}` and lost on source order —
+   silently reverting to the legacy ring and losing this rule's offset and
+   radius. Naming the elements gives this rule (0,1,1), which beats the legacy
+   (0,1,0) no matter which file loads first. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--si-accent-3);
+  outline-offset: 2px;
+  border-radius: var(--si-r-ctl);
+}
+/* The rail's active item paints a left border that would otherwise sit under
+   the ring and clip it. */
+.si-nav-item:focus-visible {
+  outline-offset: -2px;
+}
+
+/* ---------- 4. SHELL FRAME ---------- */
+.si-app {
+  display: grid;
+  grid-template-columns: var(--si-rail) minmax(0, 1fr);
+  height: 100vh;
+  background: var(--si-bg);
+  color: var(--si-text);
+  font-size: 13px;
+  /* THE FONT RESET. The legacy sheet defines --display as "Instrument Serif"
+     and then paints it onto bare h1/h2/h3 plus a dozen class selectors
+     (.contract-ledger h3, .hud h3, .kpis div b, .empty h3, .hero h1 em, ...).
+     Enumerating them here would be a losing game: the next person to add a
+     heading in a door would silently reintroduce a serif face into a UI whose
+     entire identity is one sans stack.
+
+     So the token itself is re-pointed at the app root. Every rule that reads
+     var(--display) — legacy or future — resolves to the system stack from here
+     down, because custom properties inherit and this declaration is closer to
+     the element than the :root one in the legacy sheet. One line replaces all
+     of them, and it cannot drift.
+
+     --font is re-pointed for the same reason: the legacy body rule sets it to
+     "Geist" at 14.5px, and it is defined on <body>, which is the PARENT of this
+     element, so a value declared here wins for the whole application. */
+  --display: var(--si-font);
+  --font: var(--si-font);
+  font-family: var(--si-font);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+/* ---------- 5. LEFT RAIL ---------- */
+.si-rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--si-bg-2);
+  border-right: 1px solid var(--si-line);
+  padding: var(--si-4) var(--si-3) var(--si-3);
+  gap: var(--si-3);
+}
+
+/* Wordmark: a 3px accent square beside the name, tracked out. */
+.si-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--si-2);
+  padding: 0 var(--si-2) var(--si-1);
+}
+/* The rail mark is the APPLICATION ICON, at 26px — the same geometry that
+   ships in src-tauri/icons, inlined here as a data URI so the rail cannot
+   render before its own artwork arrives. It replaced a 3px accent-coloured bar,
+   which was a placeholder that had begun to read as the brand. */
+.si-brand-mark {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  background: var(--si-brand-mark) center / contain no-repeat;
+}
+.si-brand b {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--si-text);
+}
+.si-brand small {
+  display: block;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--si-text-3);
+  margin-top: 3px;
+}
+
+/* PRIMARY ACTION — the only accent fill in the rail. */
+.si-new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--si-2);
+  width: 100%;
+  padding: 9px var(--si-3);
+  border-radius: var(--si-r-ctl);
+  background: var(--si-accent);
+  color: var(--si-accent-ink);
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid var(--si-accent-2);
+  transition: background var(--si-t), border-color var(--si-t);
+}
+.si-new:hover {
+  background: var(--si-accent-2);
+  border-color: var(--si-accent-3);
+}
+.si-new:active {
+  background: var(--si-accent);
+}
+
+.si-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+}
+.si-nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--si-3);
+  width: 100%;
+  padding: 7px var(--si-2) 7px 10px;
+  border-radius: var(--si-r-ctl);
+  border-left: 2px solid transparent;
+  color: var(--si-text-2);
+  font-size: 13px;
+  transition: background var(--si-t), color var(--si-t);
+}
+.si-nav-item:hover {
+  background: var(--si-surface-2);
+  color: var(--si-text);
+}
+/* Active = surface fill + an accent left rule + primary ink. Three signals, so
+   the current door is never carried by colour alone. */
+.si-nav-item[aria-current="page"] {
+  background: var(--si-surface-2);
+  border-left-color: var(--si-accent-3);
+  color: var(--si-text);
+  font-weight: 600;
+}
+.si-nav-ic {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  background: currentColor;
+  -webkit-mask: var(--m) center / contain no-repeat;
+  mask: var(--m) center / contain no-repeat;
+  opacity: 0.75;
+}
+.si-nav-item[aria-current="page"] .si-nav-ic {
+  opacity: 1;
+}
+
+/* Rail footer: provider status, then the owner. */
+.si-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--si-2);
+  padding-top: var(--si-3);
+  border-top: 1px solid var(--si-line);
+}
+.si-provider {
+  display: flex;
+  align-items: center;
+  gap: var(--si-2);
+  width: 100%;
+  padding: var(--si-2);
+  border-radius: var(--si-r-ctl);
+  color: var(--si-text-2);
+  transition: background var(--si-t);
+}
+.si-provider:hover {
+  background: var(--si-surface-2);
+}
+.si-led {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--si-warn);
+}
+.si-led.ok {
+  background: var(--si-ok);
+}
+.si-led.warn {
+  background: var(--si-warn);
+}
+.si-provider-label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--si-text-2);
+}
+.si-provider small {
+  margin-left: auto;
+  font-family: var(--si-mono);
+  font-size: 10px;
+  color: var(--si-text-3);
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.si-owner {
+  display: flex;
+  align-items: center;
+  gap: var(--si-2);
+  width: 100%;
+  padding: var(--si-2);
+  border-radius: var(--si-r-ctl);
+  transition: background var(--si-t);
+}
+.si-owner:hover {
+  background: var(--si-surface-2);
+}
+.si-av {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--si-accent);
+  color: var(--si-accent-ink);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+.si-owner-txt {
+  min-width: 0;
+  text-align: left;
+}
+.si-owner b {
+  display: block;
+  font-size: 12px;
+  color: var(--si-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.si-owner small {
+  display: block;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--si-text-3);
+  margin-top: 1px;
+}
+
+/* ---------- 6. TOP BAR ---------- */
+.si-top {
+  height: var(--si-topbar);
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--si-3);
+  /* The right pad reserves the window-control strip (3 x 46px). The OS title
+     bar is disabled, so those controls paint over this row. */
+  padding: 0 152px 0 var(--si-6);
+  border-bottom: 1px solid var(--si-line);
+  background: var(--si-bg);
+}
+.si-top h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--si-text);
+}
+.si-chips {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--si-2);
+  min-width: 0;
+}
+.si-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--si-line);
+  background: var(--si-surface);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--si-text-2);
+  white-space: nowrap;
+}
+.si-chip b {
+  font-family: var(--si-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--si-text);
+  font-weight: 600;
+}
+
+/* ---------- 7. MAIN ---------- */
+/* The right-hand grid cell: top bar above, scroll region below. It is a
+   separate element from .si-main because the top bar is a SIBLING of the
+   scroll area, not a child of it — one flex column, so the bar never scrolls
+   away and the content never bleeds under it. */
+.si-main-wrap {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  background: var(--si-bg);
+}
+.si-main {
+  min-width: 0;
+  /* Fill the wrap's height (100vh − the fixed .si-top sibling). Without an
+     explicit flex the row sized to content, and EVERY height below it —
+     .si-scroll → .si-content → .graph-wrap — inherited auto, which is how a
+     canvas with `flex:1` ended up exactly its min-height (420) instead of
+     the remaining viewport. Definite top, definite chain, graphs fill. */
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  background: var(--si-bg);
+}
+/* The skip link focuses this region, so it must not draw a ring of its own —
+   the ring belongs on the control the user pressed. */
+.si-main:focus {
+  outline: none;
+}
+.si-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  width: 100%;
+  /* The content column is a flex item of this scroller, so it inherits a
+     definite height to fill — the chain .graph-wrap's `flex:1` needs. With
+     `min-height:min-content` it still grows past the viewport and scrolls
+     normally when a door is taller than the window. */
+  display: flex;
+  flex-direction: column;
+}
+.si-content {
+  max-width: var(--si-content);
+  margin: 0 auto;
+  padding: var(--si-6);
+  width: 100%;
+  /* THE GRAPH HEIGHT CHAIN. The doors' 3D views (Work + Memory) render
+     .graph-wrap with `flex:1` and position:absolute children — they only have
+     height if an ANCESTOR gives them a definite box. The old shell supplied
+     that from a fixed-height column; here the chain ended at an auto-height
+     block, so .graph-wrap collapsed to 1132×0 and BOTH 3D graphs drew into
+     nothing while every probe stayed green (they read source, not layout).
+     .si-content now fills the shell's scroller as a flex column, and
+     .graph-wrap takes every pixel its header leaves over. min-height floors
+     the graph so a short window still shows a real canvas, and 100% resolves
+     because .si-scroll is a definite-height flex item. */
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: min-content;
+}
+.si-content .graph-wrap {
+  flex: 1 1 auto;
+  min-height: 420px;
+}
+
+/* ---------- 8. SKIP LINK ---------- */
+/* Hidden until focused, then pinned top-left. It is the FIRST focusable
+   element in the document, so a keyboard user reaches the content without
+   tabbing the whole rail. */
+.si-skip {
+  position: absolute;
+  left: var(--si-2);
+  top: -60px;
+  z-index: 100;
+  padding: var(--si-2) var(--si-4);
+  border-radius: var(--si-r-ctl);
+  background: var(--si-accent);
+  color: var(--si-accent-ink);
+  font-size: 13px;
+  font-weight: 600;
+  transition: top var(--si-t);
+}
+.si-skip:focus {
+  top: var(--si-2);
+}
+
+/* ---------- 9. WINDOW CONTROLS ---------- */
+/* Monochrome, top-right. The drag strip spans the top bar so the frameless
+   window can still be moved; the buttons sit above it, so a click on one is
+   never swallowed as a drag. */
+.si-winctl {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 2147483000;
+  display: flex;
+  align-items: stretch;
+  pointer-events: none;
+  height: var(--si-topbar);
+}
+.si-winctl-drag {
+  position: fixed;
+  top: 0;
+  left: var(--si-rail);
+  right: 138px;
+  height: var(--si-topbar);
+  z-index: 0;
+  pointer-events: auto;
+  cursor: default;
+}
+.si-winctl-btns {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+  display: flex;
+  height: var(--si-topbar);
+}
+.si-winctl-btns button {
+  width: 46px;
+  height: var(--si-topbar);
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--si-text-2);
+  transition: background var(--si-t), color var(--si-t);
+}
+.si-winctl-btns button:hover {
+  background: var(--si-surface-2);
+  color: var(--si-text);
+}
+.si-winctl-btns button.is-close:hover {
+  background: var(--si-bad);
+  color: #fff;
+}
+
+/* ---------- 10. TOASTS ---------- */
+/* The toast component (src/panels/Toast.tsx) renders a fixed container with
+   no ARIA and is owned elsewhere, so the live region is supplied here as a
+   wrapper instead — a screen reader announces the text without a file this
+   stream does not own being edited. */
+.si-toasts {
+  position: fixed;
+  right: var(--si-6);
+  bottom: var(--si-8);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: var(--si-2);
+  pointer-events: none;
+}
+.si-toasts > div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--si-2);
+}
+
+/* ---------- 11. DOOR INTERIORS ---------- */
+/* The screens keep the classes they already render. These rules re-root them
+   onto the new ground, so the doors inherit the redesign without every screen
+   file being edited. Every rule is scoped under .si-content so nothing leaks
+   sideways into the chrome above. */
+.si-content .si-screen {
+  max-width: none;
+  padding: 0;
+  gap: var(--si-4);
+  color: var(--si-text);
+}
+.si-content h1,
+.si-content h2,
+.si-content h3 {
+  color: var(--si-text);
+  letter-spacing: -0.01em;
+}
+.si-content h2 {
+  font-size: 20px;
+  font-weight: 600;
+}
+.si-content h3 {
+  font-size: 15px;
+  font-weight: 600;
+}
+.si-content p,
+.si-content li,
+.si-content .sub,
+.si-content .si-sub {
+  color: var(--si-text-2);
+}
+.si-content strong {
+  color: var(--si-text);
+}
+/* Cards: --si-surface, a hairline, and a 10px radius. */
+.si-content .si-card,
+.si-content .card,
+.si-content .panel-page {
+  background: var(--si-surface);
+  border: 1px solid var(--si-line);
+  border-radius: var(--si-r-card);
+  box-shadow: none;
+  color: var(--si-text);
+}
+.si-content .si-note {
+  background: var(--si-surface-2);
+  border: 1px solid var(--si-line);
+  border-radius: var(--si-r-ctl);
+  color: var(--si-text-2);
+}
+.si-content .si-mono,
+.si-content .mono {
+  font-family: var(--si-mono);
+  color: var(--si-text-2);
+}
+/* Secondary text and metadata. */
+.si-content .muted,
+.si-content .faint,
+.si-content .si-hint,
+.si-content .hint,
+.si-content .meta,
+.si-content .d {
+  color: var(--si-text-3);
+}
+/* An empty state is an honest first-run surface, not a failed load: a dashed
+   rule says "nothing here yet" where a solid border would say "panel". */
+.si-content .empty {
+  border: 1px dashed var(--si-line-2);
+  border-radius: var(--si-r-card);
+  color: var(--si-text-2);
+}
+/* Inputs. */
+.si-content .input,
+.si-content input[type="text"],
+.si-content input[type="password"],
+.si-content input[type="url"],
+.si-content textarea,
+.si-content select {
+  background: var(--si-bg-2);
+  border: 1px solid var(--si-line-2);
+  border-radius: var(--si-r-ctl);
+  color: var(--si-text);
+  font: inherit;
+  padding: 8px 10px;
+  width: 100%;
+}
+.si-content .input:focus,
+.si-content input:focus,
+.si-content textarea:focus,
+.si-content select:focus {
+  border-color: var(--si-accent-3);
+}
+.si-content .input::placeholder,
+.si-content input::placeholder,
+.si-content textarea::placeholder {
+  color: var(--si-text-3);
+}
+
+/* Buttons inside the doors. The deep teal accent is the primary; everything
+   else is a grey surface with a hairline. */
+.si-content .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 15px;
+  border-radius: var(--si-r-ctl);
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--si-surface-2);
+  border: 1px solid var(--si-line-2);
+  color: var(--si-text);
+  transition: background var(--si-t), border-color var(--si-t);
+}
+.si-content .btn:hover {
+  background: var(--si-hover);
+  border-color: var(--si-accent-3);
+}
+.si-content .btn.primary,
+.si-content .si-btn-primary {
+  background: var(--si-accent);
+  border-color: var(--si-accent-2);
+  color: var(--si-accent-ink);
+}
+.si-content .btn.primary:hover,
+.si-content .si-btn-primary:hover {
+  background: var(--si-accent-2);
+  border-color: var(--si-accent-3);
+}
+.si-content .btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--si-text-2);
+}
+.si-content .btn.ghost:hover {
+  background: var(--si-surface-2);
+  color: var(--si-text);
+}
+.si-content .btn.sm {
+  padding: 6px 11px;
+  font-size: 12px;
+}
+.si-content .si-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border-radius: var(--si-r-ctl);
+  border: 1px solid var(--si-line-2);
+  background: var(--si-surface-2);
+  color: var(--si-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.si-content .si-btn:hover {
+  border-color: var(--si-accent-3);
+}
+/* Pills and tags. */
+.si-content .pill,
+.si-content .chip,
+.si-content .mode-tag,
+.si-content .agent-tag {
+  border-radius: 999px;
+  background: var(--si-surface-2);
+  border: 1px solid var(--si-line);
+  color: var(--si-text-2);
+  font-size: 11px;
+}
+/* A status pill keeps its hue as TEXT on a soft fill, never a solid block: a
+   saturated status chip would compete with the accent primary for attention. */
+.si-content .pill.ok {
+  background: rgba(74, 124, 89, 0.16);
+  color: #7fae8c;
+  border-color: transparent;
+}
+.si-content .pill.warn {
+  /* 20.1 — was #c9a55c on rgba(154,123,52,.16): a saturated amber that read as
+     GOLD on black and pulled the eye harder than the accent primary button. On
+     the Memory door this pill ("on device · no vault") was the loudest thing
+     on screen, which is wrong — it is a passive status note, not a call to
+     action. Muted to the same register as .pill.ok and .pill.bad. */
+  background: rgba(154, 123, 52, 0.14);
+  color: #a8967a;
+  border-color: transparent;
+}
+.si-content .pill.bad {
+  background: rgba(162, 73, 60, 0.16);
+  color: #d08a7f;
+  border-color: transparent;
+}
+/* Ledger rows and key-value grids. */
+.si-content .si-kv,
+.si-content .ledger,
+.si-content .klist {
+  border-color: var(--si-line);
+  color: var(--si-text-2);
+}
+.si-content .si-kv dt,
+.si-content .lbl {
+  color: var(--si-text-3);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.si-content .si-kv dd,
+.si-content .row .t {
+  color: var(--si-text);
+}
+/* Radio / checkbox cards. */
+.si-content .si-radio,
+.si-content .si-check {
+  background: var(--si-surface);
+  border: 1px solid var(--si-line);
+  border-radius: var(--si-r-ctl);
+}
+.si-content .si-radio:hover,
+.si-content .si-check:hover {
+  background: var(--si-surface-2);
+}
+.si-content .si-radio:has(input:checked),
+.si-content .si-check:has(input:checked) {
+  border-color: var(--si-accent-3);
+  background: var(--si-accent-soft);
+}
+/* Switches: the ON state is the accent fill, and it belongs on the TRACK.
+   20.1 — this targeted `.si-content .switch`, which after the geometry fix is a
+   101px-wide inline-flex ROW containing both the toggle and the word
+   "Remember". Filling that element with accent drew a solid bar behind the
+   whole control rather than a toggle. The fill goes on the track element alone. */
+.si-content .switch > i {
+  background: var(--si-surface-2);
+  box-shadow: inset 0 0 0 1px var(--si-line-2);
+}
+.si-content .switch:has(input:checked) > i {
+  background: var(--si-accent);
+  box-shadow: inset 0 0 0 1px var(--si-accent-3);
+}
+.si-content .switch:has(input:focus-visible) > i {
+  box-shadow: 0 0 0 2px var(--si-accent-3), inset 0 0 0 1px var(--si-line-2);
+}
+/* Scrollbars: visible enough to grab, quiet enough to ignore. */
+.si-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.si-scroll::-webkit-scrollbar-thumb {
+  background: var(--si-line-2);
+  border-radius: 999px;
+  border: 3px solid var(--si-bg);
+}
+.si-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--si-line-3);
+}
+.si-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------- 12. LEGACY OVERRIDES (specificity) ---------- */
+/* The legacy sheet is imported by src/main.tsx and therefore lands AFTER this
+   one in the bundle, so on equal specificity IT wins. A few of its rules are
+   bare element/descendant selectors and would otherwise survive the redesign
+   and break the new identity:
+
+     vh.css  h1{font-family:var(--display)}          -> serif titles
+     vh.css  .composer .send{background:var(--accent)} -> a TEAL send button
+     vh.css  .top{height:60px;...}                    -> a SECOND top bar
+
+   That last one is a real duplication, not a cosmetic one. Several doors open
+   with their own <header className="top"> carrying an <h2> — Steward renders
+   "Captain" there. The shell now owns the page title, so that legacy bar is
+   flattened to a plain block: it loses its fixed height, its own border and
+   its 24px serif heading, and its content reads as the first row of the door
+   instead of a second title bar stacked on the real one.
+
+   Everything here is scoped under .si-content so nothing outside the doors is
+   touched. The send button matters most of the three: it is the most looked-at
+   control in the application. vh.css paints it with the BRIGHT legacy teal
+   (--accent, #5BD4CE); the shell re-paints it with the DEEP accent fill so it
+   sits in the same register as the rail's primary. Same hue, two depths — the
+   interface never shows two different accent colours at once. */
+.si-content .top {
+  height: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--si-2) var(--si-3);
+  padding: 0 0 var(--si-4);
+  border-bottom: 1px solid var(--si-line);
+  margin-bottom: var(--si-4);
+}
+.si-content .top h2 {
+  font-size: 20px;
+  font-weight: 600;
+}
+.si-content .top .right {
+  margin: 0 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--si-2);
+}
+.si-content .top .sub {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--si-text-2);
+}
+/* Doors carry their own <div className="scroll"> and, in some cases, a .wrap
+   with its own max-width. The shell now owns both the scroll region and the
+   width, so those legacy wrappers are neutralised rather than left to fight
+   it: a nested scroller inside a scroller is unreachable by keyboard and
+   loses the wheel on some trackpads, and a second max-width cancels the
+   1180px measure. The door content keeps its own padding. */
+.si-content .scroll {
+  flex: none;
+  overflow: visible;
+  min-height: 0;
+}
+.si-content .wrap,
+.si-content .deck-wrap {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+}
+.si-content h1,
+.si-content h2,
+.si-content h3,
+.si-content .contract-ledger h3,
+.si-content .empty h3,
+.si-content .hud h3,
+.si-content .kpis div b {
+  font-family: var(--si-font);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.si-content h1 {
+  font-size: 22px;
+}
+.si-content .composer {
+  background: var(--si-surface);
+  border: 1px solid var(--si-line-2);
+  border-radius: var(--si-r-card);
+  box-shadow: none;
+}
+.si-content .composer textarea,
+.si-content .composer .input {
+  background: transparent;
+  border: 0;
+  color: var(--si-text);
+}
+.si-content .composer .send {
+  background: var(--si-accent);
+  color: var(--si-accent-ink);
+  border-radius: var(--si-r-ctl);
+  box-shadow: none;
+}
+.si-content .composer .send:hover:not(:disabled) {
+  background: var(--si-accent-2);
+}
+.si-content .composer .send:disabled {
+  opacity: 0.4;
+}
+/* The composer's arrow glyph is a mask tinted by `currentColor`; on the deep
+   accent fill it must be the pale accent ink, not the bright legacy ink. */
+.si-content .composer .send .ic {
+  background: var(--si-accent-ink);
+  opacity: 1;
+}
+/* Any other legacy accent fill that survives inside a door becomes the deep
+   accent fill, so the interface shows exactly ONE accent hue in ONE depth. */
+.si-content .btn.primary,
+.si-content .pill.accent,
+.si-content .si-btn-primary {
+  background: var(--si-accent);
+  color: var(--si-accent-ink);
+  border-color: var(--si-accent-2);
+}
+.si-content .pill.accent {
+  background: var(--si-accent-soft);
+  color: var(--si-ink-soft);
+  border-color: transparent;
+}
+
+/* ---------- 13. NARROW VIEWPORTS ---------- */
+/* Desktop-first, but it must not overflow a 380px phone. Below 900px the rail
+   collapses to an icon strip and the labels are hidden from SIGHT only — they
+   stay in the accessibility tree via the title/aria-label, so the nav is still
+   navigable by screen reader and by keyboard. */
+@media (max-width: 900px) {
+  .si-app {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+  .si-brand b,
+  .si-brand small,
+  .si-new span,
+  .si-nav-item .si-nav-label,
+  .si-provider-label,
+  .si-provider small,
+  .si-owner-txt {
+    display: none;
+  }
+  .si-brand {
+    justify-content: center;
+    padding: 0 0 var(--si-1);
+  }
+  .si-new {
+    padding: 9px 0;
+  }
+  .si-new::after {
+    content: "+";
+    font-size: 16px;
+    line-height: 1;
+  }
+  .si-nav-item {
+    justify-content: center;
+    padding: 9px 0;
+  }
+  .si-nav-n {
+    display: none;
+  }
+  .si-provider,
+  .si-owner {
+    justify-content: center;
+  }
+  .si-winctl-drag {
+    left: 56px;
+  }
+  .si-top {
+    padding: 0 152px 0 var(--si-4);
+  }
+  .si-content {
+    padding: var(--si-4);
+  }
+  /* Wrap rather than overflow: a long unbroken token (a URL, a digest) is the
+     usual cause of a horizontal scrollbar on a phone. */
+  .si-content .si-mono,
+  .si-content .mono,
+  .si-content .dig {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+}
+
+/* ---------- 14b. LIGHT THEME — status ink on paper ---------- */
+/* The dark theme's status pill text (#7fae8c / #a8967a / #d08a7f) is a LIGHT
+   ink tuned for a black ground; on paper it measures ~2.2–2.7:1 and washes
+   out. Same hues, deeper ink — so a pill means the same thing in either
+   finish, and the token flip above is enough for everything else. */
+[data-theme="light"] .si-content .pill.ok {
+  background: rgba(85, 104, 47, 0.1);
+  color: var(--si-ok);
+}
+[data-theme="light"] .si-content .pill.warn {
+  background: rgba(138, 92, 31, 0.1);
+  color: var(--si-warn);
+}
+[data-theme="light"] .si-content .pill.bad {
+  background: rgba(156, 59, 45, 0.1);
+  color: var(--si-bad);
+}
+
+/* ---------- 15. REDUCED MOTION ---------- */
+/* Honour the OS setting. Animations and transitions are removed, not merely
+   shortened — a vestibular trigger should not be animated at all. The legacy
+   sheet ships the same rule; this one is repeated here so the guarantee holds
+   even if that file is removed. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── ProviderConnect — the sign-in door, in the house design language ─────────
+   The screen arrived structurally complete but visually unstyled (its author
+   correctly left styling to whoever owns the design system). These rules are
+   deliberately minimal and reuse the `--si-*` tokens so the sign-in surface
+   cannot drift from the shell around it: same black ground, same grey panels,
+   the deep teal accent for the one action worth taking on a screen.
+
+   The truth block is the reason this is not decoration: it is where the app
+   states that a consumer subscription is not API access, so it gets the most
+   legible treatment on the page rather than being styled down to a footnote. */
+
+.pc-root {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 720px;
+}
+
+.pc-head h2 {
+  margin: 0 0 6px;
+  font-size: 20px;
+  font-weight: 650;
+  color: var(--si-text);
+  letter-spacing: -0.01em;
+}
+
+.pc-head p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--si-text-2);
+  max-width: 62ch;
+}
+
+.pc-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--si-surface);
+  border: 1px solid var(--si-line);
+  border-left: 2px solid var(--si-accent-3);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--si-text-2);
+}
+
+.pc-summary strong {
+  color: var(--si-text);
+  font-weight: 600;
+}
+
+.pc-truth {
+  padding: 14px 16px;
+  background: var(--si-surface);
+  border: 1px solid var(--si-line);
+  border-left: 2px solid var(--si-warn);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--si-text-2);
+}
+
+.pc-truth strong {
+  color: var(--si-text);
+}
+
+.pc-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+  background: var(--si-surface);
+  border: 1px solid var(--si-line);
+  border-radius: 10px;
+}
+
+.pc-card h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--si-text);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.pc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pc-field label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--si-text-3);
+}
+
+.pc-input {
+  width: 100%;
+  padding: 9px 11px;
+  background: var(--si-bg-2);
+  border: 1px solid var(--si-line-2);
+  border-radius: 8px;
+  color: var(--si-text);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.pc-input::placeholder {
+  color: var(--si-text-3);
+}
+
+.pc-input:focus-visible {
+  outline: 2px solid var(--si-accent-3);
+  outline-offset: 1px;
+  border-color: var(--si-accent-3);
+}
+
+.pc-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--si-text-3);
+}
+
+.pc-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.pc-btn {
+  padding: 9px 16px;
+  background: var(--si-surface-2);
+  border: 1px solid var(--si-line-2);
+  border-radius: 8px;
+  color: var(--si-text);
+  font-size: 13px;
+  font-weight: 550;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 140ms ease-out, border-color 140ms ease-out;
+}
+
+.pc-btn:hover:not(:disabled) {
+  background: var(--si-line);
+  border-color: var(--si-accent-3);
+}
+
+.pc-btn:focus-visible {
+  outline: 2px solid var(--si-accent-3);
+  outline-offset: 2px;
+}
+
+.pc-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pc-btn--primary {
+  background: var(--si-accent);
+  border-color: var(--si-accent-2);
+  color: var(--si-accent-ink);
+}
+
+.pc-btn--primary:hover:not(:disabled) {
+  background: var(--si-accent-2);
+  border-color: var(--si-accent-3);
+}
+
+.pc-btn--danger {
+  background: transparent;
+  border-color: var(--si-line-2);
+  color: var(--si-bad);
+}
+
+.pc-btn--danger:hover:not(:disabled) {
+  border-color: var(--si-bad);
+  background: rgba(162, 73, 60, 0.1);
+}
+
+/* ---- Antigravity: the optional local-runtime provider ----
+   A visually quieter treatment than the credential cards on purpose. It is a
+   local runtime, not a key, and it should not read as one — the dashed border
+   marks it as "something running on this machine" rather than "a secret you
+   pasted". The switch is a real checkbox with a visible focus ring, so it is
+   reachable by keyboard and legible to a screen reader. */
+.pc-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.pc-switch__input {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  accent-color: var(--si-accent-2);
+  cursor: pointer;
+}
+
+.pc-switch__input:focus-visible {
+  outline: 2px solid var(--si-accent-3);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.pc-switch__label {
+  font-size: 13px;
+  color: var(--si-text);
+}
+
+.pc-note {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--si-text-dim);
+}
+
+.pc-note strong {
+  color: var(--si-text);
+  font-weight: 650;
+}
+
+.pc-note code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--si-surface-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--si-text);
+}
+
+/* The trust-cost paragraph earns a left rule so it cannot be skimmed past. */
+.pc-card .pc-note:has(strong:first-child) {
+  border-left: 2px solid var(--si-line-2);
+  padding-left: 12px;
+}
+
+.pc-agy {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px dashed var(--si-line-2);
+  border-radius: 10px;
+  background: var(--si-surface-2);
+}
+
+.pc-note--strong {
+  color: var(--si-text);
+}
+
+.pc-kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 14px;
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.pc-kv dt {
+  color: var(--si-text-dim);
+  font-weight: 600;
+}
+
+.pc-kv dd {
+  margin: 0;
+  color: var(--si-text);
+  overflow-wrap: anywhere;
+}
+
+.pc-agy .pc-btn {
+  align-self: flex-start;
+}
+
+.pc-error {
+  padding: 11px 13px;
+  background: rgba(162, 73, 60, 0.09);
+  border: 1px solid rgba(162, 73, 60, 0.45);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--si-text);
+}
+
+.pc-error__hint {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--si-text-2);
+}
+
+.pc-warn {
+  padding: 11px 13px;
+  background: rgba(154, 123, 52, 0.09);
+  border: 1px solid rgba(154, 123, 52, 0.42);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--si-text-2);
+}
+
+.pc-dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 14px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.pc-dl dt {
+  color: var(--si-text-3);
+}
+
+.pc-dl dd {
+  margin: 0;
+  color: var(--si-text-2);
+  overflow-wrap: anywhere;
+}
+

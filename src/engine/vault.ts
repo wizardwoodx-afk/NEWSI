@@ -1,0 +1,286 @@
+/**
+ * SelfImpulse — the owner vault (19.7.1).
+ *
+ * The 19.7.0 review was right twice: provider API keys sat PLAINTEXT in
+ * localStorage, and the new memory graph stored conversation content
+ * unencrypted at rest. For a product whose entire position is "the
+ * accountable, secure way to run agents", that was the biggest cleanup
+ * item left. This module is the answer, and it follows the exact house
+ * pattern `secureKeys.ts` set in 18.3.0:
+ *
+ *   • AES-256-GCM under a key derived from the owner's passphrase
+ *     (PBKDF2-SHA-256, 310k iterations — OWASP 2023 guidance for PBKDF2-HMAC-SHA-256);
+ *   • the passphrase and the derived key are NEVER stored — the key lives
+ *     in module memory for the session only; nothing decrypts at boot;
+ *   • a sealed record is a small JSON envelope: version, salt, iv,
+ *     ciphertext, kdf parameters. Plaintext never touches storage when a
+ *     passphrase is set;
+ *   • without a passphrase the vault is HONEST: callers either keep data
+ *     in memory only (provider keys) or state plainly that the record is
+ *     unencrypted at rest (memory graph) — it never pretends;
+ *   • legacy plaintext records are purgeable by name (`purgePlain`) —
+ *     19.7.1 migrates the old `vh.provider.remembered.v1` blob on boot.
+ *
+ * What this does NOT do, and says so: it does not resist a memory-read
+ * after unlock, and it is not a hardware boundary. The native upgrade
+ * path (OS keychain behind Tauri IPC) is the same one documented for
+ * `secureKeys.ts` — no unverifiable Rust ships pretending to be one.
+ */
+
+export const VAULT_FORMAT = "si-vault/1";
+const VAULT_META_KEY = "vh.vault.meta.v1";
+const PBKDF_ITERATIONS = 310_000;
+
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+
+export interface VaultMeta {
+  v: "si-vault-meta/1";
+  saltB64: string;
+  ivB64: string;
+  cipherB64: string;
+  kdf: "PBKDF2-SHA-256";
+  iterations: number;
+  createdAt: string;
+}
+
+export interface SealedRecord {
+  v: typeof VAULT_FORMAT;
+  saltB64: string;
+  ivB64: string;
+  cipherB64: string;
+  kdf: "PBKDF2-SHA-256";
+  iterations: number;
+  sealedAt: string;
+}
+
+export type VaultOpenResult =
+  | { found: false }
+  | { found: true; locked: true }
+  | { found: true; locked: false; text: string };
+
+export type VaultStatus = "no-passphrase" | "unlocked" | "sealed-locked";
+
+function storage(): Storage | null {
+  try {
+    return globalThis.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const toB64 = (buf: ArrayBuffer | Uint8Array): string => {
+  const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let s = "";
+  for (let b = 0; b < u8.length; b++) s += String.fromCharCode(u8[b]);
+  return btoa(s);
+};
+const fromB64 = (s: string): Uint8Array => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+
+function subtle(): SubtleCrypto | null {
+  const c = globalThis.crypto as Crypto | undefined;
+  return c && typeof c.subtle?.deriveKey === "function" ? c.subtle : null;
+}
+
+function randomBytes(n: number): Uint8Array {
+  const u8 = new Uint8Array(n);
+  globalThis.crypto.getRandomValues(u8);
+  return u8;
+}
+
+/* the session key — module memory ONLY, dropped on lock, never persisted */
+let sessionKey: CryptoKey | null = null;
+/* the exact params the CURRENT meta record was derived with, so opens match */
+let sessionParams: { salt: Uint8Array; meta: VaultMeta } | null = null;
+
+async function deriveKey(passphrase: string, salt: Uint8Array): Promise<CryptoKey> {
+  const s = subtle();
+  if (!s) throw new Error("WebCrypto SubtleCrypto is unavailable in this runtime — the vault refuses rather than pretend to encrypt");
+  const base = await s.importKey("raw", enc.encode(passphrase), "PBKDF2", false, ["deriveKey"]);
+  return s.deriveKey(
+    { name: "PBKDF2", salt: salt as BufferSource, iterations: PBKDF_ITERATIONS, hash: "SHA-256" },
+    base,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+function readMeta(): VaultMeta | null {
+  const s = storage();
+  if (!s) return null;
+  try {
+    const raw = JSON.parse(s.getItem(VAULT_META_KEY) ?? "null") as VaultMeta | null;
+    return raw && raw.v === "si-vault-meta/1" ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Set (or replace) the vault passphrase. Creates the meta record with a
+ * fresh salt and an encrypted check-string, or verifies the given
+ * passphrase against the existing one. The derived key lives in module
+ * memory for the session.
+ */
+export async function setVaultPassphrase(passphrase: string, now: () => Date = () => new Date()): Promise<{ ok: true; created: boolean } | { ok: false; error: string }> {
+  if (typeof passphrase !== "string" || passphrase.length < 8) {
+    return { ok: false, error: "a vault passphrase needs at least 8 characters — there is no recovery, so length is the only strength that cannot be taken from you" };
+  }
+  const existing = readMeta();
+  try {
+    if (!existing) {
+      const salt = randomBytes(16);
+      const iv = randomBytes(12);
+      const key = await deriveKey(passphrase, salt);
+      const check = await subtle()!.encrypt({ name: "AES-GCM", iv: iv as BufferSource }, key, enc.encode("si-vault-check/1"));
+      const meta: VaultMeta = { v: "si-vault-meta/1", saltB64: toB64(salt), ivB64: toB64(iv), cipherB64: toB64(check), kdf: "PBKDF2-SHA-256", iterations: PBKDF_ITERATIONS, createdAt: now().toISOString() };
+      const s = storage();
+      if (!s) return { ok: false, error: "no storage in this runtime — the vault can exist for this session only; persistence needs a store" };
+      s.setItem(VAULT_META_KEY, JSON.stringify(meta));
+      sessionKey = key;
+      sessionParams = { salt, meta };
+      return { ok: true, created: true };
+    }
+    // existing meta — verify by decrypting the check string
+    try {
+      const salt = fromB64(existing.saltB64);
+      const key = await deriveKey(passphrase, salt);
+      const plain = await subtle()!.decrypt({ name: "AES-GCM", iv: fromB64(existing.ivB64) as BufferSource }, key, fromB64(existing.cipherB64) as BufferSource);
+      if (dec.decode(plain) !== "si-vault-check/1") return { ok: false, error: "that passphrase did not open the vault — nothing was changed" };
+      sessionKey = key;
+      sessionParams = { salt, meta: existing };
+      return { ok: true, created: false };
+    } catch {
+      return { ok: false, error: "that passphrase did not open the vault — nothing was changed" };
+    }
+  } catch (e) {
+    return { ok: false, error: `the vault refused the passphrase: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+/** Drop the session key. Sealed records stay sealed; nothing re-encrypts or decrypts silently. */
+export function lockVault(): void {
+  sessionKey = null;
+  sessionParams = null;
+}
+
+export function vaultHasPassphrase(): boolean {
+  return sessionKey !== null;
+}
+
+export type VaultStatusInfo = {
+  status: VaultStatus;
+  /** a meta record exists on this machine */
+  created: boolean;
+  kdf: "PBKDF2-SHA-256" | null;
+  iterations: number | null;
+};
+
+export function vaultStatus(): VaultStatusInfo {
+  const meta = readMeta();
+  if (!meta) return { status: "no-passphrase", created: false, kdf: null, iterations: null };
+  if (sessionKey) return { status: "unlocked", created: true, kdf: meta.kdf, iterations: meta.iterations };
+  return { status: "sealed-locked", created: true, kdf: meta.kdf, iterations: meta.iterations };
+}
+
+/** Encrypt `text` into a sealed record for the named store. Requires an unlocked session. */
+export async function vaultSeal(name: string, text: string, now: () => Date = () => new Date()): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!sessionKey) return { ok: false, error: "the vault is locked — set or enter the passphrase before anything is sealed" };
+  const meta = sessionParams?.meta;
+  const salt = sessionParams?.salt;
+  if (!meta || !salt) return { ok: false, error: "vault session state is missing — lock and unlock again" };
+  try {
+    const iv = randomBytes(12);
+    const cipher = await subtle()!.encrypt({ name: "AES-GCM", iv: iv as BufferSource }, sessionKey, enc.encode(text));
+    const record: SealedRecord = { v: VAULT_FORMAT, saltB64: toB64(salt), ivB64: toB64(iv), cipherB64: toB64(cipher), kdf: "PBKDF2-SHA-256", iterations: meta.iterations, sealedAt: now().toISOString() };
+    const s = storage();
+    if (!s) return { ok: false, error: "no storage in this runtime — nothing was sealed" };
+    s.setItem(name, JSON.stringify(record));
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: `sealing failed: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+/** Read a named store. Sealed + no session key ⇒ { locked: true }, never a guess. */
+export function vaultOpen(name: string): VaultOpenResult {
+  const s = storage();
+  if (!s) return { found: false };
+  const raw = s.getItem(name);
+  if (!raw) return { found: false };
+  try {
+    const parsed = JSON.parse(raw) as SealedRecord | unknown;
+    if (parsed && typeof parsed === "object" && (parsed as SealedRecord).v === VAULT_FORMAT) {
+      const rec = parsed as SealedRecord;
+      if (!sessionKey) return { found: true, locked: true };
+      // decrypt synchronously is impossible — surface via vaultOpenAsync
+      void rec;
+      return { found: true, locked: true };
+    }
+    return { found: true, locked: false, text: raw };
+  } catch {
+    // not JSON — treat as a legacy plaintext record
+    return { found: true, locked: false, text: raw };
+  }
+}
+
+/** Async open: decrypts sealed records when the session is unlocked. */
+export async function vaultOpenAsync(name: string): Promise<VaultOpenResult> {
+  /* The sync helper cannot decrypt AES-GCM; this is the live path. */
+  return vaultDecrypt(name);
+}
+
+/** Seal-aware async read that actually decrypts (kept separate so sync probes can pin the locked case). */
+export async function vaultDecrypt(name: string): Promise<{ found: false } | { found: true; locked: true } | { found: true; locked: false; text: string }> {
+  const s = storage();
+  if (!s) return { found: false };
+  const raw = s.getItem(name);
+  if (!raw) return { found: false };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { found: true, locked: false, text: raw };
+  }
+  if (!parsed || typeof parsed !== "object" || (parsed as SealedRecord).v !== VAULT_FORMAT) {
+    return { found: true, locked: false, text: raw };
+  }
+  const rec = parsed as SealedRecord;
+  if (!sessionKey) return { found: true, locked: true };
+  try {
+    const plain = await subtle()!.decrypt({ name: "AES-GCM", iv: fromB64(rec.ivB64) as BufferSource }, sessionKey, fromB64(rec.cipherB64) as BufferSource);
+    return { found: true, locked: false, text: dec.decode(plain) };
+  } catch {
+    return { found: true, locked: true };
+  }
+}
+
+/** Remove a named store entirely (not just lock it). */
+export function vaultRemove(name: string): void {
+  const s = storage();
+  if (s) s.removeItem(name);
+}
+
+/**
+ * Read-and-purge a LEGACY PLAINTEXT record — the 18.3.0 discipline: a key
+ * written by an older build is treated as compromised and removed, not
+ * silently kept. Returns the raw text so the caller can migrate it into
+ * the vault or memory, and states what it did.
+ */
+export function purgePlain(name: string): { found: boolean; text: string | null } {
+  const s = storage();
+  if (!s) return { found: false, text: null };
+  const raw = s.getItem(name);
+  if (!raw) return { found: false, text: null };
+  s.removeItem(name);
+  // if it was actually a sealed record, leave semantics to the caller — purge is only called on known-plaintext keys
+  return { found: true, text: raw };
+}
+
+/** Destroy the vault: the meta record goes, sealed records become unreadable forever. */
+export function destroyVault(): void {
+  const s = storage();
+  if (s) s.removeItem(VAULT_META_KEY);
+  lockVault();
+}

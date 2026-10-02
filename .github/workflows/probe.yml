@@ -1,0 +1,25 @@
+name: probe
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  three-bar:
+    name: tsc → npm test → offline verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.14
+          cache: npm
+      - run: npm ci
+      - name: types
+        run: npx tsc --noEmit
+      - name: dev probes
+        run: npm test
+      - name: offline pack
+        run: node verify/run.mjs
+      - name: BUILD-INFO stamp check
+        run: grep -E "gate:\s+[0-9]+ probe suites, [0-9]+ self-contained bundles" verify/BUILD-INFO.txt

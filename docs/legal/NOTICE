@@ -1,0 +1,30 @@
+# Third-party notices — SelfImpulse
+
+SelfImpulse is proprietary software (see LICENSE). It ships the third-party engines below under `vendor/`,
+unchanged apart from size pruning. Their upstream licences continue to apply to those directories
+only and are reproduced in full alongside this notice.
+
+| Directory | Upstream | Licence | Licence file |
+|---|---|---|---|
+| `vendor/mcp-servers-reference` | https://github.com/modelcontextprotocol/servers | MIT → Apache-2.0 transition (mixed) | `vendor/mcp-servers-reference/LICENSE` |
+| `vendor/mcp-github` | https://github.com/github/github-mcp-server | MIT © 2025 GitHub | `vendor/mcp-github/LICENSE` |
+
+## Bundled dependencies in shipped artefacts
+
+`tools/mcp-engine.mjs` (the MCP router engine, built by `tools/build-mcp.mjs`) and the offline
+verification bundles under `verify/suites/` are self-contained: npm dependencies are compiled
+into them so they run with no `node_modules`. The engine bundles **zod** (MIT © Colin McDonnell)
+and the offline bundles bundle the same runtime dependencies as the product's `package.json`.
+
+## Note on `mcp-servers-reference`
+
+Upstream is mid-transition from MIT to Apache-2.0: contributions without relicensing consent remain
+MIT, documentation is CC-BY-4.0. Its `LICENSE` file is the authoritative statement and is shipped
+verbatim.
+
+## What SelfImpulse owns
+
+The agent skill contract, skill parsing, and the evolution fitness/constraints engine are SelfImpulse's own
+TypeScript code. `vendor/evolution-service/` is **SelfImpulse's own** Python service (DSPy/GEPA reflective
+optimiser) — first-party code covered by the SelfImpulse LICENSE, not by any notice above. It lives under
+`vendor/` because `src-tauri/src/hermes.rs` resolves the bridge as `<vendor>/evolution-service/…`.

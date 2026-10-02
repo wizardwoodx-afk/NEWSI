@@ -1,0 +1,23 @@
+5 colors for your agentic system (genuinely uncommon names)
+
+🌑 Dark theme #1 — Feldgrau
+
+#4D5D53 — a muted gray-green, originally the German military uniform color. Almost never seen in tech UI, reads as serious and grounded without being another gray-blue.
+
+🌑 Dark theme #2 — Sinopia
+
+#CB410B-toned dark base, but used desaturated for backgrounds — actually better as accent (see below). For the second dark surface, use Bistre 
+#3D2B1F, a dark yellowish-brown made historically from wood soot — gives warmth instead of the cold blue-black everyone defaults to.
+
+☀️ Light theme #1 — Isabelline
+
+#F4F0EC — a pale grayish-yellow-beige, named after a (probably apocryphal) story about a Spanish queen's underwear. Distinct from "off-white" or "bone."
+
+☀️ Light theme #2 — Eburnean
+
+#EFDFBB-adjacent ivory tone, desaturated to 
+#E8E2D0 for surfaces — literally "ivory-like," rarely used as a design-system name.
+
+⭐ The rare accent — Skobeloff
+
+#007474 — a genuinely obscure deep cyan-teal (comes from a discontinued Crayola color). This is your best bet for "rare AND unique" since it's barely used anywhere in design systems, unlike verdigris/malachite which have gotten more common in "unique AI palette" prompts recently.

@@ -1,0 +1,76 @@
+{
+  "name": "selfimpulse",
+  "private": true,
+  "version": "1.0.0",
+  "description": "SelfImpulse \u2014 agentic impulse for remaining.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5173",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 5173",
+    "tauri": "tauri",
+    "tauri:build": "tauri build",
+    "typecheck": "tsc --noEmit",
+    "test": "node tools/run-all-probes.mjs",
+    "test:rust": "cd src-tauri && cargo test --no-fail-fast",
+    "mcp": "node tools/mcp.mjs",
+    "mcp:build": "node tools/build-mcp.mjs",
+    "unit": "node tools/run-unit.mjs",
+    "host": "node tools/si-host.mjs",
+    "host:build": "node tools/build-host.mjs",
+    "web:build": "vite build && rm -rf web-build && cp -r dist web-build",
+    "bump:patch": "node tools/bump-version.mjs patch",
+    "bump:minor": "node tools/bump-version.mjs minor",
+    "bump:show": "node tools/bump-version.mjs show",
+    "test:live": "node tools/run-live-probe.mjs"
+  },
+  "dependencies": {
+    "@blobatar/react": "^2.7.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/plugin-dialog": "^2.4.0",
+    "@tauri-apps/plugin-notification": "^2.3.0",
+    "@tauri-apps/plugin-opener": "^2.5.0",
+    "@tauri-apps/plugin-os": "^2.3.0",
+    "@tauri-apps/plugin-process": "^2.3.0",
+    "3d-force-graph": "^1.80.0",
+    "blobatar": "^2.7.0",
+    "boring-avatars": "^2.0.4",
+    "clawpdf": "^0.3.2",
+    "jszip": "^3.10.2",
+    "mammoth": "^1.12.3",
+    "pdfjs-dist": "^6.3.289",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwindcss": "^4.3.3",
+    "tesseract.js": "^7.0.0",
+    "three": "^0.186.0",
+    "zod": "^4.6.2",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@tauri-apps/cli": "^2.9.0",
+    "@types/node": "^22.20.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.7.0",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "playwright": "^1.63.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.3.5"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true
+  },
+  "engine": {
+    "name": "MJ",
+    "version": "19.7.15",
+    "codename": "Handle"
+  }
+}

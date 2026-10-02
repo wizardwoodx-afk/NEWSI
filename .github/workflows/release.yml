@@ -1,0 +1,35 @@
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  gate:
+    name: three-bar gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.14
+          cache: npm
+      - run: npm ci
+      - name: types
+        run: npx tsc --noEmit
+      - name: dev probes
+        run: npm test
+      - name: offline pack
+        run: node verify/run.mjs
+      - name: release notes
+        # The upgrade doc name is pinned here on purpose: probe/versionDrift asserts this
+        # workflow names the current release's notes, so a version bump without a matching
+        # doc fails the gate instead of shipping a release with no upgrade path.
+        run: |
+          DOC="docs/releases/SI-19.7-UPGRADE.md"
+          if [ ! -f "$DOC" ]; then
+            echo "::error::release notes missing: $DOC"
+            exit 1
+          fi
+          echo "Release notes: $DOC"

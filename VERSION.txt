@@ -1,0 +1,8 @@
+SelfImpulse — version of record
+Product release: 1.0.0
+Engine release: MJ 19.7.15 ("SelfImpulse")
+Org: User → Captain → 30 desks (Lead+HR = 60) → 1,500 workers
+Floor: 11WORKSPACE, Agentic MoE cap 25
+Source: packed from the working tree including 11WORKSPACE.
+Install: unzip, npm ci, npm test / npm run dev
+Policy: docs/VERSIONING.md — product manifests carry the product release; receipts and engine manifests carry the engine release.

@@ -1,0 +1,80 @@
+﻿# Dependencies
+node_modules/
+jspm_packages/
+
+# Build output
+dist/
+web-build/
+src-tauri/target/
+*.tsbuildinfo
+
+# Tauri
+src-tauri/browser-service/profiles/
+
+# Verifier keys
+verifier/*.key
+
+# Agent scratch / run logs
+.dev.log
+.dev.err
+.pack.txt
+.probes.txt
+.probes.exit
+.one-*.txt
+
+# Probes
+probe/.one-*
+probe/.offlinePack.*
+probe/*.test.ts.mjs
+
+# UI review screenshots / artifacts (local scratch only)
+shots/
+shots-workflows/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
+*.local
+
+# Product data
+.selfimpulse/
+
+# Benchmark outputs (checked-in baseline only)
+benchmark/results-*.json
+
+# Misc
+*.log
+
+# Local UI review screenshots captured during development. These are scratch,
+# not product assets \u2014 the committed documentation screenshots live under
+# docs/. Shipping them puts personal window captures in a public repo.
+_app_desktop.png
+_native_window.png
+_si_preview.png
+_si_preview_auth.png
+_dev.log
+
+# Probe scratch output (written at the repo root by probe/agenticTest and a few
+# others; listed in tools/pack-release.mjs SCRATCH_FILES, but never ignored â€” so a
+# gate run left an untracked file in a tree whose whole claim is that a clean
+# checkout reproduces).
+scratch-*.json
+montage.cjs
+shot.mjs
+run1.mjs
+run2.mjs
+dist.mjs
+
+# Local runner scratch
+._*.txt
+.drift
+.tmp-*.mjs
+_probe_*.txt
+_verify_*.txt

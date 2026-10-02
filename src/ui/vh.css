@@ -1,0 +1,849 @@
+/* ============================================================
+   SELFIMPULSE — Precision & Density. Tight, technical, monochrome.
+
+   TRUE BLACK ground, silverwhite ink, warm paper for the light theme.
+   One accent, used only for the action in context. Nothing else carries
+   colour, so colour means something when it appears.
+
+   Every pairing below is machine-verified. tools/contrast-check.mjs parses
+   this file and computes real WCAG 2.1 ratios; it is wired into the verify
+   suite, so a token cannot drift away from its own documentation again.
+   Worst case across 30 pairings, both themes: 4.75:1 (AA normal text).
+
+     --fg on black            19.3:1   (AAA)
+     --fg-2 on black            9.4:1   (AAA)
+     --fg-3 on black            5.4:1   (AA)   <- was 4.15:1, FAILED
+     accent on black           11.8:1   (AAA)
+     label on accent          10.7:1   (AAA)
+     --fg on paper            16.8:1   (AAA)
+     --fg-2 on paper            7.5:1   (AAA)
+     --fg-3 on paper            5.0:1   (AA)   <- was 3.21:1, FAILED
+     accent on paper            5.7:1   (AA)
+   ============================================================ */
+@font-face{font-family:"Geist";src:url(/fonts/Geist-Variable.woff2) format("woff2");font-weight:100 900;font-display:swap}
+@font-face{font-family:"Geist Mono";src:url(/fonts/GeistMono-Variable.woff2) format("woff2");font-weight:100 900;font-display:swap}
+@font-face{font-family:"Geist Pixel";src:url(/fonts/GeistPixel-Square.woff2) format("woff2");font-weight:400;font-display:swap}
+@font-face{font-family:"Space Grotesk";src:url(/fonts/space-grotesk-var.woff2) format("woff2");font-weight:100 900;font-display:swap}
+@font-face{font-family:"JetBrains Mono";src:url(/fonts/jetbrains-400.woff2) format("woff2");font-weight:400;font-display:swap}
+@font-face{font-family:"JetBrains Mono";src:url(/fonts/jetbrains-500.woff2) format("woff2");font-weight:500;font-display:swap}
+@font-face{font-family:"Instrument Serif";src:url(/fonts/instrument-serif-latin-400-normal.woff2) format("woff2");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"Instrument Serif";src:url(/fonts/instrument-serif-latin-400-italic.woff2) format("woff2");font-weight:400;font-style:italic;font-display:swap}
+
+:root{
+  --font:"Geist",-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+  --display:"Space Grotesk","Geist",system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --pixel:"Geist Pixel","Geist Mono",monospace;
+
+  /* One spacing scale. Everything is a multiple of 4.
+     NOTE the deliberate gap: there is no --s1/--s2/--s3 in :root any more.
+     Those three names belong to the SURFACE ramp and are defined per theme
+     below. They used to be the 4/8/12px spacing steps as well, so the theme
+     silently overwrote them with colours and every `gap:var(--s2)` /
+     `padding:var(--s3)` in the app resolved to an invalid declaration and
+     dropped to 0. The three small steps now live under their own names. */
+  --sp1:4px;--sp2:8px;--sp3:12px;
+  --s4:16px;--s5:24px;--s6:32px;--s7:48px;--s8:64px;
+  /* One radius scale. Softer for a premium feel; sharp corners reserved
+     only for structural edges like the rail separator. */
+  --r:6px;--r2:10px;--r3:14px;
+  --ease:cubic-bezier(.2,.7,.2,1);--t:140ms var(--ease);
+  --rail-w:248px;
+}
+
+[data-theme=dark]{
+  color-scheme:dark;
+  /* A SHADE OF BLACK, not black and not a "dark grey". #0A0C0E is a neutral two
+     percent — measured at relLum 0.00359 against true black's 0.00000, which is
+     enough to read as a surface rather than a hole in the screen, and far too
+     little to tint anything. The previous value was #000000 exactly; that is a
+     defensible choice on OLED and it was the house choice for a while, but a
+     ground at literal zero makes every hairline do the work of a shape, and a
+     white line on true black reads as an edge of the screen rather than as a
+     rule on a surface.
+
+     What did NOT change: the ramp must still be measurably raised, the single
+     accent still carries all the colour, and no cool hue enters the ink. */
+  --bg:#14100C;--bg-deep:#0E0C09;
+  /* ELEVATION, measured rather than guessed. Asme steps: each lifted above the
+     previous, none flat against the ground. */
+  --s1:#1E1913;--s2:#26201A;--s3:#342C23;
+  --line:rgba(230,215,190,.10);--line-2:rgba(230,215,190,.17);
+  --fg:#F2EFE7;--fg-2:#B3A893;--fg-3:#8A8073;
+  /* THE ACCENT IS AQUA-TEAL AT 177deg — the house identity, and the one both
+     gate suites pin (probe/theme.test.ts asserts hue + AA on the ground;
+     probe/face.test.ts asserts 162–192deg — the cyan-leaning house hue).
+
+     20.1 briefly repointed this token at a deep navy (#1B4480) to match an
+     interim shell sheet. It failed on every count the product machine-checks:
+     as TEXT on this ground it measured 2.16:1 (WCAG AA needs 4.5), it dragged
+     the dark/light hue pair apart, and tools/contrast-check.mjs went RED on
+     three pairings. A dark fill can be navy; a TOKEN THAT IS ALSO TEXT cannot
+     be nearly the same value as the black behind it. The teal values below are
+     the documented ones from the sheet header — 11.8:1 on black, 5.7:1 on
+     paper — and the shell sheet (si.css) now derives from the same hue, so
+     both sheets are one accent again.
+
+     --accent-fg is the DARK ink because the fill is BRIGHT: a pale label on a
+     pale teal fill is unreadable, and the button label is what carries
+     meaning. */
+  --accent:#F2A45C;--accent-fg:#221207;--accent-soft:rgba(242,164,92,.16);
+  /* Status hues exist for text and dots only — never as a control fill.
+     20.1 — the warn hue is far less saturated than before. It was a bright
+     amber (#D4AC72) that read as gold-on-black next to the accent fill and made
+     status pills look like the primary action. */
+  --ok:#A8C079;--warn:#E5B94E;--bad:#C77A66;
+  --ok-soft:rgba(168,192,121,.14);--warn-soft:rgba(229,185,78,.13);--bad-soft:rgba(199,122,102,.14);
+  /* Real depth. A 1px ring alone cannot describe "this floats above that" on a
+     black ground; these pair a tight contact shadow with a wide ambient one. */
+  --shadow-1:0 0 0 1px var(--line);
+  --shadow-2:0 1px 2px rgba(0,0,0,.5),0 0 0 1px var(--line);
+  --shadow-3:0 2px 4px rgba(0,0,0,.35),0 10px 28px -10px rgba(0,0,0,.85),0 0 0 1px var(--line);
+  --shadow-4:0 8px 20px rgba(0,0,0,.5),0 28px 60px -20px rgba(0,0,0,.9),0 0 0 1px var(--line-2);
+  --glass:rgba(24,20,16,.72);
+  --on-accent:#221207;
+}
+
+[data-theme=light]{
+  color-scheme:light;
+  /* STONE, not paper and not white. The previous light ground was #F7F7F5 with
+     PURE WHITE cards on top — near-white paper carrying actual #FFFFFF, which
+     is the glare this theme was supposed to avoid. This is a mineral light:
+     a warm grey ground with the cards a half-step above it, so the light theme
+     has the same lifted-surface logic the dark one has instead of one flat
+     white field. Measured at relLum 0.7808 — light enough to be a light theme,
+     dark enough that a white rectangle would still be visible on it. */
+  --bg:#E7E4DA;--bg-deep:#D8D4C6;
+  --s1:#F2F0E8;--s2:#E9E6DB;--s3:#DED9CB;
+  --line:rgba(26,20,12,.14);--line-2:rgba(26,20,12,.22);
+  --fg:#1A1611;--fg-2:#52483A;--fg-3:#6E6455;
+  /* Same 177deg teal identity as the dark theme, pulled deep for paper so it
+     holds contrast as TEXT (5.7:1 on this ground — the sheet header's own
+     measurement). Both themes sit on the same hue; only the depth changes.
+     --accent-fg is white because the fill is deep. */
+  --accent:#8A4A0E;--accent-fg:#FFFFFF;--accent-soft:rgba(138,74,14,.10);
+  --ok:#55682F;--warn:#8A5C1F;--bad:#9C3B2D;
+  --ok-soft:rgba(85,104,47,.10);--warn-soft:rgba(138,92,31,.10);--bad-soft:rgba(156,59,45,.10);
+  /* On paper, depth comes from the contact shadow under a crisp ring rather
+     than from a broad ambient blur, which would just muddy the surface. */
+  --shadow-1:0 0 0 1px var(--line);
+  --shadow-2:0 1px 2px rgba(18,20,24,.07),0 0 0 1px var(--line);
+  --shadow-3:0 2px 4px rgba(18,20,24,.06),0 10px 24px -12px rgba(18,20,24,.16),0 0 0 1px var(--line);
+  --shadow-4:0 8px 20px rgba(18,20,24,.10),0 28px 56px -22px rgba(18,20,24,.22),0 0 0 1px var(--line-2);
+  --glass:rgba(242,240,232,.82);
+  --on-accent:#FFFFFF;
+}
+
+*{box-sizing:border-box;margin:0}
+html,body,#root{height:100%}
+body{font:400 14.5px/1.58 var(--font);color:var(--fg);background:var(--bg);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;letter-spacing:-.005em;overflow:hidden}
+html[data-theme="dark"] body{font-weight:400}
+b,strong{font-weight:500}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;text-align:left}
+button:disabled{opacity:.4;cursor:not-allowed}
+a{color:inherit;text-decoration:none}
+code,.mono{font-family:var(--mono);font-size:12.5px;letter-spacing:0}
+h1{font-family:var(--display);font-size:32px;font-weight:400;letter-spacing:-.022em;line-height:1.06}
+h2{font-size:19px;font-weight:500;letter-spacing:-.014em;line-height:1.25}
+h3{font-size:14px;font-weight:500;letter-spacing:-.006em;line-height:1.4}
+.muted{color:var(--fg-2)}.faint{color:var(--fg-3)}.sm{font-size:12px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+.lbl{font:10.5px var(--pixel);letter-spacing:.08em;color:var(--fg-3);text-transform:uppercase}
+.agent-tag{font:10.5px var(--pixel);letter-spacing:.08em;color:var(--fg-3)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* ---------- shell ---------- */
+.app{display:grid;grid-template-columns:var(--rail-w) 1fr;height:100vh}
+/* The rail sits flush with the background and uses a hairline separator
+   rather than a different shade — a quieter boundary than a contrasting
+   panel, and closer to Apple Notes / Arc sidebar feel. */
+.side{background:transparent;color:var(--fg);border-right:1px solid var(--line);padding:18px 14px 14px;display:flex;flex-direction:column;gap:18px;min-height:0}
+.brand{display:flex;align-items:center;gap:11px;padding:6px 8px 10px}
+.brand .mark{width:24px;height:24px;border-radius:8px;background:linear-gradient(160deg,var(--fg) 0%,var(--fg-2) 100%);position:relative;box-shadow:0 1px 2px rgba(0,0,0,.25);flex:none}
+.brand .mark:after{content:"";position:absolute;inset:8px;border-radius:2px;background:var(--bg)}
+.brand b{display:block;font-family:var(--display);font-weight:400;font-size:20px;line-height:1.05;letter-spacing:-.01em}
+.brand small{display:block;font:10px var(--pixel);color:var(--fg-3);letter-spacing:.08em;margin-top:3px;text-transform:uppercase}
+/* New mission is the rail's primary action, but it is a SOFT accent. A solid
+   teal fill here made the rail the loudest thing on screen and pulled the eye
+   off the work area; the only fully filled accent in the interface is the
+   composer's send button, which is the action in context. */
+/* The rail carries no filled surfaces at all. Active state is a 2px accent
+   rule at the left edge plus brighter ink — a filled pill here was one of the
+   permanent "open boxes", and it made the rail heavier than the work area. */
+.new{display:flex;align-items:center;gap:var(--sp3);padding:9px 12px;border-radius:10px;color:var(--fg-2);font-size:13.5px;font-weight:500;width:100%;transition:color var(--t),background var(--t)}
+.new:hover{color:var(--fg);background:var(--s1)}
+.nav{display:flex;flex-direction:column;gap:2px;margin-top:2px}
+.nav a,.nav button{position:relative;display:flex;align-items:center;gap:11px;padding:8px 10px 8px 13px;border-radius:8px;color:var(--fg-2);font-size:13.5px;font-weight:450;width:100%;transition:color var(--t),background var(--t)}
+.nav a:hover,.nav button:hover{background:var(--s1);color:var(--fg)}
+.nav [aria-current]{color:var(--fg);background:var(--s1)}
+.nav [aria-current]:before{content:"";position:absolute;left:2px;top:8px;bottom:8px;width:2px;background:var(--accent);border-radius:2px}
+.nav .n{margin-left:auto;font:11px var(--mono);color:var(--fg-3);font-variant-numeric:tabular-nums}
+.side-foot{margin-top:auto;display:flex;flex-direction:column;gap:6px}
+.status{display:flex;align-items:center;gap:8px;padding:6px 8px;font:11px var(--pixel);letter-spacing:.06em;text-transform:uppercase;color:var(--fg-2);width:100%;border-radius:var(--r);transition:background var(--t)}
+.status:hover{background:var(--s1);color:var(--fg)}
+.status small{margin-left:auto;color:var(--fg-3);font-size:10px;letter-spacing:0;text-transform:none;font-family:var(--mono)}
+/* The owner chip used to be a filled, shadowed, rounded card pinned to the
+   bottom of the rail on every screen. Two permanent open boxes read as
+   panels that should be collapsible and are not, so it is now a flat row with
+   no fill, no border and no radius. Same for the status line above it. */
+.me{display:flex;align-items:center;gap:10px;padding:6px 8px;width:100%;border-radius:var(--r);transition:background var(--t)}
+.me:hover{background:var(--s1)}
+.me .av{width:22px;height:22px;border-radius:var(--r);background:var(--s3);color:var(--fg);display:grid;place-items:center;font:500 10px var(--font);flex:none}
+.me b{display:block;font-size:12.5px;font-weight:450;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.me small{display:block;font:10px var(--pixel);letter-spacing:.06em;color:var(--fg-3);margin-top:1px}
+.me .ic{margin-left:auto;opacity:.4;width:12px;height:12px}
+.led{width:7px;height:7px;border-radius:50%;background:var(--fg-3);flex:none}
+.led.ok{background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}.led.warn{background:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)}.led.bad{background:var(--bad)}
+.led.live{background:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+
+.main{min-width:0;display:flex;flex-direction:column;overflow:hidden;position:relative}
+/* The right padding reserves the window-control strip (3 x 46px = 138px).
+   Without it the header actions — search, export, filters — sit underneath the
+   minimise/maximise/close buttons and become unclickable, because the controls
+   paint above everything at the top of the window. */
+.top{height:60px;flex:none;display:flex;align-items:center;gap:18px;border-bottom:1px solid var(--line);padding:0 calc(36px + 138px) 0 40px}
+.top h2{font-family:var(--display);font-size:24px;font-weight:400;letter-spacing:-.01em}
+.top .sub{color:var(--fg-3);font-size:13px;margin-top:2px}
+.top .right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.scroll{flex:1;overflow:auto;min-height:0}
+.wrap{max-width:920px;margin:0 auto;padding:40px 48px 160px}
+.wrap.wide{max-width:1180px}
+
+/* ---------- icons ---------- */
+.ic{width:16px;height:16px;flex:none;background:currentColor;-webkit-mask:var(--m) center/contain no-repeat;mask:var(--m) center/contain no-repeat;opacity:.85}
+.ic-steward{--m:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='2.6'/><circle cx='12' cy='12' r='8'/><path d='M12 9.4V4M12 14.6V20M9.4 12H4M14.6 12H20'/></svg>")}
+.ic-crew{--m:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><circle cx='9.2' cy='8.4' r='3.2'/><circle cx='17.4' cy='10.6' r='2.3'/><path d='M3.6 19.4c.7-3.2 2.9-4.8 5.6-4.8s4.9 1.6 5.6 4.8'/><path d='M15.9 19.4c.3-2 1.5-3.2 3.1-3.4 1.7-.2 3 1.1 3.4 3.4'/></svg>")}
+.ic-specialists{--m:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><circle cx='5.6' cy='12' r='2.4'/><circle cx='18.4' cy='6' r='2.2'/><circle cx='18.4' cy='12' r='2.2'/><circle cx='18.4' cy='18' r='2.2'/><path d='M7.7 11.1l8.5-4.2M8 12h8.2M7.7 12.9l8.5 4.2'/></svg>")}
+.ic-docs{--m:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><path d='M5 4h9l5 5v11H5z'/><path d='M14 4v5h5'/><path d='M8.5 12.5h4M8.5 15.5h7M8.5 18.5h2.5'/></svg>")}
+.ic-federation{--m:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='5.4' r='2.3'/><circle cx='5.6' cy='17.6' r='2.3'/><circle cx='18.4' cy='17.6' r='2.3'/><path d='M10.9 7.4l-3.6 8M13.1 7.4l3.6 8M7.9 17.6h8.2'/></svg>")}
+.ic-receipts{--m:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><path d='M6 3h12v18l-2-1.5L14 21l-2-1.5L10 21l-2-1.5L6 21z'/><path d='M9 8h6M9 11.5h6M9 15h3.5'/></svg>")}
+.ic-memory{--m:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='8.2'/><circle cx='9.2' cy='10.4' r='1.7'/><circle cx='15' cy='9.4' r='1.4'/><circle cx='13.4' cy='15.6' r='1.5'/><path d='M10.5 11.6l3.3-1.7M10.6 11.9l2.3 2.9M14.4 10.4l-1 3.9'/></svg>")}
+.ic-settings{--m:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><path d='M4 7h10M18 7h2M4 17h4M12 17h8'/><circle cx='16' cy='7' r='2.2'/><circle cx='10' cy='17' r='2.2'/></svg>")}
+.ic-check{--m:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='M5 12.5l4.5 4.5L19 7.5'/></svg>")}
+.ic-arrow{--m:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 19V6M6 12l6-6 6 6'/></svg>")}
+.ic-chev{--m:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 6l6 6-6 6'/></svg>")}
+
+/* ---------- primitives ---------- */
+.btn{display:inline-flex;align-items:center;gap:7px;padding:8px 15px;border-radius:8px;font-size:13px;font-weight:500;background:var(--s2);box-shadow:var(--shadow-1);transition:background var(--t),transform var(--t)}
+.btn:hover{background:var(--s3)}
+.btn:active{transform:translateY(1px)}
+.btn.primary{background:var(--accent);color:var(--accent-fg);box-shadow:0 1px 2px rgba(0,0,0,.18)}.btn.primary:hover{filter:brightness(1.06);background:var(--accent)}
+.btn.ghost{background:none;box-shadow:none;color:var(--fg-2)}.btn.ghost:hover{background:var(--s1);color:var(--fg)}
+.btn.sm{padding:6px 11px;font-size:12.5px}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;font-size:11.5px;color:var(--fg-2);background:var(--s2);box-shadow:var(--shadow-1);letter-spacing:.01em}
+.pill.warn,.pill.ok,.pill.bad{font-family:var(--pixel);letter-spacing:.06em;text-transform:uppercase;font-size:10.5px;box-shadow:none}
+.pill.warn{background:var(--warn-soft);color:var(--warn)}.pill.ok{background:var(--ok-soft);color:var(--ok)}.pill.bad{background:var(--bad-soft);color:var(--bad)}
+.pill.accent{background:var(--accent-soft);color:var(--accent);box-shadow:none}
+.card{background:var(--s1);border-radius:var(--r);box-shadow:var(--shadow-1)}
+.card>.card-h{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line)}
+.card>.card-h h3{flex:1}
+.card>.card-b{padding:18px}
+.row{display:flex;align-items:center;gap:12px;padding:12px 18px;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:0}
+.row .grow{flex:1;min-width:0}
+.row .t{font-weight:450;font-size:13.5px}
+.row .d{color:var(--fg-3);font-size:12.5px;margin-top:1px}
+/* Switch: the GEOMETRY is owned by `label.switch` further down this file
+   (~line 505), which sizes the track to 34x20 and lays the label out with the
+   label's own flex gap. That block already fixed exactly the defect reported
+   on the Memory door — see its comment: the accent used to flood the whole
+   element instead of the track, leaving "Remember" as low-contrast text on a
+   coloured bar. It is correct, and being the more specific selector it is also
+   the one that wins the cascade.
+
+   20.1: an earlier attempt duplicated that geometry here as 38x22. Two rules
+   describing one control is how they drift, and the duplicate is now removed.
+   What remains below is only the neutralisation of the stale full-element
+   paint, so the canonical block is the single source of truth for the shape.
+
+   The accent token was repointed from aqua-teal to deep navy earlier in this
+   file, so the ON state is navy here as well as in the new si.css shell. */
+.switch{background:none;box-shadow:none}
+.switch:has(input:checked){background:none;box-shadow:none}
+.switch>span{font-size:12.5px;color:var(--fg-2);white-space:nowrap}
+.seg{display:inline-flex;background:var(--s3);border-radius:var(--r2);padding:2px;box-shadow:inset 0 0 0 1px var(--line)}
+.seg button{padding:5px 11px;border-radius:6px;font-size:12.5px;color:var(--fg-2)}
+.seg button[aria-pressed=true]{background:var(--s1);color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.2),0 0 0 1px var(--line)}
+.input{background:var(--s3);border-radius:var(--r2);padding:8px 11px;font-size:13px;color:var(--fg);box-shadow:inset 0 0 0 1px var(--line);width:100%;border:0;outline:0;font-family:var(--font)}
+.input::placeholder{color:var(--fg-3)}
+select.input{appearance:none}
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:56px 24px;text-align:center}
+.empty h3{font-family:var(--display);font-size:20px;font-weight:400}
+.empty p{color:var(--fg-2);max-width:40ch;font-size:13.5px}
+.note{padding:10px 14px;border-radius:var(--r2);background:var(--s2);font-size:12.5px;color:var(--fg-2)}
+.note.warn{background:var(--warn-soft);color:var(--warn)}.note.bad{background:var(--bad-soft);color:var(--bad)}.note.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* Docs door drop target (§13). Inset ring rather than a border, so the element
+   keeps the card's rhythm and no layout shifts when the ring thickens on
+   dragover. */
+.drop{display:flex;flex-direction:column;gap:3px;align-items:flex-start;width:100%;max-width:520px;text-align:left;padding:13px 15px;margin:0 0 12px;border-radius:var(--r);background:var(--s2);box-shadow:inset 0 0 0 1px var(--line-2);transition:background var(--t),box-shadow var(--t)}
+.drop:hover{background:var(--s3)}
+.drop.over{background:var(--accent-soft);box-shadow:inset 0 0 0 1px var(--accent)}
+.drop .dt{font-size:13.5px;font-weight:450;color:var(--fg)}
+.drop .ds{font-size:12px;color:var(--fg-3);line-height:1.45}
+
+/* seal — the signature element */
+.seal{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;flex:none;background:radial-gradient(circle at 35% 30%,#F0D89A,var(--accent) 55%,#8F6F2E);box-shadow:0 1px 3px rgba(0,0,0,.35),inset 0 0 0 1px rgba(255,255,255,.25)}
+.seal .ic{width:12px;height:12px;background:#2A2410;opacity:1}
+.seal.pending{background:none;box-shadow:inset 0 0 0 1.5px var(--line-2)}
+.seal.pending:before{content:"";width:6px;height:6px;border-radius:50%;background:var(--fg-3)}
+.seal.refused{background:radial-gradient(circle at 35% 30%,#F1A79F,var(--bad) 55%,#8F3E39)}
+
+/* ---------- steward ---------- */
+/* The hero sits in the optical middle rather than the top third, but it is a
+   left-aligned block rather than a centred column: a centred empty composer in
+   a 1440px window reads as a landing page, and this is a tool you come back to.
+   Left alignment also puts the eye where the text will grow. */
+.hero{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:18px;padding:60px 48px 40px;min-height:calc(100% - 60px);width:100%}
+.hero h1{text-align:left;font-size:clamp(34px,3.6vw,44px);letter-spacing:-.02em;font-weight:400;max-width:22ch;line-height:1.05}
+.hero h1 em{font-style:italic;color:var(--accent);font-family:var(--display)}
+.hero p{text-align:left;color:var(--fg-2);font-size:14.5px;max-width:58ch;line-height:1.55}
+.hero .hint{border-top:1px solid var(--line);padding-top:16px;width:min(780px,100%)}
+.hero .hint p{color:var(--fg-3);font-size:12.5px;line-height:1.6}
+/* ============================================================
+   Window controls.
+   The window is created with `decorations: false`, so the OS draws no
+   title bar. This bar is the application's own: the only way to move,
+   minimise, maximise or close the window.
+   ============================================================ */
+/* The window is frameless (`decorations: false`), so this bar is the only way
+   to move, minimise, maximise or close the window.
+
+   Layout note: the drag region and the button strip are siblings, and the
+   buttons come AFTER the drag region in the DOM, so they paint on top. The
+   drag region also stops short of the button strip (`right:138px` = 3 x 46px)
+   so a pointer over a control can never begin a window drag. */
+.winctl{position:fixed;top:0;right:0;z-index:2147483000;display:flex;align-items:stretch;pointer-events:none}
+.winctl-drag{position:fixed;top:0;left:0;right:138px;height:36px;z-index:1;pointer-events:auto;cursor:default}
+.winctl-btns{position:relative;z-index:2;pointer-events:auto;display:flex;height:36px}
+.winctl-btns button{width:46px;height:36px;display:grid;place-items:center;border:0;background:transparent;color:var(--fg-2);cursor:pointer;transition:background var(--t),color var(--t)}
+.winctl-btns button:hover{background:var(--s2);color:var(--fg)}
+.winctl-btns button.is-close:hover{background:#C8443C;color:#fff}
+.winctl-btns button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+/* Reserve room so the brand and page headers are never covered by the bar. */
+@media (min-width:1120px){ .side{padding-top:8px} }
+
+/* The composer is the action in context and should feel like a sheet of
+   paper you can write into — softer shadow, more padding, larger type, the
+   send button clearly the primary action. Border radii follow Apple Notes /
+   Messages convention (rounded but not pill). */
+.composer{width:min(780px,100%);border-radius:14px;background:var(--s1);box-shadow:var(--shadow-2);padding:14px 14px 10px;position:relative;margin-top:20px;transition:box-shadow var(--t),border-color var(--t)}
+.composer:focus-within{box-shadow:0 0 0 2px var(--accent-soft),var(--shadow-2)}
+.composer textarea{width:100%;background:none;border:0;outline:0;resize:none;color:var(--fg);font:16px/1.55 var(--font);height:48px;min-height:48px;letter-spacing:-.005em;padding:2px 4px}
+.composer textarea::placeholder{color:var(--fg-3)}
+.composer .bar{display:flex;align-items:center;gap:4px;margin-top:8px}
+.composer .attach{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--fg-3);transition:background var(--t),color var(--t)}
+.composer .attach:hover{background:var(--s2);color:var(--fg-2)}
+.composer .pick{font-size:12px;color:var(--fg-3);padding:0 6px}
+.composer .send{margin-left:auto;width:32px;height:32px;border-radius:9px;background:var(--accent);color:var(--accent-fg);display:grid;place-items:center;transition:filter var(--t),transform var(--t);box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.composer .send:hover:not(:disabled){filter:brightness(1.06)}
+.composer .send:active:not(:disabled){transform:translateY(1px)}
+.composer .send .ic{background:var(--accent-fg);width:15px;height:15px;opacity:1}
+/* Four ways in, not four steps. No numerals, no separators — a quiet list that
+   aligns to the composer's left edge, so the block reads as one surface. */
+.starts{display:flex;flex-direction:column;gap:2px;width:min(780px,100%);margin-top:14px}
+.starts button{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:10px;font-size:13.5px;color:var(--fg-2);transition:background var(--t),color var(--t)}
+.starts button:hover{background:var(--s1);color:var(--fg)}
+.starts button b{font-weight:500;color:var(--fg);margin-right:4px}
+.starts button span{color:var(--fg-3);font-size:12.5px;margin-left:auto}
+.starts button .ic{opacity:0;transition:opacity var(--t)}.starts button:hover .ic{opacity:.7}
+/* The honesty line sits under a rule instead of in a filled box. It was
+   accent-soft, which put a third large accent-filled shape on a screen whose
+   only filled accent should be the composer's send button. */
+/* ---------- captain: a work surface, not a landing page ---------- */
+.deck-wrap{max-width:920px;margin:0 auto;padding:var(--s6) var(--s5) var(--s7);display:flex;flex-direction:column;gap:var(--s5)}
+.strip-state,.strip-ws{font:10.5px var(--pixel);letter-spacing:.06em;text-transform:uppercase;color:var(--fg-3);padding:3px 8px;border-radius:var(--r);border:1px solid var(--line)}
+.strip-state.live{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent)}
+/* The ledger is the product, so it is the largest thing on the screen. */
+.run{border:1px solid var(--line);border-radius:var(--r);background:var(--s1);overflow:hidden}
+.run-h{display:flex;align-items:baseline;gap:var(--sp3);padding:var(--sp3) var(--s4);border-bottom:1px solid var(--line);background:var(--s2)}
+.run-h h3{font-size:13px;font-weight:450;letter-spacing:0}
+.run-h .push{margin-left:auto}
+.run ul{list-style:none;margin:0;padding:0}
+.run li{display:flex;align-items:center;gap:var(--sp3);padding:9px var(--s4);border-top:1px solid var(--line)}
+.run li:first-child{border-top:0}
+.run li:hover{background:var(--s2)}
+.run .what{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.run .dig{font:11px var(--mono);color:var(--fg-3);font-variant-numeric:tabular-nums}
+.run .when{font:11px var(--mono);color:var(--fg-3);width:38px;text-align:right;font-variant-numeric:tabular-nums}
+/* The proof word is read off the signer the engine already stamps. It is not
+   a score and it is not decorative. */
+.proof{font:10.5px var(--pixel);letter-spacing:.06em;text-transform:uppercase;width:64px;flex:none}
+.proof.sign{color:var(--ok)}.proof.hash{color:var(--fg-3)}.proof.human{color:var(--accent)}
+.proof.bad{color:var(--bad)}.proof.wait{color:var(--warn)}
+
+/* The contract, not a shrug. What runs, what stops, what is refused. */
+.contract-ledger{border:1px solid var(--line);border-radius:var(--r);background:var(--s1);padding:var(--s5)}
+.contract-ledger h3{font-family:var(--display);font-size:19px;font-weight:400;letter-spacing:-.01em;text-wrap:balance}
+.contract-ledger p{margin-top:var(--sp2);font-size:13px;max-width:64ch}
+.contract-ledger dl{margin-top:var(--s5);display:flex;flex-direction:column}
+.contract-ledger dl>div{display:grid;grid-template-columns:180px 1fr;gap:var(--s4);padding:var(--sp3) 0;border-top:1px solid var(--line)}
+.contract-ledger dt{font-size:12.5px;font-weight:450}
+.contract-ledger dd{font-size:12.5px;color:var(--fg-2)}
+@media (max-width:720px){ .contract-ledger dl>div{grid-template-columns:1fr;gap:var(--sp1)} }
+
+/* The provider nudge reads as one sentence with its action attached. It was a
+   `margin-left:auto` button stranded at the far edge of a 920px column, a
+   full screen-width away from the text it belongs to. */
+.nudge{display:flex;align-items:center;gap:var(--s4);font-size:12.5px;color:var(--fg-2);border-top:1px solid var(--line);padding-top:var(--s4)}
+.nudge .btn{flex:none;margin-left:var(--sp1)}
+
+.thread{max-width:760px;margin:0 auto;padding:28px 24px 200px}
+.msg{display:grid;grid-template-columns:28px 1fr;gap:14px;margin-bottom:26px}
+.msg .av{width:28px;height:28px;border-radius:9px;background:var(--s3);box-shadow:var(--shadow-1)}
+.msg.user .av{background:linear-gradient(160deg,var(--fg-2),var(--fg-3))}
+.msg .who{font-size:12px;color:var(--fg-3);margin-bottom:5px}
+.msg .who b{color:var(--fg-2);font-weight:450}
+.msg p{max-width:66ch;font-size:14.5px;line-height:1.6;white-space:pre-wrap;font-weight:inherit}
+.msg .meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.dock{position:absolute;left:0;right:0;bottom:0;padding:16px 24px 20px;background:linear-gradient(180deg,transparent,var(--bg) 40%);display:flex;justify-content:center;pointer-events:none}
+.dock .composer{pointer-events:auto;padding:12px 12px 10px}
+.dock .composer textarea{height:44px;font-size:15px}
+
+/* gate */
+.gatebox{border-radius:var(--r2);background:var(--s2);box-shadow:var(--shadow-2);padding:16px 18px;border-left:3px solid var(--warn)}
+.gatebox .h{display:flex;align-items:center;gap:10px;font-weight:450}
+.gatebox .h .tier{margin-left:auto;font:11px var(--mono);color:var(--warn)}
+.gatebox p{color:var(--fg-2);font-size:13.5px;margin:6px 0 14px;max-width:62ch}
+.gatebox code{display:block;font:11.5px/1.7 var(--mono);background:var(--bg);border-radius:var(--r2);padding:10px 12px;color:var(--fg-2);margin-bottom:14px;white-space:pre-wrap}
+.gatebox .acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.gatebox .reason{margin-top:10px}
+
+/* ---------- graphs ---------- */
+.graph-wrap{position:relative;flex:1;min-height:0}
+.graph-wrap .g3{position:absolute;inset:0}
+/* ---------- TWO 3D GROUNDS, DIFFERENT IN KIND ----------
+   The two graphs have to be distinguishable from across a room, and "a warm dot
+   in the corner vs a cool dot in the corner" is not distinguishable — it is two
+   tints of the same picture. So they are built on different STRUCTURES:
+
+     WORK   — a WORKSHOP FLOOR. A lit plane with perspective, receding to a
+              horizon, plus a vignette that closes the corners. Gravity has a
+              direction: things stand ON something. Matches the DAG, which is
+              laid out top-to-bottom.
+     MEMORY — OPEN FIELD. No plane, no horizon, no receding lines — instead a
+              starfield at two depths (a near set and a far set, so the parallax
+              reads as distance rather than as texture) and three soft washes
+              that suggest volume. Matches the cluster, which has no up.
+
+   Both sit on the same --bg, so they are two places in ONE product rather than
+   two products. The difference is entirely in what is drawn over the ground. */
+
+/* WORK — lit floor + horizon + vignette. */
+.graph-wrap.work{
+  background:
+    radial-gradient(ellipse 62% 40% at 50% 78%,rgba(201,164,92,.13),transparent 70%),
+    radial-gradient(ellipse 80% 52% at 50% 20%,rgba(201,164,92,.05),transparent 72%),
+    var(--bg);
+}
+.graph-wrap.work:after{
+  content:"";position:absolute;inset:auto 0 0 0;height:58%;pointer-events:none;
+  background-image:
+    linear-gradient(rgba(201,164,92,.10) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(201,164,92,.10) 1px,transparent 1px);
+  background-size:52px 52px;
+  transform:perspective(560px) rotateX(66deg);
+  transform-origin:bottom;
+  -webkit-mask-image:linear-gradient(transparent,black 55%);mask-image:linear-gradient(transparent,black 55%);
+}
+.graph-wrap.work:before{
+  content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
+  background:radial-gradient(ellipse 74% 66% at 50% 46%,transparent 42%,rgba(0,0,0,.42) 100%);
+}
+
+/* MEMORY — open field: two-depth starfield + volume washes, no plane. */
+.graph-wrap.memory{
+  background:
+    radial-gradient(ellipse 55% 46% at 30% 38%,rgba(127,199,154,.10),transparent 72%),
+    radial-gradient(ellipse 46% 40% at 72% 62%,rgba(104,150,178,.09),transparent 74%),
+    radial-gradient(ellipse 70% 60% at 50% 50%,rgba(201,164,92,.04),transparent 78%),
+    var(--bg);
+}
+.graph-wrap.memory:after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background-image:
+    radial-gradient(rgba(226,231,235,.30) 1px,transparent 1px),
+    radial-gradient(rgba(226,231,235,.14) 1px,transparent 1px),
+    radial-gradient(rgba(160,200,190,.10) 1px,transparent 1px);
+  background-size:190px 190px,74px 74px,31px 31px;
+  background-position:0 0,34px 52px,9px 21px;
+  -webkit-mask-image:radial-gradient(ellipse 80% 76% at 50% 50%,black 22%,transparent 78%);
+  mask-image:radial-gradient(ellipse 80% 76% at 50% 50%,black 22%,transparent 78%);
+}
+.graph-wrap.memory:before{
+  content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
+  background:radial-gradient(ellipse 78% 70% at 50% 50%,transparent 48%,rgba(0,0,0,.38) 100%);
+}
+.hud{position:absolute;top:16px;left:24px;width:300px;pointer-events:none;display:flex;flex-direction:column;gap:8px;z-index:2}
+.hud .card{pointer-events:auto;background:var(--glass);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+.hud .card-b{padding:14px 16px}
+.hud h3{font-family:var(--display);font-size:20px;font-weight:400}
+.hud-r{position:absolute;top:16px;right:24px;width:290px;pointer-events:none;z-index:2}
+.hud-r .card{pointer-events:auto;background:var(--glass);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+.mode-tag{display:inline-flex;align-items:center;gap:7px;font:10.5px var(--pixel);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3);margin-bottom:6px}
+.mode-tag i{width:8px;height:8px;border-radius:2px}
+.mode-tag.work i{background:var(--accent)}.mode-tag.memory i{background:#9BA1A8;border-radius:50%}
+.prog{height:4px;border-radius:2px;background:var(--s3);margin:10px 0 6px;overflow:hidden}
+.prog i{display:block;height:100%;background:var(--accent);border-radius:2px;transition:width 300ms var(--ease)}
+.klist{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--fg-2)}
+.klist div{display:flex;justify-content:space-between;gap:10px}
+.klist span:last-child{font-family:var(--mono);color:var(--fg-3);font-size:11px;flex:none}
+.legend{display:flex;gap:12px;margin-top:12px;font-size:12px;color:var(--fg-2);flex-wrap:wrap}
+.legend i{display:inline-block;width:8px;height:8px;margin-right:5px;border-radius:50%}
+.legend.work i{border-radius:2px}
+.gate-float{position:absolute;right:24px;bottom:64px;width:520px;z-index:3}
+.gate-float .gatebox{background:var(--glass);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+.graph-foot{position:absolute;bottom:16px;left:24px;right:24px;display:flex;align-items:center;gap:8px;pointer-events:none;z-index:2}
+.graph-foot>*{pointer-events:auto}
+.graph-foot .hint{margin-left:auto;font:10.5px var(--pixel);letter-spacing:.06em;text-transform:uppercase;color:var(--fg-3)}
+
+/* ---------- what the deployment has learned ---------- */
+.dream-list{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.dream-item{display:flex;align-items:flex-start;gap:11px;padding:11px 12px;border-radius:9px;background:var(--s2);border:1px solid var(--line)}
+.dream-kind{flex:none;margin-top:1px;font:9.5px var(--pixel);letter-spacing:.07em;text-transform:uppercase;padding:2px 6px;border-radius:5px;border:1px solid var(--line-2);color:var(--fg-3)}
+.dream-kind.preference{color:var(--accent);border-color:var(--accent)}
+.dream-kind.correction{color:var(--warn);border-color:var(--line-2)}
+.dream-body{flex:1;min-width:0}
+.dream-stmt{margin:0 0 3px;font-size:12.5px;color:var(--fg-2);line-height:1.5}
+.dream-meta{font:10.5px var(--mono);color:var(--fg-3)}
+
+/* ---------- the crew board ---------- */
+/* The org, made visible. Reading order is the same order authority flows in:
+   the Captain at the top, the four rungs under it, then the desks. */
+.cb{display:flex;flex-direction:column;gap:16px;margin-bottom:8px}
+.cb-captain{display:flex;align-items:center;gap:16px;padding:16px;border-radius:var(--r);background:var(--s1);border:1px solid var(--line)}
+.cb-captain-text{flex:1;min-width:0}
+.cb-captain-text b{display:block;font-family:var(--display);font-size:20px;font-weight:400;color:var(--fg)}
+.cb-rung{display:inline-block;margin:2px 0 6px;font:10.5px var(--pixel);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+.cb-captain-text p{margin:0;font-size:12.5px;color:var(--fg-3);line-height:1.5;max-width:60ch}
+.cb-captain-counts{display:flex;gap:22px;flex:none}
+.cb-captain-counts div{text-align:right}
+.cb-captain-counts b{display:block;font-family:var(--display);font-size:22px;font-weight:400;color:var(--fg);line-height:1.1}
+.cb-captain-counts span{font-size:11px;color:var(--fg-3)}
+.cb-rungs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.cb-rung-card{padding:11px 13px;border-radius:9px;background:var(--s2);border:1px solid var(--line)}
+.cb-rung-card b{display:block;font-size:12.5px;color:var(--fg);margin-bottom:4px}
+.cb-rung-card p{margin:0;font-size:11.5px;color:var(--fg-3);line-height:1.45}
+.cb-h{margin:6px 2px 0}
+.cb-sub{margin:0 2px 4px}
+.cb-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}
+.cb-desk{padding:13px 14px;border-radius:var(--r);background:var(--s1);border:1px solid var(--line);display:flex;flex-direction:column;gap:9px}
+.cb-desk.off{opacity:.5}
+.cb-desk-head{display:flex;align-items:center;gap:8px}
+.cb-desk-mark{width:9px;height:9px;border-radius:50%;background:var(--accent);opacity:.8;flex:none}
+.cb-desk-head b{font-size:13px;font-weight:450;color:var(--fg)}
+.cb-off{margin-left:auto;font:9.5px var(--pixel);letter-spacing:.06em;text-transform:uppercase;color:var(--warn);border:1px solid var(--line-2);border-radius:5px;padding:1px 5px}
+.cb-blurb{margin:0;font-size:11.5px;color:var(--fg-3);line-height:1.45}
+.cb-people{display:flex;flex-direction:column;gap:5px}
+.cb-person{display:flex;align-items:center;gap:7px;min-width:0}
+.cb-pname{font-size:12px;color:var(--fg-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cb-prole{font:9.5px var(--pixel);letter-spacing:.06em;text-transform:uppercase;color:var(--fg-3);margin-left:auto;flex:none}
+.cb-desk-foot{display:flex;align-items:center;gap:10px;padding-top:8px;border-top:1px solid var(--line);font:10.5px var(--mono);color:var(--fg-3)}
+.cb-cat{color:var(--accent)}
+.cb-cat-n{margin-left:auto}
+
+/* ---------- the crew matrix ---------- */
+/* A decision surface, not a form. The layout is a TABLE because the question it
+   answers is comparative — "is any desk too expensive to keep at full depth" is
+   unanswerable in a list of forms, because you cannot see two depths at once. */
+.cm-overlay{position:fixed;inset:0;z-index:60;background:rgba(4,5,7,.72);display:flex;align-items:center;justify-content:center;padding:24px;backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+.cm-dialog{width:min(1120px,100%);max-height:calc(100vh - 48px);display:flex;flex-direction:column;border-radius:14px;background:var(--s1);border:1px solid var(--line-2);box-shadow:var(--shadow-4)}
+.cm-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px;border-bottom:1px solid var(--line)}
+.cm-tabs{display:flex;gap:2px}
+.cm-tab{appearance:none;background:none;border:0;padding:6px 12px;border-radius:7px;font:13px var(--font);color:var(--fg-3);cursor:pointer}
+.cm-tab.on{color:var(--fg);background:var(--s3)}
+.cm-x{appearance:none;background:none;border:0;color:var(--fg-3);font-size:15px;line-height:1;padding:6px 8px;border-radius:7px;cursor:pointer}
+.cm-x:hover{color:var(--fg);background:var(--s3)}
+.cm-body{overflow-y:auto;padding:6px 16px 10px;flex:1}
+.cm-row{display:grid;grid-template-columns:minmax(0,1fr) 190px 96px minmax(240px,300px);gap:18px;align-items:center;padding:11px 0;border-bottom:1px solid var(--line)}
+.cm-row:last-child{border-bottom:0}
+.cm-cols{position:sticky;top:0;background:var(--s1);z-index:1;padding:10px 0;border-bottom:1px solid var(--line-2);font:10.5px var(--pixel);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3)}
+.cm-row.off .cm-name,.cm-row.off .cm-size{color:var(--fg-3)}
+.cm-row.off{opacity:.55}
+.cm-desk{display:flex;align-items:baseline;gap:9px;min-width:0}
+/* The desk mark is the DETERMINISTIC avatar identity, tinted by desk name — the
+   same identity the crew board and the specialist faces use, so a desk looks the
+   same wherever it appears. */
+.cm-mark{width:11px;height:11px;border-radius:3px;flex:none;align-self:center;background:var(--accent);opacity:.75}
+.cm-name{font-size:13.5px;font-weight:450;color:var(--fg)}
+.cm-size{font-size:11.5px;color:var(--fg-3);white-space:nowrap}
+.cm-edited{font:10px var(--pixel);letter-spacing:.06em;text-transform:uppercase;color:var(--accent);border:1px solid var(--line-2);border-radius:5px;padding:1px 5px}
+.cm-depth{display:flex;flex-direction:column;gap:3px}
+.cm-select{width:100%;appearance:none;background:var(--s2);color:var(--fg);border:1px solid var(--line);border-radius:7px;padding:6px 9px;font:12.5px var(--font)}
+.cm-select:disabled{opacity:.5}
+.cm-cap{font-size:10.5px;color:var(--fg-3)}
+.cm-shift{display:flex;justify-content:center}
+.cm-switch{position:relative;width:44px;height:24px;border-radius:12px;border:0;background:var(--s3);cursor:pointer;transition:background var(--t);padding:0}
+.cm-switch.on{background:var(--accent)}
+.cm-knob{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:var(--fg);transition:transform var(--t)}
+.cm-switch.on .cm-knob{transform:translateX(20px);background:var(--accent-fg)}
+.cm-budget{display:flex;flex-direction:column;gap:4px}
+.cm-range{width:100%;appearance:none;-webkit-appearance:none;height:22px;background:transparent;cursor:pointer}
+.cm-range:disabled{cursor:default;opacity:.5}
+.cm-range::-webkit-slider-runnable-track{height:20px;border-radius:5px;background:var(--s3);border:1px solid var(--line)}
+.cm-range::-moz-range-track{height:20px;border-radius:5px;background:var(--s3);border:1px solid var(--line)}
+.cm-range::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:5px;height:14px;margin-top:2px;border-radius:2px;background:var(--accent)}
+.cm-range::-moz-range-thumb{width:5px;height:14px;border:0;border-radius:2px;background:var(--accent)}
+/* The tick marks ARE the stops — the slider can only land on one of them, so the
+   control cannot express a value the label is unable to print. */
+.cm-ticks{display:flex;justify-content:space-between;padding:0 2px}
+.cm-tick{width:1px;height:5px;background:var(--line-2)}
+.cm-tick.on{background:var(--accent);height:7px}
+.cm-amount{font:11px var(--mono);color:var(--fg-3)}
+.cm-foot{display:flex;align-items:center;gap:16px;padding:12px 16px;border-top:1px solid var(--line)}
+.cm-note{margin:0;flex:1;display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--fg-3);line-height:1.45}
+.cm-info{flex:none;width:14px;height:14px;border-radius:50%;border:1px solid var(--line-2);font:9px/14px var(--pixel);text-align:center;color:var(--fg-3);font-style:normal;margin-top:1px}
+.cm-saved{color:var(--accent);font-weight:450}
+.cm-acts{display:flex;gap:8px;flex:none}
+.cm-actions{margin-left:auto}
+
+/* ---------- the key holder ---------- */
+/* The three fields sit in one container so they read as ONE object — a holder —
+   rather than as three separate settings that happen to be neighbours. The
+   container carries the group, the fields carry the input, and the accent spine
+   on the left marks it as the place you paste a credential. */
+.keyholder{position:relative;padding:16px 14px 4px;border-radius:var(--r);background:var(--s1);border:1px solid var(--line);margin:10px 0 14px}
+.keyholder:before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:2px;border-radius:2px;background:var(--accent);opacity:.55}
+.keyholder .field{margin:0 0 12px}
+.flabel{display:block;margin-bottom:6px;font:10.5px var(--pixel);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3)}
+
+/* ---------- receipts ledger ---------- */
+.kpis{display:flex;gap:22px;align-items:baseline;margin-bottom:18px;padding:0 2px;flex-wrap:wrap}
+.kpis div b{font-family:var(--display);font-size:30px;font-weight:400;color:var(--fg);line-height:1;margin-right:6px}
+.kpis div span{font-size:12.5px;color:var(--fg-3)}
+.kpis .sep{width:1px;height:22px;background:var(--line-2);align-self:center}
+.ledger{border-radius:var(--r);background:var(--s1);box-shadow:var(--shadow-1);overflow:hidden}
+.ledger .lh,.ledger .lr{display:grid;grid-template-columns:28px 1fr 130px 150px 90px;gap:12px;align-items:center;padding:0 16px}
+.ledger .lh{height:34px;font:10.5px var(--pixel);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3);border-bottom:1px solid var(--line)}
+.ledger .lr{min-height:46px;padding-top:6px;padding-bottom:6px;border-top:1px solid var(--line);font-size:13px;transition:background var(--t)}
+.ledger .lr:hover{background:var(--s2)}
+.ledger .lr .t{font-weight:420}
+.ledger .lr .t small{display:block;font:11px var(--mono);color:var(--fg-3);font-weight:400;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ledger .lr code{color:var(--fg-2);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ledger .lr .at{font:11px var(--mono);color:var(--fg-3);text-align:right}
+.ledger .seal{width:18px;height:18px}.ledger .seal .ic{width:9px;height:9px}.ledger .seal.pending:before{width:5px;height:5px}
+.ledger .day{padding:10px 16px 4px;font-family:var(--display);font-size:15px;color:var(--fg-2);border-top:1px solid var(--line)}
+
+/* ---------- settings ---------- */
+.settings{display:grid;grid-template-columns:218px 1fr;gap:28px;align-items:start}
+.snav{position:sticky;top:0;display:flex;flex-direction:column;gap:2px}
+.snav button{display:flex;flex-direction:column;gap:1px;padding:8px 10px;border-radius:var(--r2);font-size:13px;color:var(--fg-2)}
+.snav button span{font-weight:450}
+.snav button small{font-size:11px;line-height:1.3;color:var(--fg-3)}
+.snav button:hover small{color:var(--fg-2)}
+.snav button[aria-current]{background:var(--s2);color:var(--fg);box-shadow:var(--shadow-1)}
+.snav button[aria-current] span{font-weight:500}
+.snav button[aria-current] small{color:var(--fg-2)}
+.sgroup{margin-bottom:26px;scroll-margin-top:16px}
+.sgroup>h3{font-family:var(--display);font-size:20px;font-weight:400;margin-bottom:8px;padding-left:2px}
+.sgroup>p{color:var(--fg-3);font-size:12.5px;margin:-4px 0 10px 2px}
+
+/* ---------- 19.8 additions: pages, forms, ledger rows, misc ---------- */
+.page{padding:22px 24px 48px}.page.narrow{max-width:960px;margin:0 auto;width:100%}
+.hint{font-size:12px;color:var(--fg-3)}.faint{color:var(--fg-3)}.mono{font-family:var(--mono);font-size:11.5px}
+.acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--r2);background:var(--s1);box-shadow:var(--shadow-1);font-size:13px;margin-bottom:12px}
+.row b{font-weight:450}
+.input.sm{padding:5px 10px;font-size:12.5px;width:200px}
+.field{display:flex;flex-direction:column;gap:5px;margin-bottom:12px;max-width:520px}
+.field>span{font:10.5px var(--pixel);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3)}
+.seg{margin-bottom:14px}
+.check{display:flex;align-items:flex-start;gap:10px;font-size:13px;padding:8px 2px;cursor:pointer}
+.check input{margin-top:3px;accent-color:var(--accent)}
+.check small{display:block;color:var(--fg-3);font-size:12px;margin-top:2px}
+.radios{display:flex;flex-direction:column;gap:2px;margin-bottom:12px}
+.sbody{min-width:0;max-width:640px}
+.sgroup>.lead{color:var(--fg-2);font-size:13.5px;margin:0 0 14px 2px;max-width:60ch}
+.btn.danger{color:var(--bad)}.btn.danger:not(.ghost){background:var(--bad-soft)}
+.btn:disabled{opacity:.45;pointer-events:none}
+.themes{display:flex;gap:12px}
+.themes button{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:10px;border-radius:var(--r);background:var(--s1);box-shadow:var(--shadow-1);width:150px;font-size:13px}
+.themes button[aria-pressed=true]{box-shadow:0 0 0 2px var(--accent)}
+.themes b{font-weight:450}.themes small{color:var(--fg-3);font:10.5px var(--pixel);letter-spacing:.06em;text-transform:uppercase;margin-top:-4px}
+.themes .sw{width:100%;height:56px;border-radius:8px;box-shadow:inset 0 0 0 1px var(--line-2)}
+.themes .sw.dark{background:linear-gradient(160deg,#1C1C1F,#000000)}.themes .sw.light{background:linear-gradient(160deg,#FFFFFF,#F7F7F5)}
+.klist.about span:last-child{font-family:var(--font);font-size:12.5px;color:var(--fg-2);text-align:right;max-width:34ch;flex:1}
+.tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:10px}
+.tags span{font:11px var(--mono);padding:2px 7px;border-radius:999px;background:var(--s3);color:var(--fg-2)}
+.card.soft{opacity:.85}
+/* switch as label+checkbox */
+label.switch{width:auto;height:auto;background:none;box-shadow:none;display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--fg-2);cursor:pointer}
+label.switch:after{display:none}
+label.switch input{position:absolute;opacity:0;width:0;height:0}
+label.switch i{width:34px;height:20px;border-radius:999px;background:var(--s3);box-shadow:inset 0 0 0 1px var(--line-2);position:relative;transition:background var(--t)}
+label.switch i:after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--fg);transition:transform var(--t)}
+label.switch input:checked+i{background:var(--accent)}label.switch input:checked+i:after{transform:translateX(14px);background:#fff}
+/* `.switch:has(input:checked)` paints the accent across the whole element. The
+   bare pill is 38px wide so that reads as "the switch is on", but `label.switch`
+   also contains the label text, so the accent flooded the label and left
+   "Remember" as low-contrast text on gold. The accent belongs on the track
+   (`label.switch i`) only. This rule is more specific than the generic one on
+   purpose: it is a correction to it, not a parallel style. */
+label.switch:has(input:checked){background:none;box-shadow:none}
+/* KEYBOARD — the real checkbox is visually hidden (opacity 0, 0×0) so the
+   ring has to be painted on the track it drives. Without this the switch is
+   reachable by Tab but gives no sighted keyboard user any sign it has focus. */
+label.switch input:focus-visible+i{box-shadow:0 0 0 2px var(--accent),inset 0 0 0 1px var(--line-2)}
+/* ledger rows (19.8 markup: when · what · signer · digest · state) */
+.ledger .lh,.ledger .lr{grid-template-columns:120px 1fr 130px 130px 16px;width:100%;text-align:left}
+.ledger .lr .mono{color:var(--fg-3)}
+.ledger .lr .t{min-width:0;overflow:hidden}.ledger .lr .t b{font-weight:420;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ledger .lr.open{background:var(--s2)}
+.ledger .dot{width:8px;height:8px;border-radius:50%;background:var(--fg-3);justify-self:end}
+.ledger .dot.ok{background:var(--ok)}.ledger .dot.pending{background:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)}.ledger .dot.refused{background:var(--bad)}.ledger .dot.error{background:transparent;box-shadow:inset 0 0 0 2px var(--bad)}
+.tamper{display:flex;flex-wrap:wrap;gap:4px;padding:12px 16px;border-radius:var(--r);background:var(--bad-soft);box-shadow:inset 0 0 0 1px var(--bad);font-size:13px;line-height:1.5;color:var(--fg)}
+.tamper b{font-weight:450;color:var(--bad)}
+.ledger .ld{padding:10px 16px 14px;background:var(--s2);border-top:1px solid var(--line)}
+.ledger .ld code{display:block;font:11.5px/1.6 var(--mono);color:var(--fg-2);word-break:break-all;background:var(--bg);padding:8px 10px;border-radius:var(--r2)}
+.ledger .ld .acts{margin-top:8px}
+.composer .send:disabled{opacity:.35}
+.pill.mono{font-family:var(--mono);font-size:11px}
+.rails{list-style:none;padding:0;margin:0;display:flex;flex-direction:column}
+.rails li{display:flex;justify-content:space-between;gap:14px;padding:9px 2px;border-top:1px solid var(--line);font-size:13px;color:var(--fg-2)}
+.rails li:first-child{border-top:0}
+.rails li small{font:10.5px var(--pixel);letter-spacing:.06em;text-transform:uppercase;color:var(--fg-3);white-space:nowrap;align-self:center}
+
+/* ── UI/UX pass: key holder, chips, focus, scrollbars ───────────────────── */
+.keyrow{display:flex;gap:8px;align-items:center}
+.keyrow .input{flex:1}
+.keyinput{font-family:var(--mono);letter-spacing:.12em;font-size:12.5px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.chip{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:9px 12px;border-radius:10px;background:var(--s1);box-shadow:var(--shadow-1);font-size:12.5px;color:var(--fg-2);max-width:210px;transition:box-shadow var(--t),color var(--t),transform var(--t)}
+.chip:hover{box-shadow:0 0 0 1px var(--accent),var(--shadow-1);color:var(--fg);transform:translateY(-1px)}
+.chip b{font-weight:500;color:var(--fg);font-size:13px}
+.chip span{font-size:11.5px;color:var(--fg-3);line-height:1.35}
+/* calm, themed scrollbars */
+*{scrollbar-width:thin;scrollbar-color:var(--s3) transparent}
+*::-webkit-scrollbar{width:9px;height:9px}
+*::-webkit-scrollbar-thumb{background:var(--s3);border-radius:8px;border:2px solid var(--bg)}
+*::-webkit-scrollbar-thumb:hover{background:var(--fg-3)}
+*::-webkit-scrollbar-track{background:transparent}
+/* LIGHT FINISH — the surface step (#E3E3DE) is a CARD colour; as a thumb on
+   paper it measured ~1.1:1 against the ground and read as a white smear.
+   A dedicated thumb ink keeps the same quietness with a grabbable edge. */
+[data-theme=light] *{scrollbar-color:#C6C5BD transparent}
+[data-theme=light] *::-webkit-scrollbar-thumb{background:#C6C5BD}
+[data-theme=light] *::-webkit-scrollbar-thumb:hover{background:var(--fg-3)}
+/* buttons: visible keyboard focus + gentler motion */
+.btn{will-change:transform}
+.btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn.primary:hover{transform:translateY(-1px);filter:brightness(1.05)}
+/* inputs: soft accent ring instead of a hard outline */
+.input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+/* empty states breathe */
+.empty{padding:34px 22px;text-align:center;color:var(--fg-3)}
+.empty h3{color:var(--fg-2);margin-bottom:4px}
+
+/* ============================================================
+   Federation — the si-* surface.
+
+   This screen was written before its stylesheet and shipped with
+   every class undefined: it is one click from the nav, so it has
+   been rendering as unstyled flow text this whole time. This block
+   is that missing layer.
+
+   It obeys the same rule as the rest of the file: interactive
+   chrome is ONE neutral grey plus ONE accent. Checkboxes and radios
+   fill with the accent; buttons are grey unless they are the single
+   primary action on the screen.
+   ============================================================ */
+.si-screen{max-width:840px;display:flex;flex-direction:column;gap:var(--s5);padding:var(--s6) var(--s7) var(--s8)}
+.si-screen-head h2{margin-bottom:0}
+.si-sub{color:var(--fg-2);font-size:13.5px;line-height:1.55;margin-top:var(--sp2)}
+.si-sub strong{color:var(--fg);font-weight:500}
+
+.si-card{background:var(--s1);border-radius:var(--r2);box-shadow:var(--shadow-1);padding:var(--s5)}
+.si-card>h3{margin-bottom:var(--sp3)}
+
+/* The explainer list. The accent dot is the only decoration: it marks
+   the five things mounting actually does without colouring each line. */
+.si-list{list-style:none;display:flex;flex-direction:column;gap:var(--sp2)}
+.si-list li{position:relative;padding-left:var(--s5);font-size:13.5px;line-height:1.62;color:var(--fg-2)}
+.si-list li:before{content:"";position:absolute;left:3px;top:9px;width:5px;height:5px;border-radius:50%;background:var(--accent);opacity:.8}
+.si-list strong{color:var(--fg);font-weight:500}
+.si-list em{color:var(--fg);font-style:italic}
+
+/* A governance note: quiet surface, one accent rule down the left edge.
+   Weight, not hue, is what makes it read as the important paragraph. */
+.si-note{margin-top:var(--s4);padding:var(--sp3) var(--s4);border-radius:var(--r);background:var(--s2);border-left:2px solid var(--accent);font-size:12.5px;line-height:1.62;color:var(--fg-2)}
+.si-note strong{color:var(--fg);font-weight:500}
+
+.si-mono{font-family:var(--mono);font-size:12.5px;letter-spacing:0}
+.si-small{font-size:11.5px;color:var(--fg-3)}
+
+.si-kv{display:grid;grid-template-columns:auto 1fr;gap:var(--sp2) var(--s5);margin-top:var(--s4);padding-top:var(--s4);border-top:1px solid var(--line);font-size:13px}
+.si-kv dt{color:var(--fg-3);font-size:12px;padding-top:1px}
+.si-kv dd{color:var(--fg);min-width:0;word-break:break-all}
+
+.si-fieldset{margin-top:var(--s4);border:0;padding:0;display:flex;flex-direction:column;gap:var(--sp2)}
+.si-fieldset legend{padding:0;margin-bottom:var(--sp2);font:10.5px var(--pixel);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3)}
+
+/* Radio and checkbox rows. Drawn from scratch so the fill can BE the
+   accent at every size and the ring can stay 1.5px instead of the UA 2px. */
+.si-radio,.si-check{display:flex;gap:var(--sp3);align-items:flex-start;padding:var(--sp3) var(--s4);border-radius:var(--r);background:var(--s2);cursor:pointer;font-size:13px;line-height:1.58;color:var(--fg-2);transition:background var(--t)}
+.si-radio:hover,.si-check:hover{background:var(--s3)}
+.si-radio input,.si-check input{appearance:none;-webkit-appearance:none;flex:none;width:16px;height:16px;margin:2px 0 0;border:1.5px solid var(--line-2);background:var(--s1);cursor:pointer;transition:border-color var(--t),background var(--t)}
+.si-radio input{border-radius:50%}
+.si-check input{border-radius:4px}
+.si-radio input:checked,.si-check input:checked{border-color:var(--accent);background:var(--accent)}
+/* inner dot for the radio: an inset ring in the page colour leaves a
+   5px accent dot without needing a second element */
+.si-radio input:checked{box-shadow:inset 0 0 0 3px var(--s1)}
+/* tick for the checkbox, clipped from a box - no icon font, no svg asset */
+.si-check input:checked:after{content:"";display:block;width:100%;height:100%;background:var(--accent-fg);clip-path:polygon(14% 46%,0 62%,39% 100%,100% 24%,84% 8%,38% 70%)}
+.si-radio strong,.si-check strong{color:var(--fg);font-weight:500}
+
+.si-hint{margin-top:var(--sp2);padding:var(--sp3) var(--s4);border-radius:var(--r);background:var(--accent-soft);font-size:12.5px;line-height:1.62;color:var(--fg-2)}
+
+/* The pairing code. This is the one thing a human types by hand, so it
+   is the largest mono on the screen and carries the accent. */
+.si-big{font-size:20px;letter-spacing:.16em;color:var(--accent);padding:var(--s4) 0 var(--sp3);word-break:break-all}
+
+.si-row{display:flex;gap:var(--sp2);flex-wrap:wrap;margin-top:var(--s5)}
+.si-btn{display:inline-flex;align-items:center;gap:7px;padding:8px 16px;border-radius:var(--r);font-size:13px;font-weight:500;background:var(--s2);color:var(--fg);box-shadow:var(--shadow-1);transition:background var(--t),transform var(--t),filter var(--t)}
+.si-btn:hover{background:var(--s3)}
+.si-btn:active{transform:translateY(1px)}
+.si-btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+/* The single primary action on this screen, and the only accent-filled
+   control outside the radio/checkbox inputs. */
+.si-btn-primary{background:var(--accent);color:var(--accent-fg);box-shadow:0 1px 2px rgba(0,0,0,.22)}
+.si-btn-primary:hover{background:var(--accent);filter:brightness(1.08)}
+.si-btn-primary:disabled:hover{filter:none}
+
+.si-pre{margin-top:var(--s4);padding:var(--s4);border-radius:var(--r);background:var(--bg-deep);border:1px solid var(--line);font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--fg-2);white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto}
+
+/* Screen-reader-only, and the composer's attachment glyph. */
+.sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.ic-clip,.ic-folder{width:15px;height:15px;flex:none;opacity:.9}
+/* These two were written as STROKE rules (stroke/fill on an inline <svg>), but
+   the composer renders them as <i> mask glyphs — with no --m defined the mask
+   was invalid and the box painted solid currentColor, i.e. two grey squares.
+   Masks now carry the drawing; the stroke declarations are gone. */
+.ic-clip{--m:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21.4 11.6l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9'/%3E%3C/svg%3E")}
+.ic-folder{--m:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 6.5A1.5 1.5 0 0 1 5 5h5l2 2.5h7A1.5 1.5 0 0 1 20.5 9v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z'/%3E%3C/svg%3E")}
+/* File-kind glyphs — one minimal line per shareable format, drawn in the same
+   hand as the nav icons (1.8 stroke, round joins, currentColor mask) so the
+   share row reads as part of the system and not a sticker sheet. */
+.ic-f-pdf,.ic-f-doc,.ic-f-sheet,.ic-f-slides,.ic-f-zip{width:13px;height:13px;flex:none;opacity:.8}
+.ic-f-pdf{--m:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 3h9l5 5v13H5z'/%3E%3Cpath d='M14 3v5h5'/%3E%3Cpath d='M8 15c1.4 1.4 2.4-1.4 3.8 0s2.4 1.4 3.8 0'/%3E%3C/svg%3E")}
+.ic-f-doc{--m:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 3h9l5 5v13H5z'/%3E%3Cpath d='M14 3v5h5'/%3E%3Cpath d='M8.5 13h7M8.5 16.5h7M8.5 20h4'/%3E%3C/svg%3E")}
+.ic-f-sheet{--m:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='4' width='16' height='16' rx='1.5'/%3E%3Cpath d='M4 9.5h16M4 15h16M9.5 4v16M15 4v16'/%3E%3C/svg%3E")}
+.ic-f-slides{--m:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3.5' y='4' width='17' height='12' rx='1.5'/%3E%3Cpath d='M7.5 8h6M7.5 11.5h9'/%3E%3Cpath d='M12 16v3M8.5 21l3.5-2 3.5 2'/%3E%3C/svg%3E")}
+.ic-f-zip{--m:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='3.5' width='14' height='17' rx='1.5'/%3E%3Cpath d='M12 3.5v2.5M12 8.5v2M12 13v2M12 17.5v3'/%3E%3C/svg%3E")}
+/* The share row itself: monochrome, tight, hidden rather than wrapped when the
+   composer narrows — the clip button is the real door, this is its caption. */
+.composer .ftypes{display:inline-flex;align-items:center;gap:9px;min-width:0;overflow:hidden}
+.composer .ftype{display:inline-flex;align-items:center;gap:4px;font:10px var(--pixel);letter-spacing:.07em;color:var(--fg-3);cursor:default;transition:color var(--t)}
+.composer .ftype:hover{color:var(--fg-2)}
+.composer .ftype .ic{stroke:currentColor;fill:none}
+@media (max-width:900px){.composer .ftypes{display:none}}
+.folder{display:inline-flex;align-items:center;gap:6px;color:var(--fg-2);font-size:12.5px}
+
+@media (max-width:720px){
+  .si-screen{padding:var(--s5) var(--s4) var(--s7)}
+  .si-kv{grid-template-columns:1fr;gap:var(--sp1) 0}
+  .si-kv dd{margin-bottom:var(--sp2)}
+}
+
+.snav-group{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--fg-3);margin:14px 10px 4px}
+.snav-group:first-child{margin-top:0}
