@@ -183,8 +183,8 @@ ok("one ember accent — dark pulls brighter, light holds deeper",
   && contrast(lightAccent, lightBg) >= 4.5,
   `dark ${darkAccent} (hue ${hueOf(darkAccent).toFixed(0)}, ${contrast(darkAccent, darkBg).toFixed(2)}:1), light ${lightAccent} (hue ${hueOf(lightAccent).toFixed(0)}, ${contrast(lightAccent, lightBg).toFixed(2)}:1)`);
 ok("no Apple-blue / competitor purple / electric cyan anywhere", !/#007AFF|#3B82F6|#2563EB|#7C3AED|#06B6D4|#007AFF/i.test(css));
-ok("Instrument Serif for display, Geist for body and mono", /Instrument Serif/.test(css) && /Geist/.test(css) && /Geist Mono/.test(css));
-ok("not Inter / JetBrains", !/font-family[^;}]*Inter\b/.test(css) && !/JetBrains/.test(css));
+ok("Space Grotesk for display, Geist for body, JetBrains Mono for data", /Space Grotesk/.test(css) && /Geist/.test(css) && /JetBrains Mono/.test(css));
+ok("not Inter", !/font-family[^;}]*Inter\b/.test(css));
 ok("weights top out at medium (500) — nothing semibold/bold/600+", !/font-weight:\s*(6|7|8|9)00/.test(css) && !/font-weight:\s*bold(?!.*oblique)/.test(css.replace(/font-weight:\(.*?\)/g, "")));
 ok("no legacy animation gimmicks (splash, shimmer, glow keyframes)", !/@keyframes\s+(splash|shimmer|glow|pulseGlow|float)/.test(css));
 ok("themes are attribute-scoped so both ship in one sheet", /\[data-theme=dark\]|\[data-theme="dark"\]/.test(css) && /\[data-theme=light\]|\[data-theme="light"\]/.test(css));
