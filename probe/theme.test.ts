@@ -173,10 +173,10 @@ const warmth = (() => {
 ok("the light ground is warm (red channel above blue)", warmth > 0, `R-B = ${warmth}`);
 /* ONE accent, verified as one HUE rather than as two literals: the identity is
  * the hue, the per-theme value is a tuning decision. Both must sit on the same
- * 177deg teal and both must clear AA as text on their own ground. */
+ * ember hue and both must clear AA as text on their own ground. */
 const darkAccent = token("dark", "accent");
 const lightAccent = token("light", "accent");
-ok("one desaturated teal accent — dark pulls brighter, light holds deeper",
+ok("one ember accent — dark pulls brighter, light holds deeper",
   Math.abs(hueOf(darkAccent) - hueOf(lightAccent)) < 8
   && relLum(darkAccent) > relLum(lightAccent) * 2
   && contrast(darkAccent, darkBg) >= 4.5

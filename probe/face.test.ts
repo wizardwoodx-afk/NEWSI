@@ -89,14 +89,12 @@ describe("the shell is wired", () => {
     const main = fs.readFileSync(path.join(ROOT, "src", "main.tsx"), "utf8");
     assert.ok(main.includes("ui/vh.css"));
     const css = fs.readFileSync(path.join(ROOT, "src", "ui", "vh.css"), "utf8");
-      // v0.0.3 re-anchored the house palette to deep ink / paper cream / one
-      // desaturated teal accent; the SI redesign then re-anchored the dark
-      // ground to true black and re-stepped the accent. The assertion's
-      // PURPOSE is unchanged and is what this still protects: the house tokens
-      // are declared in the ONE stylesheet, the accent is still a desaturated
-      // teal (asserted as a HUE, since the identity is the hue and the exact
-      // value is a per-theme tuning decision), the display face is still there,
-      // and Tailwind is still not pulled in at runtime.
+      // The house palette is warm graphite with ONE ember accent. The
+      // assertion's PURPOSE is unchanged: the house tokens are declared in the
+      // ONE stylesheet, the accent is a single hue family (asserted as a HUE,
+      // since the identity is the hue and the exact value is a per-theme
+      // tuning decision), the display face is still there, and Tailwind is
+      // still not pulled in at runtime.
       const accentHex = css.match(/--accent:\s*(#[0-9a-f]{6})/i)?.[1] ?? "";
       const rgb = [0, 2, 4].map((i) => parseInt(accentHex.slice(1 + i, 3 + i), 16)) as [number, number, number];
       const mx = Math.max(...rgb); const mn = Math.min(...rgb); const d = mx - mn;
@@ -107,9 +105,10 @@ describe("the shell is wired", () => {
             : 60 * ((rgb[0] - rgb[1]) / d + 4);
         if (hdeg < 0) hdeg += 360;
       }
-      // 177deg +/- 15 is the house teal: cyan-leaning, unmistakably not blue.
-      assert.ok(/--bg:\s*#[0-9a-f]{3,8}/i.test(css) && hdeg > 162 && hdeg < 192, `accent ${accentHex} is ${hdeg.toFixed(0)}deg`);
-      assert.ok(/Instrument Serif/.test(css));
+      // 29deg +/- 12 is the house ember: warm amber, unmistakably not the old
+      // cyan-leaning teal and not a primary blue.
+      assert.ok(/--bg:\s*#[0-9a-f]{3,8}/i.test(css) && hdeg > 17 && hdeg < 41, `accent ${accentHex} is ${hdeg.toFixed(0)}deg`);
+      assert.ok(/Space Grotesk/.test(css));
       assert.ok(!/blue/i.test(css.replace(/hair.*blue/, "")));
     assert.ok(!/@import "tailwindcss"/.test(css));
   });
