@@ -1,79 +1,249 @@
 /* src/ui/si/si.css */
 :root {
-  --si-bg: #0A0C0E;
-  --si-bg-2: #07080A;
-  --si-surface: #12151A;
-  --si-surface-2: #191D22;
-  --si-line: #23282E;
-  --si-line-2: #2e323a;
-  --si-text: #F2F4F6;
-  --si-text-2: #A9B0B8;
-  --si-text-3: #7F868E;
-  --si-accent: #08302e;
-  --si-accent-2: #0f4a46;
-  --si-accent-3: #18776f;
-  --si-accent-ink: #e4f5f2;
-  --si-accent-soft: rgba(24, 119, 111, 0.16);
-  --si-ink-soft: #8ad8d1;
-  --si-hover: #1f2229;
-  --si-line-3: #3a3f49;
-  --si-ok: #4a7c59;
-  --si-warn: #9a7b34;
-  --si-bad: #a2493c;
-  --si-text-dim: #8b919c;
-  --si-r-card: 10px;
-  --si-r-ctl: 8px;
   --si-1: 4px;
   --si-2: 8px;
   --si-3: 12px;
   --si-4: 16px;
-  --si-6: 24px;
-  --si-8: 32px;
-  --si-font:
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    Roboto,
-    Helvetica,
-    Arial,
-    sans-serif;
-  --si-mono:
-    ui-monospace,
-    "Cascadia Mono",
-    "SF Mono",
-    Menlo,
-    Consolas,
-    monospace;
-  --si-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
-  --si-t: 140ms var(--si-ease);
-  --si-brand-mark: url("data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 48 48%22 width=%2248%22 height=%2248%22 role=%22img%22 aria-label=%22SelfImpulse%22> <title>SelfImpulse</title> <rect x=%221.5%22 y=%221.5%22 width=%2245%22 height=%2245%22 rx=%2211%22 fill=%22%230F1113%22 stroke=%22%23262A31%22 stroke-width=%221.5%22/> <path d=%22M 8 31.5 L 14.5 31.5 L 19.5 13.5 L 25.5 35.5 L 30.5 24.5%22 fill=%22none%22 stroke=%22%23C9A45C%22 stroke-width=%224.4%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/> <circle cx=%2235.5%22 cy=%2224.5%22 r=%222.5%22 fill=%22%23C9A45C%22/> <circle cx=%2241.5%22 cy=%2224.5%22 r=%221.4%22 fill=%22%233F7D6E%22 fill-opacity=%220.72%22/> </svg>");
-  --si-rail: 220px;
+  --si-5: 24px;
+  --si-6: 32px;
+  --si-7: 48px;
+  --si-8: 64px;
+  --si-r-ctl: 6px;
+  --si-r-card: 10px;
+  --si-t: 140ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  --si-rail: 248px;
   --si-topbar: 52px;
   --si-content: 1180px;
+  --si-font:
+    "Switzer",
+    -apple-system,
+    BlinkMacSystemFont,
+    "SF Pro Text",
+    system-ui,
+    sans-serif;
+  --si-mono:
+    "Fragment Mono",
+    ui-monospace,
+    "SF Mono",
+    Menlo,
+    monospace;
+  --si-brand-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48' width='48' height='48' role='img' aria-label='SelfImpulse'%3E %3Ctitle%3ESelfImpulse%3C/title%3E %3Crect x='1.5' y='1.5' width='45' height='45' rx='11' fill='%230F1113' stroke='%23262A31' stroke-width='1.5'/%3E %3Cpath d='M 8 31.5 L 14.5 31.5 L 19.5 13.5 L 25.5 35.5 L 30.5 24.5' fill='none' stroke='%23C9A45C' stroke-width='4.4' stroke-linecap='round' stroke-linejoin='round'/%3E %3Ccircle cx='35.5' cy='24.5' r='2.5' fill='%23C9A45C'/%3E %3Ccircle cx='41.5' cy='24.5' r='1.4' fill='%233F7D6E' fill-opacity='0.72'/%3E %3C/svg%3E");
 }
-[data-theme=light] {
+[data-theme=holst] {
+  color-scheme: dark;
+  --si-bg: #0D1B2A;
+  --si-bg-2: #070F17;
+  --si-surface: #17263E;
+  --si-surface-2: #1E2F49;
+  --si-line: rgba(244,241,222,0.1);
+  --si-line-2: rgba(244,241,222,0.18);
+  --si-text: #F4F1DE;
+  --si-text-2: #D4C4A8;
+  --si-text-3: #A9B6C2;
+  --si-text-dim: #A9B6C2;
+  --si-accent: #879B8A;
+  --si-accent-2: #728074;
+  --si-accent-3: #ABB9AD;
+  --si-accent-ink: #0A080A;
+  --si-accent-soft: rgba(135,155,138,0.16);
+  --si-ink-soft: #879B8A;
+  --si-hover: #1E2F49;
+  --si-line-3: #566479;
+  --si-ok: #A8C079;
+  --si-warn: #E5B94E;
+  --si-bad: #CE8373;
+  --si-ok-soft: rgba(168,192,121,0.16);
+  --si-warn-soft: rgba(229,185,78,0.14);
+  --si-bad-soft: rgba(206,131,115,0.16);
+}
+[data-theme=obsidian] {
+  color-scheme: dark;
+  --si-bg: #0A0A0A;
+  --si-bg-2: #060606;
+  --si-surface: #141719;
+  --si-surface-2: #1C2023;
+  --si-line: rgba(229,228,226,0.1);
+  --si-line-2: rgba(229,228,226,0.18);
+  --si-text: #E5E4E2;
+  --si-text-2: #A7ADB1;
+  --si-text-3: #7F888E;
+  --si-text-dim: #7F888E;
+  --si-accent: #798996;
+  --si-accent-2: #737e87;
+  --si-accent-3: #A1ADB5;
+  --si-accent-ink: #0A080A;
+  --si-accent-soft: rgba(121,137,150,0.16);
+  --si-ink-soft: #798996;
+  --si-hover: #1C2023;
+  --si-line-3: #565A5D;
+  --si-ok: #A8C079;
+  --si-warn: #E5B94E;
+  --si-bad: #CD8070;
+  --si-ok-soft: rgba(168,192,121,0.16);
+  --si-warn-soft: rgba(229,185,78,0.14);
+  --si-bad-soft: rgba(205,128,112,0.16);
+}
+[data-theme=azure] {
+  color-scheme: dark;
+  --si-bg: #121416;
+  --si-bg-2: #0A0B0C;
+  --si-surface: #1A1F22;
+  --si-surface-2: #222829;
+  --si-line: rgba(242,245,247,0.1);
+  --si-line-2: rgba(242,245,247,0.18);
+  --si-text: #F2F5F7;
+  --si-text-2: #BFD8E3;
+  --si-text-3: #8CB9CC;
+  --si-text-dim: #8CB9CC;
+  --si-accent: #5496B3;
+  --si-accent-2: #548297;
+  --si-accent-3: #87B6CA;
+  --si-accent-ink: #0A080A;
+  --si-accent-soft: rgba(84,150,179,0.16);
+  --si-ink-soft: #5496B3;
+  --si-hover: #222829;
+  --si-line-3: #5A5D60;
+  --si-ok: #A8C079;
+  --si-warn: #E5B94E;
+  --si-bad: #CD8070;
+  --si-ok-soft: rgba(168,192,121,0.16);
+  --si-warn-soft: rgba(229,185,78,0.14);
+  --si-bad-soft: rgba(205,128,112,0.16);
+}
+[data-theme=platinum] {
   color-scheme: light;
-  --si-bg: #E6E5DD;
-  --si-bg-2: #DCDBD1;
-  --si-surface: #F1F0E9;
-  --si-surface-2: #E9E8E0;
-  --si-line: rgba(18, 20, 24, 0.12);
-  --si-line-2: rgba(18, 20, 24, 0.2);
-  --si-text: #15181A;
-  --si-text-2: #4A5157;
-  --si-text-3: #5B6269;
-  --si-text-dim: #565c64;
-  --si-accent: #0a6e6a;
-  --si-accent-2: #0c8480;
-  --si-accent-3: #0a6e6a;
-  --si-accent-ink: #ffffff;
-  --si-accent-soft: rgba(10, 110, 106, 0.1);
-  --si-ink-soft: #0a6e6a;
-  --si-hover: #DEDDD4;
-  --si-line-3: #c7c6bf;
-  --si-ok: #55682f;
-  --si-warn: #8a5c1f;
-  --si-bad: #9c3b2d;
+  --si-bg: #D3D0D5;
+  --si-bg-2: #ADABAF;
+  --si-surface: #E6E4E9;
+  --si-surface-2: #DAD8DE;
+  --si-line: rgba(41,43,57,0.14);
+  --si-line-2: rgba(41,43,57,0.24);
+  --si-text: #292B39;
+  --si-text-2: #3a3c48;
+  --si-text-3: #3b3c45;
+  --si-text-dim: #51535F;
+  --si-accent: #292B39;
+  --si-accent-2: #50515D;
+  --si-accent-3: #20222C;
+  --si-accent-ink: #F7F4EE;
+  --si-accent-soft: rgba(41,43,57,0.1);
+  --si-ink-soft: #292B39;
+  --si-hover: #DAD8DE;
+  --si-line-3: #737175;
+  --si-ok: #3B4921;
+  --si-warn: #5D3E15;
+  --si-bad: #732F23;
+  --si-ok-soft: rgba(78,96,43,0.16);
+  --si-warn-soft: rgba(121,81,27,0.14);
+  --si-bad-soft: rgba(143,58,44,0.16);
+}
+[data-theme=titanium] {
+  color-scheme: dark;
+  --si-bg: #0D0D0D;
+  --si-bg-2: #070707;
+  --si-surface: #1A2128;
+  --si-surface-2: #232C34;
+  --si-line: rgba(237,233,226,0.1);
+  --si-line-2: rgba(237,233,226,0.18);
+  --si-text: #EDE9E2;
+  --si-text-2: #B8BD91;
+  --si-text-3: #91957A;
+  --si-text-dim: #91957A;
+  --si-accent: #C2A472;
+  --si-accent-2: #978059;
+  --si-accent-3: #D4BF9C;
+  --si-accent-ink: #0A080A;
+  --si-accent-soft: rgba(194,164,114,0.16);
+  --si-ink-soft: #C2A472;
+  --si-hover: #232C34;
+  --si-line-3: #5A656F;
+  --si-ok: #A8C079;
+  --si-warn: #E5B94E;
+  --si-bad: #CD8070;
+  --si-ok-soft: rgba(168,192,121,0.16);
+  --si-warn-soft: rgba(229,185,78,0.14);
+  --si-bad-soft: rgba(205,128,112,0.16);
+}
+[data-theme=akaroa] {
+  color-scheme: light;
+  --si-bg: #E8DECE;
+  --si-bg-2: #BEB6A9;
+  --si-surface: #F4EEE2;
+  --si-surface-2: #E0D4BF;
+  --si-line: rgba(45,45,45,0.14);
+  --si-line-2: rgba(45,45,45,0.24);
+  --si-text: #2D2D2D;
+  --si-text-2: #4b4439;
+  --si-text-3: #4a4439;
+  --si-text-dim: #5D5648;
+  --si-accent: #6E5941;
+  --si-accent-2: #796958;
+  --si-accent-3: #554533;
+  --si-accent-ink: #F7F4EE;
+  --si-accent-soft: rgba(110,89,65,0.1);
+  --si-ink-soft: #67533d;
+  --si-hover: #E0D4BF;
+  --si-line-3: #7A7161;
+  --si-ok: #3B4921;
+  --si-warn: #5D3E15;
+  --si-bad: #732F23;
+  --si-ok-soft: rgba(78,96,43,0.16);
+  --si-warn-soft: rgba(121,81,27,0.14);
+  --si-bad-soft: rgba(143,58,44,0.16);
+}
+[data-theme=caesar] {
+  color-scheme: dark;
+  --si-bg: #0E0809;
+  --si-bg-2: #080405;
+  --si-surface: #171012;
+  --si-surface-2: #1F1618;
+  --si-line: rgba(247,242,243,0.1);
+  --si-line-2: rgba(247,242,243,0.18);
+  --si-text: #F7F2F3;
+  --si-text-2: #C4B4B8;
+  --si-text-3: #96868A;
+  --si-text-dim: #96868A;
+  --si-accent: #AD707F;
+  --si-accent-2: #9a727b;
+  --si-accent-3: #C69BA5;
+  --si-accent-ink: #0A080A;
+  --si-accent-soft: rgba(173,112,127,0.16);
+  --si-ink-soft: #b27987;
+  --si-hover: #1F1618;
+  --si-line-3: #595051;
+  --si-ok: #A8C079;
+  --si-warn: #E5B94E;
+  --si-bad: #CD8070;
+  --si-ok-soft: rgba(168,192,121,0.16);
+  --si-warn-soft: rgba(229,185,78,0.14);
+  --si-bad-soft: rgba(205,128,112,0.16);
+}
+[data-theme=stratos] {
+  color-scheme: dark;
+  --si-bg: #0D0A12;
+  --si-bg-2: #07060A;
+  --si-surface: #16121F;
+  --si-surface-2: #1E1929;
+  --si-line: rgba(246,242,250,0.1);
+  --si-line-2: rgba(246,242,250,0.18);
+  --si-text: #F6F2FA;
+  --si-text-2: #CFC2DE;
+  --si-text-3: #9C8FB0;
+  --si-text-dim: #9C8FB0;
+  --si-accent: #AE5DEA;
+  --si-accent-2: #9b66c1;
+  --si-accent-3: #C78EF0;
+  --si-accent-ink: #0A080A;
+  --si-accent-soft: rgba(174,93,234,0.16);
+  --si-ink-soft: #b367eb;
+  --si-hover: #1E1929;
+  --si-line-3: #575062;
+  --si-ok: #A8C079;
+  --si-warn: #E5B94E;
+  --si-bad: #CD8070;
+  --si-ok-soft: rgba(168,192,121,0.16);
+  --si-warn-soft: rgba(229,185,78,0.14);
+  --si-bad-soft: rgba(205,128,112,0.16);
 }
 html,
 body,
@@ -499,6 +669,16 @@ summary:focus-visible,
   flex-direction: column;
   gap: var(--si-2);
 }
+@keyframes si-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
 .si-content .si-screen {
   max-width: none;
   padding: 0;
@@ -653,18 +833,18 @@ summary:focus-visible,
   font-size: 11px;
 }
 .si-content .pill.ok {
-  background: rgba(74, 124, 89, 0.16);
-  color: #7fae8c;
+  background: var(--si-ok-soft);
+  color: var(--si-ok);
   border-color: transparent;
 }
 .si-content .pill.warn {
-  background: rgba(154, 123, 52, 0.14);
-  color: #a8967a;
+  background: var(--si-warn-soft);
+  color: var(--si-warn);
   border-color: transparent;
 }
 .si-content .pill.bad {
-  background: rgba(162, 73, 60, 0.16);
-  color: #d08a7f;
+  background: var(--si-bad-soft);
+  color: var(--si-bad);
   border-color: transparent;
 }
 .si-content .si-kv,
@@ -727,7 +907,10 @@ summary:focus-visible,
 }
 .si-content .top {
   height: auto;
-  display: block;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--si-2) var(--si-3);
   padding: 0 0 var(--si-4);
   border-bottom: 1px solid var(--si-line);
   margin-bottom: var(--si-4);
@@ -737,8 +920,9 @@ summary:focus-visible,
   font-weight: 600;
 }
 .si-content .top .right {
-  margin: var(--si-2) 0 0;
+  margin: 0 0 0 auto;
   display: flex;
+  align-items: center;
   gap: var(--si-2);
 }
 .si-content .top .sub {
@@ -747,7 +931,9 @@ summary:focus-visible,
   color: var(--si-text-2);
 }
 .si-content .scroll {
-  flex: none;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
   overflow: visible;
   min-height: 0;
 }
@@ -756,6 +942,14 @@ summary:focus-visible,
   max-width: none;
   margin: 0;
   padding: 0;
+  width: 100%;
+}
+.si-content .deck-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.si-content .deck-wrap > .composer {
+  margin-top: auto;
   width: 100%;
 }
 .si-content h1,
@@ -863,18 +1057,6 @@ summary:focus-visible,
     overflow-wrap: anywhere;
     word-break: break-word;
   }
-}
-[data-theme=light] .si-content .pill.ok {
-  background: rgba(85, 104, 47, 0.1);
-  color: var(--si-ok);
-}
-[data-theme=light] .si-content .pill.warn {
-  background: rgba(138, 92, 31, 0.1);
-  color: var(--si-warn);
-}
-[data-theme=light] .si-content .pill.bad {
-  background: rgba(156, 59, 45, 0.1);
-  color: var(--si-bad);
 }
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -1128,13 +1310,13 @@ summary:focus-visible,
   font-size: 12px;
   color: var(--si-text-2);
 }
-.pc-warn {
+.si-content .pc-warn {
   padding: 11px 13px;
-  background: rgba(154, 123, 52, 0.09);
+  background: rgba(154, 123, 52, 0.05);
   border: 1px solid rgba(154, 123, 52, 0.42);
   border-radius: 8px;
   font-size: 13px;
-  color: var(--si-text-2);
+  color: var(--si-text);
 }
 .pc-dl {
   display: grid;

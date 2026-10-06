@@ -10,10 +10,13 @@ await page.goto("http://localhost:5173", { waitUntil: "networkidle" });
 await page.waitForTimeout(1500);
 await page.screenshot({ path: "D:/selfimpulse-work/shots/v3-dark.png" });
 
-await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+// Two real finishes: holst (default, dark) and platinum (light). The retired
+// "light"/"dark" ids no longer exist — setting them would fall back to holst
+// and silently screenshot the same finish twice.
+await page.evaluate(() => { document.documentElement.dataset.theme = "platinum"; });
 await page.waitForTimeout(400);
 await page.screenshot({ path: "D:/selfimpulse-work/shots/v3-light.png" });
-await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+await page.evaluate(() => { document.documentElement.dataset.theme = "holst"; });
 await page.waitForTimeout(300);
 
 // walk the screens that have real content

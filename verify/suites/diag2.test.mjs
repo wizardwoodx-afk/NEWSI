@@ -3075,7 +3075,7 @@ var init_localDb = __esm({
           throw new Error("approval_authorize requires an interactive confirm dialog \u2014 refusing to mint a capability non-interactively.");
         }
         const word = decision === "APPROVED" ? "approve" : "refuse";
-        const ok = window.confirm(
+        const ok2 = window.confirm(
           `SelfImpulse \u2014 human approval gate
 
 ${a.summary}
@@ -3086,7 +3086,7 @@ Verdict if you confirm: ${decision}
 
 ${word.toUpperCase()} this? Cancel mints nothing and decides nothing.`
         );
-        if (!ok) {
+        if (!ok2) {
           throw new Error(`approval ${id}: declined at the confirm dialog \u2014 no capability was minted and no decision was recorded.`);
         }
         const token = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? `cap_${crypto.randomUUID()}` : uid("cap");
@@ -4015,6 +4015,9 @@ var init_sandbox = __esm({
     WRAPPER_UNAVAILABLE = /* @__PURE__ */ new Set(["ENOENT", "EACCES", "EPERM", "ENOEXEC"]);
   }
 });
+
+// probe/diag2.test.ts
+import assert from "node:assert/strict";
 
 // src/mission/missionRuntime.ts
 init_id();
@@ -6081,7 +6084,7 @@ var ApprovalGateService = class {
       const list = this.waiters.get(id) ?? [];
       list.push(resolve);
       this.waiters.set(id, list);
-      const started = Date.now();
+      const started2 = Date.now();
       const tick = setInterval(() => {
         const req = this.requests.get(id);
         if (!req || req.status !== "PENDING") {
@@ -6092,7 +6095,7 @@ var ApprovalGateService = class {
         if (isCancelled()) {
           clearInterval(tick);
           resolve("TIMED_OUT");
-        } else if (Date.now() - started > timeoutMs) {
+        } else if (Date.now() - started2 > timeoutMs) {
           clearInterval(tick);
           req.status = "TIMED_OUT";
           req.decidedAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -6476,16 +6479,16 @@ var OrganizationRuntime = class {
   }
   /** Merge sibling tasks back into one. */
   merge(taskIds, title, reason, actor) {
-    const tasks = taskIds.map((id) => this.requireTask(id));
-    if (tasks.length < 2) throw new Error("merge needs at least two tasks");
-    const deps = [...new Set(tasks.flatMap((t) => t.dependsOn))].filter((d) => !taskIds.includes(d));
+    const tasks2 = taskIds.map((id) => this.requireTask(id));
+    if (tasks2.length < 2) throw new Error("merge needs at least two tasks");
+    const deps = [...new Set(tasks2.flatMap((t) => t.dependsOn))].filter((d) => !taskIds.includes(d));
     const merged = this.createTask({
       title,
-      description: tasks.map((t) => `- ${t.title}: ${t.description}`).join("\n"),
+      description: tasks2.map((t) => `- ${t.title}: ${t.description}`).join("\n"),
       dependsOn: deps,
-      risk: tasks.reduce((max, t) => rank(t.risk) > rank(max) ? t.risk : max, "LOW")
+      risk: tasks2.reduce((max, t) => rank(t.risk) > rank(max) ? t.risk : max, "LOW")
     });
-    for (const t of tasks) {
+    for (const t of tasks2) {
       t.state = "CANCELLED";
       this.touch(t.taskId);
     }
@@ -6584,9 +6587,9 @@ var OrganizationRuntime = class {
     return out;
   }
   isDone() {
-    const tasks = this.tasks_();
-    if (!tasks.length) return false;
-    return tasks.every((t) => t.state === "DONE" || t.state === "CANCELLED");
+    const tasks2 = this.tasks_();
+    if (!tasks2.length) return false;
+    return tasks2.every((t) => t.state === "DONE" || t.state === "CANCELLED");
   }
   hasUnrecoverable() {
     return this.tasks_().some((t) => t.state === "FAILED" && t.attempts >= t.maxAttempts);
@@ -6652,12 +6655,12 @@ function rank(r) {
 function tasksFromPlan(org, steps) {
   const byStep = /* @__PURE__ */ new Map();
   const created = /* @__PURE__ */ new Set();
-  let pending = [...steps];
+  let pending2 = [...steps];
   let guard = 0;
-  while (pending.length && guard++ < 50) {
-    const batch = pending.filter((s) => s.dependsOn.every((d) => created.has(d)));
+  while (pending2.length && guard++ < 50) {
+    const batch = pending2.filter((s) => s.dependsOn.every((d) => created.has(d)));
     if (!batch.length) {
-      for (const s of pending) {
+      for (const s of pending2) {
         byStep.set(s.id, org.createTask(taskInputFor(s, s.dependsOn)));
         created.add(s.id);
       }
@@ -6668,7 +6671,7 @@ function tasksFromPlan(org, steps) {
       byStep.set(s.id, org.createTask(taskInputFor(s, deps)));
       created.add(s.id);
     }
-    pending = pending.filter((s) => !created.has(s.id));
+    pending2 = pending2.filter((s) => !created.has(s.id));
   }
   return byStep;
 }
@@ -6702,24 +6705,24 @@ var OrganizationSupervisor = class {
   executedShapes = /* @__PURE__ */ new Set();
   observe(signals) {
     const agents = this.org.agents();
-    const tasks = this.org.tasks_();
+    const tasks2 = this.org.tasks_();
     const ages = this.org.taskAges();
-    const live = tasks.filter((t) => t.state === "RUNNING" || t.state === "ASSIGNED" || t.state === "PENDING");
-    const done = tasks.filter((t) => t.state === "DONE" || t.state === "CANCELLED").length;
+    const live = tasks2.filter((t) => t.state === "RUNNING" || t.state === "ASSIGNED" || t.state === "PENDING");
+    const done = tasks2.filter((t) => t.state === "DONE" || t.state === "CANCELLED").length;
     return {
       missionId: this.mission.missionId,
       at: (/* @__PURE__ */ new Date()).toISOString(),
       agentsLive: agents.filter((a) => a.state === "ACTIVE" || a.state === "IDLE").length,
       agentsIdle: agents.filter((a) => a.state === "IDLE").length,
       agentsFailed: agents.filter((a) => a.state === "FAILED").length,
-      tasksTotal: tasks.length,
+      tasksTotal: tasks2.length,
       tasksDone: done,
-      tasksRunning: tasks.filter((t) => t.state === "RUNNING").length,
-      tasksFailed: tasks.filter((t) => t.state === "FAILED").length,
-      tasksBlocked: tasks.filter((t) => t.state === "BLOCKED").length,
+      tasksRunning: tasks2.filter((t) => t.state === "RUNNING").length,
+      tasksFailed: tasks2.filter((t) => t.state === "FAILED").length,
+      tasksBlocked: tasks2.filter((t) => t.state === "BLOCKED").length,
       oldestLiveTaskMs: live.length ? Math.max(...live.map((t) => ages[t.taskId] ?? 0)) : 0,
       signals,
-      progress: tasks.length ? done / tasks.length : 0
+      progress: tasks2.length ? done / tasks2.length : 0
     };
   }
   /**
@@ -7010,10 +7013,10 @@ var OrganizationSupervisor = class {
   }
   /** Progress summary for the mission header. */
   summarise() {
-    const tasks = this.org.tasks_();
-    const done = tasks.filter((t) => t.state === "DONE").length;
-    const failed = tasks.filter((t) => t.state === "FAILED").length;
-    return `${done}/${tasks.length} tasks done, ${failed} failed, ${this.org.agents().filter((a) => a.state === "ACTIVE").length} agents active`;
+    const tasks2 = this.org.tasks_();
+    const done = tasks2.filter((t) => t.state === "DONE").length;
+    const failed = tasks2.filter((t) => t.state === "FAILED").length;
+    return `${done}/${tasks2.length} tasks done, ${failed} failed, ${this.org.agents().filter((a) => a.state === "ACTIVE").length} agents active`;
   }
   exportState() {
     return this.list();
@@ -7045,7 +7048,7 @@ var LocalTestHarness = class {
     return { program: "(in-process simulation)", args: [task.taskId] };
   }
   async invoke(task) {
-    const started = Date.now();
+    const started2 = Date.now();
     const n = (this.attempts.get(task.taskId) ?? 0) + 1;
     this.attempts.set(task.taskId, n);
     const shouldFail = this.failFirstAttemptFor.test(task.title) && n === 1;
@@ -7055,7 +7058,7 @@ var LocalTestHarness = class {
         ok: false,
         text: "",
         exitCode: 1,
-        latencyMs: Date.now() - started,
+        latencyMs: Date.now() - started2,
         costUsd: 0,
         simulated: true,
         detail: "simulated-failure",
@@ -7074,7 +7077,7 @@ var LocalTestHarness = class {
         "It is recorded as simulated and is NOT counted as independently verified."
       ].join("\n"),
       exitCode: 0,
-      latencyMs: Date.now() - started,
+      latencyMs: Date.now() - started2,
       costUsd: 0,
       simulated: true,
       detail: `simulated attempt=${n}`,
@@ -8305,8 +8308,8 @@ async function existsViaRead(path3, read) {
   return await tryRead(path3, read) !== null;
 }
 async function runCheck(spec, repoDir, run, canRun, exists = existsNative) {
-  const started = Date.now();
-  const finish = (r) => ({ spec, durationMs: Date.now() - started, ...r });
+  const started2 = Date.now();
+  const finish = (r) => ({ spec, durationMs: Date.now() - started2, ...r });
   if (!await canRun()) {
     return finish({ didRun: false, exitCode: null, output: "", reason: "no executor available \u2014 this needs the native desktop build, not the browser preview" });
   }
@@ -10419,8 +10422,8 @@ Deliver the smallest increment that satisfies: ${this.mission.successCriteria[0]
     return decision === "APPROVED";
   }
   async drainApprovals() {
-    const pending = this.services.approvals.pendingForMission(this.mission.missionId);
-    for (const req of pending) {
+    const pending2 = this.services.approvals.pendingForMission(this.mission.missionId);
+    for (const req of pending2) {
       await this.services.approvals.waitFor(req.id, this.options.approvalTimeoutMs, () => this.cancelled);
     }
   }
@@ -10587,8 +10590,8 @@ Deliver the smallest increment that satisfies: ${this.mission.successCriteria[0]
         });
       }
     }
-    const tasks = this.org.tasks_();
-    const done = tasks.filter((t) => t.state === "DONE").length;
+    const tasks2 = this.org.tasks_();
+    const done = tasks2.filter((t) => t.state === "DONE").length;
     const artifacts = this.services.artifacts.forMission(this.mission.missionId);
     const allChecks = artifacts.flatMap((a) => a.evaluation?.checks ?? []);
     const criteriaMet = this.mission.successCriteria.filter(
@@ -10607,16 +10610,16 @@ Deliver the smallest increment that satisfies: ${this.mission.successCriteria[0]
       humanInterventions: this.recorder.count("APPROVAL_GRANTED") + this.recorder.count("APPROVAL_REJECTED"),
       regressionCount: this.failures.filter((f) => f.kind === "REGRESSION").length
     });
-    const everyTaskDone = tasks.length > 0 && tasks.every((t) => t.state === "DONE" || t.state === "CANCELLED");
+    const everyTaskDone = tasks2.length > 0 && tasks2.every((t) => t.state === "DONE" || t.state === "CANCELLED");
     const anyUnverified = artifacts.some((a) => a.evaluation && (!a.evaluation.passed || !a.evaluation.fullyMeasured));
     if (everyTaskDone && !anyUnverified && !this.simulatedUsed) {
       this.transition("VERIFYING", "All tasks complete; verifying before completion.");
-      this.transition("COMPLETED", `Mission verified: ${done}/${tasks.length} tasks, all artifacts independently evaluated.`);
+      this.transition("COMPLETED", `Mission verified: ${done}/${tasks2.length} tasks, all artifacts independently evaluated.`);
     } else if (everyTaskDone) {
       this.transition("VERIFYING", "All tasks complete; verification is incomplete.");
       this.transition("BLOCKED", buildIncompleteReason(artifacts, this.simulatedUsed));
     } else if (this.mission.status !== "BLOCKED" && this.mission.status !== "PAUSED") {
-      this.transition("BLOCKED", `${tasks.length - done} task(s) unfinished.`);
+      this.transition("BLOCKED", `${tasks2.length - done} task(s) unfinished.`);
     }
     this.mission.endedAt = this.mission.status === "COMPLETED" ? (/* @__PURE__ */ new Date()).toISOString() : this.mission.endedAt;
     this.services.memory.distil(this.mission.missionId, this.recorder);
@@ -10625,7 +10628,7 @@ Deliver the smallest increment that satisfies: ${this.mission.successCriteria[0]
       actor: "runtime",
       authority: "policy:verification",
       policy: "mission.no-fake-success",
-      reason: this.mission.status === "COMPLETED" ? `Verified completion: ${done}/${tasks.length} tasks, $${this.resources.usage.costUsd.toFixed(4)} spent.` : buildIncompleteReason(artifacts, this.simulatedUsed),
+      reason: this.mission.status === "COMPLETED" ? `Verified completion: ${done}/${tasks2.length} tasks, $${this.resources.usage.costUsd.toFixed(4)} spent.` : buildIncompleteReason(artifacts, this.simulatedUsed),
       evidence: score.unmeasured.map((u) => `unmeasured: ${u}`),
       subjectId: this.mission.missionId,
       data: { score, simulatedUsed: this.simulatedUsed }
@@ -11075,18 +11078,33 @@ function truncate(s, n) {
 }
 
 // probe/diag2.test.ts
+var pass = 0;
+var fail = 0;
+var ok = (label, cond, detail = "") => {
+  if (cond) {
+    pass += 1;
+    console.log(`  ok   ${label}`);
+  } else {
+    fail += 1;
+    console.log(`  FAIL ${label}${detail ? ` \u2014 ${detail}` : ""}`);
+  }
+};
+var section = (t) => console.log(`
+== ${t} ==`);
 var m = instantiateTemplate("tpl.software-development", { objective: "Build a production-ready SaaS billing feature in TypeScript", name: "d", workspace: "." });
 m.successCriteria = ["Builds without errors", "Tests pass"];
 m.budget = { ...DEFAULT_BUDGET, maxCostUsd: 5, maxRetriesPerTask: 3, maxConcurrentAgents: 6, maxGraphMutations: 4 };
 m.riskPolicy = { ...DEFAULT_POLICY, autonomy: "SUPERVISED", approvalThreshold: "HIGH", allowReorganization: true, allowHarnessSwitch: true };
 m.boundary = { ...DEFAULT_BOUNDARY, shell: true, filesystemWrite: true, credentials: false, browser: false };
 var services = createServices();
-var rt = new MissionRuntime(m, services, { allowSimulated: true, installed: { "local-test": true }, approvalTimeoutMs: 4e3 });
+var rt = new MissionRuntime(m, services, { allowSimulated: true, installed: { "local-test": true }, approvalTimeoutMs: 3e3 });
 rt.prepare();
 rt.buildOrganization();
 await rt.run();
 var ev = rt.getEvents();
-for (const k of ["REPAIR_STARTED", "REPAIR_COMPLETED"]) {
+var repairEvents = ["REPAIR_STARTED", "REPAIR_COMPLETED"];
+section("1. the repair census");
+for (const k of repairEvents) {
   const rows = ev.filter((e) => e.kind === k);
   const byPolicy = {};
   for (const e of rows) byPolicy[e.policy] = (byPolicy[e.policy] ?? 0) + 1;
@@ -11095,3 +11113,32 @@ for (const k of ["REPAIR_STARTED", "REPAIR_COMPLETED"]) {
 }
 var seqs = ev.map((e) => e.seq);
 console.log("total", ev.length, "min seq", seqs[0], "max seq", seqs[seqs.length - 1], "unique seqs", new Set(seqs).size);
+section("2. the gate this suite exists for");
+var started = ev.filter((e) => e.kind === "REPAIR_STARTED").length;
+var completed = ev.filter((e) => e.kind === "REPAIR_COMPLETED").length;
+ok("repairs completed never exceed repairs started", completed <= started, `${completed} completed / ${started} started`);
+ok("the event log is non-empty", ev.length > 0, `${ev.length}`);
+ok("event sequence numbers are strictly increasing", seqs.every((s, i) => i === 0 || s > seqs[i - 1]), "");
+ok("event sequence numbers are unique", new Set(seqs).size === seqs.length, `${new Set(seqs).size}/${seqs.length}`);
+var pending = services.approvals.pendingForMission(m.missionId);
+if (pending.length > 0) {
+  ok("an unanswered gate blocked the run (no silent consent)", m.status === "BLOCKED", `${m.status}`);
+} else {
+  ok("no gate needed a human on this path", true);
+}
+var tasks = rt.org.tasks_();
+var unfinished = tasks.filter((t) => t.state === "running");
+ok(
+  "no task is left mid-flight after run() returns",
+  unfinished.length === 0,
+  JSON.stringify(unfinished.map((t) => `${t.title}:${t.state}`))
+);
+var overRetried = tasks.filter((t) => t.attempts > t.maxAttempts);
+ok(
+  "no task exceeded its retry budget",
+  overRetried.length === 0,
+  JSON.stringify(overRetried.map((t) => `${t.title}: ${t.attempts}/${t.maxAttempts}`))
+);
+console.log(`
+diag2: ${pass} passed, ${fail} failed`);
+assert.equal(fail, 0, `${fail} diag2 assertion(s) failed`);

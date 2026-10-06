@@ -386,7 +386,10 @@ describe("F5b \u2014 an autonomy grant cannot open the gate for other domains", 
 describe("F18 \u2014 the theme resolves before the first paint", () => {
   it("index.html sets data-theme before the app script runs", () => {
     const html = read("index.html");
-    assert.match(html, /<html lang="en" data-theme="dark">/, "no server-side default theme");
+    const store = read("src/ui/store.ts");
+    const def = store.match(/DEFAULT_THEME(?:\s*:\s*[^=]+)?\s*=\s*"([a-z0-9-]+)"/)?.[1] ?? "";
+    assert.ok(def.length > 0, "store.ts declares DEFAULT_THEME");
+    assert.ok(new RegExp(`<html lang="en" data-theme="${def}">`).test(html), `no server-side default theme (${def})`);
     const boot = html.indexOf("dataset.theme");
     const app = html.indexOf('src="/src/main.tsx"');
     assert.ok(boot > -1 && boot < app, "the theme is resolved after the app boots");

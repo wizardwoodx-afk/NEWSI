@@ -197,9 +197,9 @@ export function ProviderConnect(): React.ReactElement {
   const vaultOpen = vaultIsOpen();
 
   return (
-    <section className="pc-root">
+    <section className="pc-root" aria-labelledby="door-signin">
       <header className="pc-head">
-        <h2>Accounts &amp; model access</h2>
+        <h2 id="door-signin">Accounts &amp; model access</h2>
         <p className={`pc-badge pc-badge--${badge.tone}`} role="status">
           {badge.label}
         </p>

@@ -46,6 +46,13 @@ function run(label, file, args, opts = {}) {
     out = (e.stdout ?? "") + (e.stderr ?? "");
     code = typeof e.status === "number" ? e.status : 1;
   }
+  /* Keep the full log of every gate step. The runner filters to verdict lines,
+     which is exactly wrong when a suite fails: the failing ASSERTION is in the
+     lines the filter drops, and a flake that leaves no evidence cannot be
+     root-caused — it can only be re-rolled. The log lands next to the pack. */
+  try {
+    fs.writeFileSync(path.join(ROOT, "verify", `last-${label.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.log`), out);
+  } catch { /* a log that cannot be written must never fail the gate */ }
   // The gate is noisy; show the verdict lines and any failure, not the whole log.
   for (const line of out.split("\n")) {
     if (/ALL PROBES SUMMARY|Offline VERIFY SUMMARY|^FAIL|^Failed test suites|passed, \d+ failed/.test(line)) {

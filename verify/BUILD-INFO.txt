@@ -1,18 +1,18 @@
-SelfImpulse 1.0.0 (engine MJ 19.7.15 "SelfImpulse")  (build record — the product is SelfImpulse; numbers live only here and in manifests)
-gate:  191 probe suites - 191 passed, 0 failed (verify/run.mjs, 190 self-contained bundles)
+SelfImpulse 1.9.1 (engine MJ 19.7.15 "SelfImpulse")  (build record -- the product is SelfImpulse; numbers live only here and in manifests)
+gate:  200 probe suites - 200 passed, 0 failed (verify/run.mjs, 199 self-contained bundles)
 built: 19.7.15 SelfImpulse
 ts:   2026-09-28T00:00:00Z
 git:  ac3d68a
-node: certified on v22.23.3 (declared engines floor >=22.12.0) — the complete
+node: certified on v22.23.3 (declared engines floor >=22.12.0) -- the complete
       gate set (tsc / unit / every probe suite and offline bundle counted in
       the GENERATED gate: line above / vite) was re-executed end to end on this
       runtime with a clean node_modules, zero EBADENGINE warnings; node
       20.20.2 remains a secondary supported runtime. Suite and bundle counts
-      appear ONLY in the generated line above — hand-authored prose never
+      appear ONLY in the generated line above -- hand-authored prose never
       restates them, so they cannot go stale again.
 protocol: vh-proof-receipt/2
-agent: heartbeat acts ride the SHARED production executor (engineExecutor — same deps as chat: provider/gate/handoff/evidence) into the real engine; integration probe drives real member loops on a scripted wire; BEW = runtime-enforced PHASE/PROVENANCE discipline; Agentic MoE = sparse specialist routing over the whole 1,500 fleet; 19.7.4 [Crew]: external agent CLIs are RETIRED (every agent runs natively on the owner's provider keys), the crew workspace fields up to 25 specialists in parallel from dynamic domain pools with per-member bench failover and a named steward feed, Manual/Semi/Full modes hot-switch mid-run (critical always gates), and LOTUS (Lean Optimal Token Utilisation System) compresses tool output with labelled, reversible, net-win-gated passes; 19.7.5 [Groups]: two owners' agents work as ONE governed crew — a charter both must accept (capabilities from the federation vocabulary, hard limits, expiry, one-sided revocation), group tasks planned into LOCAL items (real member loops on this side) and CROSSING items (the signed federation crossing, replay-guarded), the same three modes group-wide (crossings are risky by nature — they gate in manual AND semi), per-item human gates with the crew's revival law, and the session receipt chaining item digests; the 19.7.4 review fix ships here: muster and run are two phases and an all-gated run awaits the gate instead of failing; 19.7.6 [Office]: RSIRALS v6 — the strengthened verifier (frozen constitution, measured drift budget, externally executed + digest-pinned canaries, staged shadow→canary→fleet promotion fail-closed per dimension, hash-chained tamper-evident ledger, one gate + one-step rollback; plane T stays frozen at v5), the crew renders as an OFFICE (departments by domain + the shared board), and the Groups panel rides the REAL signed crossing seam (productionCross → runLiveCrossing) with the governed-local-implementation naming stated plainly; 19.7.7 [Verifier]: RSIRALS v6 is LIVE on the real promotion path — applySelfChangeGuarded drives every self-evolution apply through the EXTERNAL canary verifier (verifier/vh-verifier.mjs, a separate zero-dep process OUTSIDE src/: fresh nonce per call, ECDSA P-256 signature binding, tamper/refusal of replayed verdicts, honest 'unavailable' degradation) → the v6 gate (constitution → drift budget → external canaries) → BLOCK names the rule, the human's click completes the fail-closed staged promotion, reverts land on both ledgers; 19.7.8 [Trustroot]: REAL signatures — the verifier signs every verdict with its ECDSA P-256 key (the authority-mandate curve), VH verifies against the public key PINNED in the frozen trust root (src/vh19/verifierTrust.ts: key + battery digest + fingerprint, no setter, rotation = release event); the battery digest covers every check's SOURCE so a swapped exam is refused on sight; nonces are CSPRNG (randomUUID); the guarded promotion desk now lives on the ACTIVE NextConsole (Evolution desk); 19.7.9 [Keyholder]: the P0 killed — the verifier's ECDSA private key is PROVISIONED AT RUNTIME (~/.vouchharbor/verifier.key, 0600, outside every artifact), the public key is OWNER-COUNTERSIGNED into the trust store, and the verifier binds its own programDigest into every verdict; 19.7.10 [Screenwright]: the sixth external review proved the all-lexical canary battery was EVADABLE (a proposal that exfiltrated the evidence store, set promotion to always-accept and deleted the rollback path, reworded to dodge every keyword, passed 6/6 and drew a valid signature). The battery is now TEN checks in two tiers — six LEXICAL markers (h1-h6) plus four CAPABILITY-PATTERN screens (h7-h10: network egress endpoint, weakened control threshold / removed retention or rollback, evidence-store mutation, authority widening) that screen for the capability being introduced rather than for intent language — precise boundary: a ten-check, digest-pinned TEXTUAL / CAPABILITY-PATTERN screen plus human approval, NOT structural semantic verification of the proposed code (19.7.10.1 renamed the tier after the seventh review found 'structural' overstated a pattern match over submitted text); the ledger now records that the battery is a text screen and not a semantic review; probe/docIdentity repaired from a DORMANT regex hardcoded to major 16 (it matched nothing, so it could never fail) with an anti-vacuity pin
-offline: full gate shards deterministically — node verify/run.mjs --shard 1/4 … 4/4 (merge the summaries)
+agent: heartbeat acts ride the SHARED production executor (engineExecutor -- same deps as chat: provider/gate/handoff/evidence) into the real engine; integration probe drives real member loops on a scripted wire; BEW = runtime-enforced PHASE/PROVENANCE discipline; Agentic MoE = sparse specialist routing over the whole 1,500 fleet; 19.7.4 [Crew]: external agent CLIs are RETIRED (every agent runs natively on the owner's provider keys), the crew workspace fields up to 25 specialists in parallel from dynamic domain pools with per-member bench failover and a named steward feed, Manual/Semi/Full modes hot-switch mid-run (critical always gates), and LOTUS (Lean Optimal Token Utilisation System) compresses tool output with labelled, reversible, net-win-gated passes; 19.7.5 [Groups]: two owners' agents work as ONE governed crew -- a charter both must accept (capabilities from the federation vocabulary, hard limits, expiry, one-sided revocation), group tasks planned into LOCAL items (real member loops on this side) and CROSSING items (the signed federation crossing, replay-guarded), the same three modes group-wide (crossings are risky by nature -- they gate in manual AND semi), per-item human gates with the crew's revival law, and the session receipt chaining item digests; the 19.7.4 review fix ships here: muster and run are two phases and an all-gated run awaits the gate instead of failing; 19.7.6 [Office]: RSIRALS v6 -- the strengthened verifier (frozen constitution, measured drift budget, externally executed + digest-pinned canaries, staged shadow->canary->fleet promotion fail-closed per dimension, hash-chained tamper-evident ledger, one gate + one-step rollback; plane T stays frozen at v5), the crew renders as an OFFICE (departments by domain + the shared board), and the Groups panel rides the REAL signed crossing seam (productionCross -> runLiveCrossing) with the governed-local-implementation naming stated plainly; 19.7.7 [Verifier]: RSIRALS v6 is LIVE on the real promotion path -- applySelfChangeGuarded drives every self-evolution apply through the EXTERNAL canary verifier (verifier/vh-verifier.mjs, a separate zero-dep process OUTSIDE src/: fresh nonce per call, ECDSA P-256 signature binding, tamper/refusal of replayed verdicts, honest 'unavailable' degradation) -> the v6 gate (constitution -> drift budget -> external canaries) -> BLOCK names the rule, the human's click completes the fail-closed staged promotion, reverts land on both ledgers; 19.7.8 [Trustroot]: REAL signatures -- the verifier signs every verdict with its ECDSA P-256 key (the authority-mandate curve), VH verifies against the public key PINNED in the frozen trust root (src/vh19/verifierTrust.ts: key + battery digest + fingerprint, no setter, rotation = release event); the battery digest covers every check's SOURCE so a swapped exam is refused on sight; nonces are CSPRNG (randomUUID); the guarded promotion desk now lives on the ACTIVE NextConsole (Evolution desk); 19.7.9 [Keyholder]: the P0 killed -- the verifier's ECDSA private key is PROVISIONED AT RUNTIME (~/.vouchharbor/verifier.key, 0600, outside every artifact), the public key is OWNER-COUNTERSIGNED into the trust store, and the verifier binds its own programDigest into every verdict; 19.7.10 [Screenwright]: the sixth external review proved the all-lexical canary battery was EVADABLE (a proposal that exfiltrated the evidence store, set promotion to always-accept and deleted the rollback path, reworded to dodge every keyword, passed 6/6 and drew a valid signature). The battery is now TEN checks in two tiers -- six LEXICAL markers (h1-h6) plus four CAPABILITY-PATTERN screens (h7-h10: network egress endpoint, weakened control threshold / removed retention or rollback, evidence-store mutation, authority widening) that screen for the capability being introduced rather than for intent language -- precise boundary: a ten-check, digest-pinned TEXTUAL / CAPABILITY-PATTERN screen plus human approval, NOT structural semantic verification of the proposed code (19.7.10.1 renamed the tier after the seventh review found 'structural' overstated a pattern match over submitted text); the ledger now records that the battery is a text screen and not a semantic review; probe/docIdentity repaired from a DORMANT regex hardcoded to major 16 (it matched nothing, so it could never fail) with an anti-vacuity pin
+offline: full gate shards deterministically -- node verify/run.mjs --shard 1/4 ... 4/4 (merge the summaries)
 fleet: 1,500 established specialists (routed today) + 640 registered specialists (not routed) = 2,140 catalogued
 cli:   REMOVED FROM THE TREE. This entry supersedes the 19.7.4 note (external
        agent CLIs RETIRED) and the correction beneath it (a governed external-
@@ -70,7 +70,7 @@ release-record: docs/history/releases/RELEASE-VERIFICATION.md is FROZEN and
        Hand / Vouch Harbor / VH- identity). The live record is under
        docs/releases/.
 tray:  tauri.conf.json trayIcon.tooltip was triple-mangled mojibake
-       ("11Handle Ã£Æ…"). Replaced with clean ASCII; a tray
+       (a run of undecodable bytes after "11Handle", ending in an ellipsis). Replaced with clean ASCII; a tray
        tooltip has to survive every console and locale, and the old value
        shipped bytes no terminal could render.
 egress: resolved-address enforcement. checkEgressUrl is a hostname-STRING policy
@@ -84,7 +84,7 @@ egress: resolved-address enforcement. checkEgressUrl is a hostname-STRING policy
        metadata endpoint, and the old fc/fd/fe80 string tests let it through.
        Loopback stays allowed: a local Ollama is documented product surface.
 
-Munshi — the Indian-finance specialist pack (new capability on the SAME engine).
+Munshi -- the Indian-finance specialist pack (new capability on the SAME engine).
   src/munshi/ carries 47 specialists over eight domains: GST output, GST input
   credit, GST compliance, TDS/TCS, MSME, banking operations, assurance and
   reporting. The design rule is that tax arithmetic is NEVER delegated to a
@@ -100,20 +100,20 @@ Munshi — the Indian-finance specialist pack (new capability on the SAME engine
   THE TDS STATUTE TRANSITION. Rates and thresholds did not change on 1 April 2026, but
   the law did: the Income-tax Act, 2025 governs TDS on the EARLIER of the date of credit
   and the date of payment falling on or after that date, where resident TDS is a table
-  inside s.393, salary is s.392 and TCS is s.394 — and quoting the old 194-series label
+  inside s.393, salary is s.392 and TCS is s.394 -- and quoting the old 194-series label
   on a return is a validation failure. src/munshi/tdsStatute.ts routes on that date, and
   computeTds now returns the Act, the section to quote, the table item, the payment code
   and the cross-reference to the other Act's label alongside the rate. The references
   carry a confidence level and are not all equal: "asserted" where independent published
   mappings agree, "reported" where a code is provisional or the sources disagree (194R's
-  sub-codes), "unmapped" where this ruleset carries no table item at all (194-IA, 194M) —
+  sub-codes), "unmapped" where this ruleset carries no table item at all (194-IA, 194M) --
   and in that last case the engine says so instead of inventing a reference. An undated
   deduction still computes the rate and refuses to name a statute. The ruleset stamp moves
   to IN-2026.09 to mark the change.
 
   THE GENERALIST PACK. src/specialists/ generalises what the finance pack proved:
   deterministic engines behind domain specialists, a stated basis on every result, and a
-  human gate wherever the last step would change something real. Eight domains —
+  human gate wherever the last step would change something real. Eight domains --
   frontend (colour, WCAG contrast, type scale, grid drift), engineering (SemVer and range
   expansion, commit linting, HTTP retry semantics, backoff ladders, cron with the
   day-field rule), API (token-bucket simulation, payload budgets, idempotency keys,
@@ -121,18 +121,18 @@ Munshi — the Indian-finance specialist pack (new capability on the SAME engine
   (credential patterns, entropy, JWT decoding without verification, CSP), reliability
   (error budgets, capacity runway, severity, deploy risk), docs (Flesch readability,
   reading time, heading structure, terminology drift) and growth (unit economics, funnels,
-  RICE, revenue trajectory) — 65 tools and 240 specialists, every one driven by
+  RICE, revenue trajectory) -- 65 tools and 240 specialists, every one driven by
   probe/specialists.test.ts (213 checks) against its own declared defaults, twice, to prove
   determinism rather than assert it. The tools render from a declared field spec, so the
   shell holds no domain logic and a new domain is a data change.
 
-  THE DOOR. The shell's seventh door is now src/ui/screens/Specialists.tsx — the generalist
+  THE DOOR. The shell's seventh door is now src/ui/screens/Specialists.tsx -- the generalist
   surface, with the Indian-finance pack (src/ui/screens/Munshi.tsx) hosted as one domain
   among twenty-five rather than as a fintech-only screen. Every figure is computed on this machine
   with the same basis line it would carry in a receipt, and nothing is filed, paid,
   deployed or sent.
 
-19.7.15 (Cartographer) — the pack widens to twenty-four domains and the roster grows by 200.
+19.7.15 (Cartographer) -- the pack widens to twenty-four domains and the roster grows by 200.
 
   THE SPREAD. Nine domains became twenty-five. Sixteen new ones, each with deterministic
   engines of its own: mobile (touch-target floors, release size budgets), cloud (instance
@@ -147,7 +147,7 @@ Munshi — the Indian-finance specialist pack (new capability on the SAME engine
   base-unit integer arithmetic). Thirty-two new tools, each printing the rule it came from,
   every one driven twice from its own declared defaults by probe/specialists.test.ts.
 
-  THE ROSTER. 40 specialists became 240 — the sixteen new domains carry eleven each and the
+  THE ROSTER. 40 specialists became 240 -- the sixteen new domains carry eleven each and the
   original eight are deepened by three. 47 are gated, and in every domain the ungated
   specialists outnumber the gated, because a gate that always fires is noise. Every engine a
   specialist names is a function the pack exports; the probe refuses the roster otherwise.
@@ -157,130 +157,130 @@ Munshi — the Indian-finance specialist pack (new capability on the SAME engine
 
 every probe suite except the pack's own freshness gate (which runs only under
 npm test) ships in verify/suites as a self-contained bundle, plus
-verify/run.mjs (zero npm dependencies — node builtins only). The dev runner
+verify/run.mjs (zero npm dependencies -- node builtins only). The dev runner
 exercises the full suite set; the offline pack reproduces all but itself with
 zero install, and the freshness gate pins the byte-identity of the shipped
 bundles. The current counts and the green-gate result are the GENERATED gate:
 line at the top of this record (machine-written by tools/build-offline-verify
-and tools/rebuild-pack — hand prose never restates them). Suite 122 is
-probe/agenticTest (pre-seed Agentic Test Protocol v1); suite 123 is probe/authority (the Authority Suite + VouchMesh); suite 124 is probe/reachPlane (Agent Reach MCP + wired computer-use); suite 125 is probe/meshRuntime (VouchMesh wired into the live handoff seam); suite 126 is probe/teammates (the Teammates plane — crew UX, VH-hardened); suites 127–130 are the Reach batch probes (beacon · delegation grant · pair memory · the 200-specialist batch); suites 131–135 are the Federation probes (the signed approval · the crossing · the sigil · the identity anchor · the fleet census (2,140 today)); probe/face pins the redesigned console's face system; probe/fedWired pins the production federation wiring; suites 137–140 are the Recall probes (the memory graph · the MCP market · the token pipeline · auto-repair + the A2A replay guard); suites 141–142 are the 19.7.1 security probes (the owner vault + encrypted memory · the MCP runtime); suite 143 is the 19.7.2 console-policy probe (the Steward rename · no version chrome · the noir/cream finishes · provider memory semantics · the operator doctrine); suite 144 is the BEW probe (the Behaviour Enforcement Workflow — in-prompt AND the runtime phase machine — on every sub-agent); suites 145–149 are the 19.7.2.2 [Agent] probes (the Agentic MoE · the initiative autonomy loop with its execution bridge · the 3D memory graph · the 350-finance bench · the 350-silicon bench) —
+and tools/rebuild-pack -- hand prose never restates them). Suite 122 is
+probe/agenticTest (pre-seed Agentic Test Protocol v1); suite 123 is probe/authority (the Authority Suite + VouchMesh); suite 124 is probe/reachPlane (Agent Reach MCP + wired computer-use); suite 125 is probe/meshRuntime (VouchMesh wired into the live handoff seam); suite 126 is probe/teammates (the Teammates plane -- crew UX, VH-hardened); suites 127-130 are the Reach batch probes (beacon - delegation grant - pair memory - the 200-specialist batch); suites 131-135 are the Federation probes (the signed approval - the crossing - the sigil - the identity anchor - the fleet census (2,140 today)); probe/face pins the redesigned console's face system; probe/fedWired pins the production federation wiring; suites 137-140 are the Recall probes (the memory graph - the MCP market - the token pipeline - auto-repair + the A2A replay guard); suites 141-142 are the 19.7.1 security probes (the owner vault + encrypted memory - the MCP runtime); suite 143 is the 19.7.2 console-policy probe (the Steward rename - no version chrome - the noir/cream finishes - provider memory semantics - the operator doctrine); suite 144 is the BEW probe (the Behaviour Enforcement Workflow -- in-prompt AND the runtime phase machine -- on every sub-agent); suites 145-149 are the 19.7.2.2 [Agent] probes (the Agentic MoE - the initiative autonomy loop with its execution bridge - the 3D memory graph - the 350-finance bench - the 350-silicon bench) --
 the pre-seed Agentic Test Protocol v1 (24/24 on this build).
 
-19.7.12 (UI) — the redesign release: ONE shell (src/ui: Steward · Work ·
-Receipts · Memory · Settings), one stylesheet (src/ui/vh.css), the store
+19.7.12 (UI) -- the redesign release: ONE shell (src/ui: Steward - Work -
+Receipts - Memory - Settings), one stylesheet (src/ui/vh.css), the store
 (src/ui/store.ts) is the single production caller of askVH19 with the human
 gate, the handoff recorder, RSI evidence intake and the initiative heartbeat
 (engineExecutor, same deps as chat); the retired views/pages/panels trees and
 the plaintext provider loader in the old VH-19 door are DELETED; probe/palette
 and probe/v10Page are retired, probe/shellRender (SSR of every door) is added;
-14 probes repointed from retired files to the shell/seams they pin. Suite 122 is probe/agenticTest (pre-seed Agentic Test Protocol v1); suite 123 is probe/authority (the Authority Suite + VouchMesh); suite 124 is probe/reachPlane (Agent Reach MCP + wired computer-use); suite 125 is probe/meshRuntime (VouchMesh wired into the live handoff seam); suite 126 is probe/teammates (the Teammates plane — crew UX, VH-hardened); suites 127–130 are the Reach batch probes (beacon · delegation grant · pair memory · the 200-specialist batch); suites 131–135 are the Federation probes (the signed approval · the crossing · the sigil · the identity anchor · the fleet census (2,140 today)); probe/face pins the redesigned console's face system; probe/fedWired pins the production federation wiring; suites 137–140 are the Recall probes (the memory graph · the MCP market · the token pipeline · auto-repair + the A2A replay guard); suites 141–142 are the 19.7.1 security probes (the owner vault + encrypted memory · the MCP runtime); suite 143 is the 19.7.2 console-policy probe (the Steward rename · no version chrome · the noir/cream finishes · provider memory semantics · the operator doctrine); suite 144 is the BEW probe (the Behaviour Enforcement Workflow — in-prompt AND the runtime phase machine — on every sub-agent); suites 145–149 are the 19.7.2.2 [Agent] probes (the Agentic MoE · the initiative autonomy loop with its execution bridge · the 3D memory graph · the 350-finance bench · the 350-silicon bench) —
+14 probes repointed from retired files to the shell/seams they pin. Suite 122 is probe/agenticTest (pre-seed Agentic Test Protocol v1); suite 123 is probe/authority (the Authority Suite + VouchMesh); suite 124 is probe/reachPlane (Agent Reach MCP + wired computer-use); suite 125 is probe/meshRuntime (VouchMesh wired into the live handoff seam); suite 126 is probe/teammates (the Teammates plane -- crew UX, VH-hardened); suites 127-130 are the Reach batch probes (beacon - delegation grant - pair memory - the 200-specialist batch); suites 131-135 are the Federation probes (the signed approval - the crossing - the sigil - the identity anchor - the fleet census (2,140 today)); probe/face pins the redesigned console's face system; probe/fedWired pins the production federation wiring; suites 137-140 are the Recall probes (the memory graph - the MCP market - the token pipeline - auto-repair + the A2A replay guard); suites 141-142 are the 19.7.1 security probes (the owner vault + encrypted memory - the MCP runtime); suite 143 is the 19.7.2 console-policy probe (the Steward rename - no version chrome - the noir/cream finishes - provider memory semantics - the operator doctrine); suite 144 is the BEW probe (the Behaviour Enforcement Workflow -- in-prompt AND the runtime phase machine -- on every sub-agent); suites 145-149 are the 19.7.2.2 [Agent] probes (the Agentic MoE - the initiative autonomy loop with its execution bridge - the 3D memory graph - the 350-finance bench - the 350-silicon bench) --
 the pre-seed Agentic Test Protocol v1 (24/24 on this build).
 
-19.7.2 "Noir" — the maturity release:
-  · the operator doctrine rides every specialist prompt (src/vh19/skills.ts;
-    probe/consolePolicy): verify before claiming · evidence over prose ·
-    fail forward with one labelled retry · self-review marks INCOMPLETE
-    rather than guessing · scope past the safe tier returns to the human
-  · the maturity budget: member loops run up to five act/observe/adjust
-    steps (agentLoop.ts MAX_AGENT_STEPS 3 → 5), so a specialist that misses
+19.7.2 "Noir" -- the maturity release:
+  - the operator doctrine rides every specialist prompt (src/vh19/skills.ts;
+    probe/consolePolicy): verify before claiming - evidence over prose -
+    fail forward with one labelled retry - self-review marks INCOMPLETE
+    rather than guessing - scope past the safe tier returns to the human
+  - the maturity budget: member loops run up to five act/observe/adjust
+    steps (agentLoop.ts MAX_AGENT_STEPS 3 -> 5), so a specialist that misses
     adjusts instead of stopping
-  · the center agent is the STEWARD everywhere it renders — the Generalist
+  - the center agent is the STEWARD everywhere it renders -- the Generalist
     name is gone from every rendered surface (probe/consolePolicy +
     probe/navAlign pin it); internal code identifiers are unchanged
-  · nothing fake, nothing versioned on screen: the console renders no
-    version numbers and no demo/simulated surfaces — the product speaks as
+  - nothing fake, nothing versioned on screen: the console renders no
+    version numbers and no demo/simulated surfaces -- the product speaks as
     itself (probe/consolePolicy)
-  · two honest finishes, one layout: matured noir (default) + light cream
-    gray (html[data-theme="cream"]), chosen in Settings → Appearance and
+  - two honest finishes, one layout: matured noir (default) + light cream
+    gray (html[data-theme="cream"]), chosen in Settings -> Appearance and
     applied before first paint (main.tsx pre-paint boot; probe/consolePolicy
     pins both token sets and the boot)
-  · a minimal Settings plane — Appearance · Security · Memory · Data — with
+  - a minimal Settings plane -- Appearance - Security - Memory - Data -- with
     memory-ON-without-a-vault guidance that points at vault creation
-  · exact provider memory semantics: "session only" = the key lives in
+  - exact provider memory semantics: "session only" = the key lives in
     memory and the stored copy is removed, NEVER sealed; "on this machine"
     = requires the unlocked vault, then seals (probe/consolePolicy)
 
-19.7.0 "Recall" — the memory-and-mastery release:
-  · the preview fix at the root: a permissive dev-CORS plugin + a cannot-lie
+19.7.0 "Recall" -- the memory-and-mastery release:
+  - the preview fix at the root: a permissive dev-CORS plugin + a cannot-lie
     sandboxed-frame detector boot the console inside opaque-origin embeds;
     the strict CSP is skipped only there and says so (observed, reproduced)
-  · the console v2: chat-first redesign — welcome hero, composer with focus
+  - the console v2: chat-first redesign -- welcome hero, composer with focus
     ring, avatars + timestamps on every row, conversations in the rail
-  · the memory graph (src/vh19/memoryGraph.ts; probe/memoryGraph, 26):
-    every chat becomes a keyword graph — deterministic extraction,
+  - the memory graph (src/vh19/memoryGraph.ts; probe/memoryGraph, 26):
+    every chat becomes a keyword graph -- deterministic extraction,
     keyword+date recall, MARKED rehydration, idempotent upsert
-  · the token pipeline (tokenOptim.ts at the providers.complete() choke
-    point; probe/tokenPipeline, 20): normalize → marked dedup → measured
-    cache-alignment → budget; the per-run delta rides every reply
-  · the MCP market (probe/mcpMarket, 21): ANY server — 12 curated + user
+  - the token pipeline (tokenOptim.ts at the providers.complete() choke
+    point; probe/tokenPipeline, 20): normalize -> marked dedup -> measured
+    cache-alignment -> budget; the per-run delta rides every reply
+  - the MCP market (probe/mcpMarket, 21): ANY server -- 12 curated + user
     registry, zod-validated, SSRF-guarded, env names only, standard export
-  · the A2A replay guard (probe/autoRepairReplay): a duplicate crossing
+  - the A2A replay guard (probe/autoRepairReplay): a duplicate crossing
     submission inside a 60s window is refused before anything is signed
-  · auto-repair (probe/autoRepairReplay): a member's transient provider
+  - auto-repair (probe/autoRepairReplay): a member's transient provider
     failure gets ONE situation-changing retry, no human pause, labelled
 
-19.6.6 "Federation" — the release that put the federation plane ON the live path, and the app ON one console:
-  · UI rebuilt end to end: the app IS one dark console — crew rail, run
+19.6.6 "Federation" -- the release that put the federation plane ON the live path, and the app ON one console:
+  - UI rebuilt end to end: the app IS one dark console -- crew rail, run
     stream, handoff ledger and federation plane; the multi-dock shell is
     retired. The Generalist keeps ONE deterministic face derived from the
     name its owner gives it; every specialist carries a deterministic mark
-    (src/views/NextConsole.tsx · src/vh19/face.tsx; probe/face, 10 checks)
-  · standing authority on the LIVE crossing: the console issues two-owner
+    (src/views/NextConsole.tsx - src/vh19/face.tsx; probe/face, 10 checks)
+  - standing authority on the LIVE crossing: the console issues two-owner
     grants and spends them per crossing; out-of-scope, spent, lapsed or
-    revoked grants escalate to a per-crossing human decision — escalation is
-    designed behaviour, never an error (src/vh19/federation/live.ts ·
+    revoked grants escalate to a per-crossing human decision -- escalation is
+    designed behaviour, never an error (src/vh19/federation/live.ts -
     bridge.ts; probe/fedWired, 18 checks)
-  · the common ledger rides EVERY outcome: both stores write the same joint
+  - the common ledger rides EVERY outcome: both stores write the same joint
     row with both receipts, and the roots over each store are compared on
     the receipt itself (bridge.ts finish(); probe/fedWired)
-  · regulated activation on the routing path: the registered regulated bench
+  - regulated activation on the routing path: the registered regulated bench
     stays unrouted until a signed, complete, current activation exists; the
-    refusal names every gap, and the unsigned case is named exactly — a name
+    refusal names every gap, and the unsigned case is named exactly -- a name
     is not an authorisation (generalist.ts; probe/fedWired)
-  · the tier floor holds against the grant: a standing grant never overrides
+  - the tier floor holds against the grant: a standing grant never overrides
     earned pair standing; it adds one co-signed trust unit to the mesh's own
-    ladder (probe/fedWired §8)
-  · the federation key rides the hardened authority seam (native keychain >
-    passphrase-encrypted > session-only) — no raw private key at rest; the
+    ladder (probe/fedWired section 8)
+  - the federation key rides the hardened authority seam (native keychain >
+    passphrase-encrypted > session-only) -- no raw private key at rest; the
     console carries provider onboarding for first-time users (navAlign pins)
 
-19.6.0 "Federation" — the cross-owner release (new plane, frozen core):
-  · a crossing needs BOTH humans: a signed approval bound to
+19.6.0 "Federation" -- the cross-owner release (new plane, frozen core):
+  - a crossing needs BOTH humans: a signed approval bound to
     {pair, side, capability, envelopeDigest, nonce}, expiring, spent once
-    (src/vh19/federation/approval.ts · bridge.ts; probe/fedApproval,
-    probe/fedCrossing — the regression that matters is that a prior success
+    (src/vh19/federation/approval.ts - bridge.ts; probe/fedApproval,
+    probe/fedCrossing -- the regression that matters is that a prior success
     ledger row is NOT an approval)
-  · one identity system: the federation anchor resolves the SAME owner keypair
+  - one identity system: the federation anchor resolves the SAME owner keypair
     missionAuthority uses and carries proof of possession (probe/fedIdentity)
-  · the Face, redesigned: derived from the identity's own SHA-256, never
+  - the Face, redesigned: derived from the identity's own SHA-256, never
     selectable, no eyes and no mouth by construction (probe/fedSigil)
-  · the fleet stated as two numbers — 2,140 today = 1,500 established + 640
+  - the fleet stated as two numbers -- 2,140 today = 1,500 established + 640
     registered (1,560 at 19.6.0: 1,150 + 410), registered never routed
     silently (probe/fedFleet)
 
-19.3.0 "Vanguard" — the fleet-becomes-real release:
-  · specialists are executors: real act/observe tool loops, five gated tools,
+19.3.0 "Vanguard" -- the fleet-becomes-real release:
+  - specialists are executors: real act/observe tool loops, five gated tools,
     every call receipted (probe/agentTools, 47 checks)
-  · Captain synthesis: divergence pass + the Captain's OWN reasoning call over
+  - Captain synthesis: divergence pass + the Captain's OWN reasoning call over
     executed member answers (probe/synthesis, 29 checks)
-  · live-data GuardRail retrieval: cited sources fetched and claim-checked;
+  - live-data GuardRail retrieval: cited sources fetched and claim-checked;
     verifiedBy "retrieval" vs "disclosure" sealed in the digest
     (probe/liveData, 27 checks)
-  · captains probe 38 checks incl. the synthesis contract in multi-member runs
+  - captains probe 38 checks incl. the synthesis contract in multi-member runs
 
-19.7.13 (Keyholder) — the Docs door and the release-hygiene pass.
+19.7.13 (Keyholder) -- the Docs door and the release-hygiene pass.
 
   DOCS (new door). The engine could always distill a document into an approved
-  knowledge skill (mission/knowledgeSkills.ts: propose → human decision →
+  knowledge skill (mission/knowledgeSkills.ts: propose -> human decision ->
   installed skills) but no surface reached it. src/ui/screens/Docs.tsx is that
   surface: paste a document or load a .md/.txt file, the engine extracts
   STRUCTURE (procedure, decision rules, failure modes, chapter hints) and returns
-  a proposal, and the human approves or dismisses it — one decision per proposal,
+  a proposal, and the human approves or dismisses it -- one decision per proposal,
   recorded with who and when. A document with no extractable structure is
   REFUSED in words. Nothing installs itself. Every proposal discloses its
   handling (local vs provider) and never counts approved knowledge as a measured
-  effect. The shell is now six doors: Steward · Work · Receipts · Docs · Memory ·
-  Settings, and probe/navAlign pins six — it previously matched only five keys
+  effect. The shell is now six doors: Steward - Work - Receipts - Docs - Memory -
+  Settings, and probe/navAlign pins six -- it previously matched only five keys
   and said "exactly five doors", so a sixth door would have passed the gate
   VACUOUSLY while the shell no longer matched its own description.
 
@@ -290,9 +290,9 @@ the pre-seed Agentic Test Protocol v1 (24/24 on this build).
   cooldownTicks/cooldownTime stop the engine once it is still; the data-update
   effect calls d3ReheatSimulation() so newly arrived nodes still relax (without
   that, the cooldown would have frozen them at their spawn positions). The graph
-  also honours the OS reduced-motion preference — a user who asked their system
+  also honours the OS reduced-motion preference -- a user who asked their system
   for less motion no longer gets a field that never stops turning. (2) Recall
-  lowercased the whole transcript once per (probe × session) — 30–60 passes per
+  lowercased the whole transcript once per (probe x session) -- 30-60 passes per
   query once aliases and stems expand. It lowers once per session now and checks
   the keyword Set first, skipping the transcript scan on a hit. Same matches,
   same order; the work happens once.
@@ -306,38 +306,38 @@ the pre-seed Agentic Test Protocol v1 (24/24 on this build).
   RELEASE HYGIENE (the sixth-review follow-ups, all closed). The engine identity
   now says 19.7.13 across every site the bump tool drives (package.json,
   package-lock, src/version.ts, Cargo.toml, tauri.conf.json, this record, reachMcp)
-  — the tree had carried 19.7.13-era changes while still calling itself 19.7.12.
+  -- the tree had carried 19.7.13-era changes while still calling itself 19.7.12.
   The stale "156 probe suites / 155 offline bundles" line in this record is
   corrected to the measured 155 / 154 (the body below already said 155 / 154, so
   the file contradicted itself). BUILD-NATIVE.md and INSTALL-ON-LAPTOP.md now state
   the real engines floor (node 22.12+, was "20 or newer" against a
   `>=22.12.0` package.json). README no longer claims memory "is encrypted": it can
-  be encrypted at rest with the local vault, and it can be switched off — which is
+  be encrypted at rest with the local vault, and it can be switched off -- which is
   what the code has always done and what graphSecurityStatus() reports.
 
 ORG/SECURITY (the company restructure + the archive-3/4/5 security rounds).
-The runtime chain is a company with no skipped rung: USER ⇄ CAPTAIN (the CEO —
-the only human-facing seat) ⇄ CONSUL (one per domain; reports up, never
-addresses the user, never commands the crew) ⇄ ADEPT (the desk's team lead) ⇄
+The runtime chain is a company with no skipped rung: USER <-> CAPTAIN (the CEO --
+the only human-facing seat) <-> CONSUL (one per domain; reports up, never
+addresses the user, never commands the crew) <-> ADEPT (the desk's team lead) <->
 SUB-AGENTS (the crew). The law is src/engine/chain.ts (a message moves exactly
-one rung; LayerSkipError otherwise) and the titles live there ONCE — a rename is
+one rung; LayerSkipError otherwise) and the titles live there ONCE -- a rename is
 a one-line change. It is enforced on the real data, not just worded: every desk
 resolves to exactly one Consul of its own domain, workspace.ts REFUSES to seat a
-desk with none, and the Work graph is drawn rung by rung (Captain → Consul →
-Adept → sub-agents; the placeholder agent that hung off the Captain is gone).
+desk with none, and the Work graph is drawn rung by rung (Captain -> Consul ->
+Adept -> sub-agents; the placeholder agent that hung off the Captain is gone).
 Building it exposed two real skips, both fixed: finance and silicon had NO
 Consul (a silicon-only run, 350 routed sub-agents, got no Consul report and no
-Consul synthesis — the Captain briefed the crew directly), so the roster is now
-sixteen, one per specialist category; and the Work graph linked Captain → desk.
+Consul synthesis -- the Captain briefed the crew directly), so the roster is now
+sixteen, one per specialist category; and the Work graph linked Captain -> desk.
 The reply header and receipt note follow the layer (CONSUL SYNTHESIS / consul
 synthesis). What chain.ts does NOT claim: that an LLM message crossed every rung
-on every run — it is the reporting structure a run is seated in and the rule any
+on every run -- it is the reporting structure a run is seated in and the rule any
 hop in it must obey. The security substrate is FROZEN for the upcoming Qoder
 specialist expansion: archive-3 shipped the deny-by-default native gate
 (guard.rs, probe/nativeAuthz), the authority-checked decision state machines,
 the component-based credential-path refusal and bridge signature parity;
 archive-4 completed C-2 with the approver-authority capability (native OS
-dialog → SHA-256-stored, freshness-bounded, verdict-scoped, single-use token
+dialog -> SHA-256-stored, freshness-bounded, verdict-scoped, single-use token
 presented to approval_decide) and closed the wrapper invariant (every
 privileged command crosses authorize()); archive-5's review confirmed C-1..C-4
 all fixed (nativeAuthz 118/118) and flagged THIS record's stale prose counts,

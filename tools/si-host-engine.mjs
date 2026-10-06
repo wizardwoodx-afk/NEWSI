@@ -3,9 +3,9 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
+var __export = (target, all2) => {
+  for (var name in all2)
+    __defProp(target, name, { get: all2[name], enumerable: true });
 };
 
 // src/security/ipClassify.ts
@@ -668,8 +668,8 @@ var init_localDb = __esm({
         save(db);
       },
       skillsList(nodeKey) {
-        const all = load().skills.filter((s) => s.nodeKey === nodeKey);
-        return { skills: all.filter((s) => s.active), all };
+        const all2 = load().skills.filter((s) => s.nodeKey === nodeKey);
+        return { skills: all2.filter((s) => s.active), all: all2 };
       },
       skillUpsert(args) {
         const db = load();
@@ -1557,7 +1557,7 @@ import fs3 from "node:fs";
 
 // src/mission/a2aRuntime.ts
 import { spawn } from "node:child_process";
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 import fs2 from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -3449,6 +3449,12 @@ function gitApi(runner) {
 
 // src/mission/caps.ts
 var DEFAULT_CAPS = { timeoutMs: 10 * 60 * 1e3, maxTurns: 40, maxCostUsd: 5 };
+var INBOUND_DELEGATION_CAPS = {
+  maxCostUsd: 2,
+  maxTurns: 40,
+  maxInvocations: 4,
+  maxWallClockMs: 30 * 6e4
+};
 var CapLedger = class {
   caps;
   state;
@@ -3459,8 +3465,39 @@ var CapLedger = class {
   beginInvocation() {
     this.state.invocationsUsed += 1;
   }
-  /** Can another invocation start at all? Checked BEFORE dispatch — refusing is control, charging after is bookkeeping. */
+  /**
+   * Can another invocation start at all? Checked BEFORE dispatch — refusing is control, charging after is bookkeeping.
+   *
+   * TWO FAIL-CLOSED RULES, both added because an unpopulated `MissionCaps` used
+   * to mean "no ceiling at all":
+   *
+   *  1. A DECLARED-BUT-UNREADABLE CAP IS A REFUSAL, NOT AN ABSENT CAP. Every
+   *     guard below reads `?? 0`, and `NaN > 0` is false, so `{ maxTurns: NaN }`
+   *     and `{ maxCostUsd: -1 }` each silently disable themselves. A ceiling
+   *     nobody can read is not a ceiling, so any declared value that is not a
+   *     finite non-negative number refuses the dispatch and names the field.
+   *
+   *  2. A LEDGER WITH NO ARMED GUARD ADMITS NOTHING. `new CapLedger({})` scored
+   *     zero on every guard, so it returned `null` — admit, forever — which meant
+   *     the federation path's `new CapLedger({})` was an unbounded budget for
+   *     whoever reached the port. There is no honest reading of "no ceiling was
+   *     declared" as "run without limit", so it refuses and says so.
+   *
+   * An explicit `0` is still this build's way of saying "this one dimension is
+   * unlimited" (`mayRunTurn` documents the same convention) and stays honoured.
+   * What is refused is the ABSENCE of every armed guard, not a chosen zero.
+   *
+   * `missionLoop` constructs a ledger with `maxTurns: 120` and a numeric
+   * `maxCostUsd`, so rule 2 never fires on the mission path; rule 1 only fires
+   * on a malformed value, which is the direction it is meant to fail.
+   */
   admissionError(now = Date.now()) {
+    for (const [field, value] of Object.entries(this.caps)) {
+      if (value === void 0 || value === null) continue;
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+        return `the ${field} ceiling is declared as ${JSON.stringify(value)}, which is not a usable number \u2014 refusing rather than treating a broken ceiling as no ceiling`;
+      }
+    }
     const maxCost = this.caps.maxCostUsd ?? 0;
     if (maxCost > 0 && this.state.spentUsd >= maxCost) {
       return `the mission has already spent $${this.state.spentUsd.toFixed(4)} of its $${maxCost.toFixed(4)} ceiling`;
@@ -3476,6 +3513,9 @@ var CapLedger = class {
     const maxWall = this.caps.maxWallClockMs ?? this.caps.timeoutMs ?? 0;
     if (maxWall > 0 && now - this.state.startedAt >= maxWall) {
       return `the mission's ${Math.round(maxWall / 1e3)}s wall clock has elapsed`;
+    }
+    if (maxCost <= 0 && maxTurns <= 0 && maxInvocations <= 0 && maxWall <= 0) {
+      return `no ceiling is set \u2014 cost, turns, invocations and the wall clock are all absent or zero, so this ledger would admit without limit; dispatch is refused until a real ceiling is declared`;
     }
     return null;
   }
@@ -4186,6 +4226,50 @@ function packetAllowsExecution(p) {
   return { ok: true, reason: `packet ${p.id} permits execution (${p.permission}${p.reversible ? ", reversible" : ", irreversible+allowed"})` };
 }
 
+// src/security/actionGraph.ts
+function stableStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const entries = Object.entries(value).filter(([, v]) => v !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(",")}}`;
+}
+
+// src/engine/finops.ts
+var MAX_ENTRIES = 2e3;
+var all = [];
+function recordSeatRun(e) {
+  all.push(e);
+  if (all.length > MAX_ENTRIES) all = all.slice(-MAX_ENTRIES);
+}
+
+// src/mission/runCheckpoints.ts
+import { createHash } from "node:crypto";
+var chainOf = /* @__PURE__ */ new Map();
+var states = /* @__PURE__ */ new Map();
+var digestOf = (s) => createHash("sha256").update(stableStringify(s ?? null)).digest("hex");
+function checkpoint(runId, missionId, step, label, state) {
+  const chain = chainOf.get(runId) ?? [];
+  const prev = chain[chain.length - 1];
+  const at = Date.now();
+  const stateDigest = digestOf(state);
+  const prevDigest = prev ? prev.entryDigest : "";
+  const entryDigest = createHash("sha256").update(`${missionId}|${step}|${label}|${stateDigest}|${prevDigest}|${at}`).digest("hex");
+  const cp = {
+    runId,
+    missionId,
+    step,
+    label,
+    stateDigest,
+    prevDigest,
+    entryDigest,
+    at
+  };
+  chain.push(cp);
+  chainOf.set(runId, chain);
+  states.set(cp.stateDigest, stableStringify(state ?? null));
+  return cp;
+}
+
 // src/mission/consensusEngine.ts
 var AgentReputationLedger = class {
   ledger = /* @__PURE__ */ new Map();
@@ -4568,6 +4652,8 @@ ${lessonLines.map((l) => `- ${l}`).join("\n")}
   let budgetStop = null;
   let snapshot = emptySnapshot;
   const committedBranches = [];
+  let waveNo = 0;
+  const durableRunId = `run:${req.missionSlug}`;
   for (const wave of waves) {
     if (waveFailed) {
       const skipReason = budgetStop ? `Spend authority ran out \u2014 ${budgetStop}` : "An earlier wave did not complete, so this seat was skipped rather than asked to review work that does not exist.";
@@ -4650,7 +4736,24 @@ ${lessonLines.map((l) => `- ${l}`).join("\n")}
       const tk = tickets.get(r.seatId);
       if (budgetGate && tk) budgetAccounting.overrun += budgetGate.settle(tk, r.chargedUsd ?? 0).overrunUsd;
       if ((r.usage?.costUsd === null || r.usage?.costUsd === void 0) && (r.usage?.tokens ?? 0) > 0) budgetAccounting.tokensOnly.add(r.seatId);
+      recordSeatRun({
+        at: Date.now(),
+        seatId: r.seatId,
+        missionId: req.missionSlug,
+        usd: r.usage?.costUsd ?? null,
+        tokens: r.usage?.tokens ?? null,
+        turns: r.usage?.turns ?? null,
+        verdict: r.verified ? "verified" : r.outcome === "completed" ? "completed" : r.outcome,
+        source: r.usage?.source ?? "unknown"
+      });
     }
+    checkpoint(durableRunId, req.missionSlug, waveNo, "wave settled", {
+      settled: results.length,
+      verified: results.filter((x) => x.verified).length,
+      budgetStop,
+      failed: waveFailed
+    });
+    waveNo += 1;
     if (req.rootEnvelope && req.rootEnvelope.budgetUsd !== null && !budgetStop) {
       const spentSoFar = seats.reduce((sum, r) => sum + (r.chargedUsd ?? 0), 0);
       const bc = budgetCheck(req.rootEnvelope, spentSoFar);
@@ -5303,6 +5406,20 @@ async function verifyProofReceipt(rc) {
 // src/mission/a2aBridge.ts
 init_version();
 init_id();
+function inboundCapsFor(requested) {
+  const narrowed = { ...INBOUND_DELEGATION_CAPS };
+  if (!requested || typeof requested !== "object") return narrowed;
+  const fields = ["maxCostUsd", "maxTurns", "maxInvocations", "maxWallClockMs"];
+  for (const field of fields) {
+    const asked = requested[field];
+    if (typeof asked !== "number" || !Number.isFinite(asked) || asked <= 0) continue;
+    narrowed[field] = Math.min(asked, INBOUND_DELEGATION_CAPS[field]);
+  }
+  return narrowed;
+}
+function capsSummary(caps) {
+  return `$${(caps.maxCostUsd ?? 0).toFixed(2)}/${caps.maxTurns ?? 0}turns/${caps.maxInvocations ?? 0}inv/${Math.round((caps.maxWallClockMs ?? 0) / 1e3)}s`;
+}
 function seatFor(teammate, cfg) {
   return {
     id: `a2a-${teammate.id.slice(0, 8)}-${uid("seat").slice(0, 6)}`,
@@ -5429,6 +5546,22 @@ async function runInboundDelegation(teammate, task, fromUser, cfg = {}) {
     assignments.push({ seat: reviewer, prompt: `Review the change for: ${task}`, wave: 1, readOnly: true, dependsOn: [seat2.id] });
   }
   const team = bridgeTeam(teammate, fromUser, seats);
+  const caps = inboundCapsFor(cfg.inboundCaps);
+  const seatTurns = (s) => typeof s.maxTurns === "number" && s.maxTurns > 0 ? s.maxTurns : 0;
+  const declaredTurns = seats.reduce((n, s) => n + seatTurns(s), 0);
+  const turnCeiling = caps.maxTurns ?? 0;
+  if (turnCeiling > 0 && declaredTurns > turnCeiling) {
+    return refuse(
+      `this host's inbound plan declares ${declaredTurns} turns across ${seats.length} seats, which does not fit the ${turnCeiling}-turn ceiling a remote delegation gets \u2014 narrow the seat budget on this host, or send the work as smaller delegations. Nothing ran.`
+    );
+  }
+  const ledger = new CapLedger(caps, cfg.now?.() ?? Date.now());
+  for (const s of seats) {
+    ledger.beginInvocation();
+    ledger.addTurns(seatTurns(s));
+  }
+  const preflight = ledger.admissionError(cfg.now?.() ?? Date.now());
+  if (preflight) return refuse(`the delegation was refused before dispatch \u2014 ${preflight}`);
   const startedAt = new Date(cfg.now?.() ?? Date.now()).toISOString();
   let report;
   try {
@@ -5441,7 +5574,7 @@ async function runInboundDelegation(teammate, task, fromUser, cfg = {}) {
       objective: task,
       constraints: [`Inbound A2A delegation from ${fromUser} \u2014 stay inside the delegated task.`],
       testCommand: cfg.testCommand,
-      ledger: new CapLedger({}),
+      ledger,
       minimumRunnableSeats: 1
     }, cfg.deps);
   } catch (err) {
@@ -5485,6 +5618,7 @@ async function runInboundDelegation(teammate, task, fromUser, cfg = {}) {
     `gate=${report.gate.status}/${report.gate.tier}`,
     `seats=${execution.seatsRun}/${execution.seatsVerified} verified`,
     execution.spentUsd > 0 ? `spent=$${execution.spentUsd.toFixed(4)}` : "spent=unmeasured",
+    `caps=${capsSummary(caps)}`,
     `receipt=${chainHead.slice(0, 16)}`
   ].join(" \xB7 ");
   return {
@@ -5818,8 +5952,122 @@ function routeDelegation(team, task) {
   return { ok: true, value: best };
 }
 var PACKET_TTL_MS = 10 * 60 * 1e3;
-var decidedDelegations = /* @__PURE__ */ new Set();
-var decidedInbound = /* @__PURE__ */ new Set();
+var MAX_CLOCK_SKEW_MS = 6e4;
+var REPLAY_REGISTRY_CAP = 4096;
+var ReplayRegistry = class {
+  constructor(cap) {
+    this.cap = cap;
+  }
+  settled = /* @__PURE__ */ new Map();
+  /** Claim an id for exactly one decision. Null when claimed; a reason when not. */
+  claim(id, now = Date.now()) {
+    for (const [k, at] of [...this.settled]) if (now - at > PACKET_TTL_MS) this.settled.delete(k);
+    if (this.settled.has(id)) return `already decided (${this.settled.size} settled within the packet TTL) \u2014 replay refused`;
+    if (this.settled.size >= this.cap) {
+      return `the replay registry is full (${this.cap} unsettled decisions inside the packet TTL) \u2014 refusing rather than forgetting a live one, because forgetting one is what lets a captured packet replay`;
+    }
+    this.settled.set(id, now);
+    return null;
+  }
+};
+var decidedDelegations = new ReplayRegistry(REPLAY_REGISTRY_CAP);
+var decidedInbound = new ReplayRegistry(REPLAY_REGISTRY_CAP);
+var MAX_FEDERATION_HOPS = 2;
+var MAX_CHAIN_ID_LEN = 96;
+var MAX_PATH_LEN = 8;
+function readChainClaim(packet) {
+  const raw = packet.chain;
+  if (raw === void 0 || raw === null) return { ok: true, claim: { chainId: packet.id, hop: 1, path: [] } };
+  if (typeof raw !== "object" || Array.isArray(raw)) return { ok: false, reason: "the delegation chain claim is not an object" };
+  const c = raw;
+  const chainId = c.chainId;
+  if (typeof chainId !== "string" || chainId.length === 0 || chainId.length > MAX_CHAIN_ID_LEN) {
+    return { ok: false, reason: `the delegation chain claim has no usable chainId (1..${MAX_CHAIN_ID_LEN} characters required)` };
+  }
+  const hop = c.hop;
+  if (typeof hop !== "number" || !Number.isInteger(hop) || hop < 1 || hop > MAX_FEDERATION_HOPS) {
+    return { ok: false, reason: `the delegation chain claim declares hop=${JSON.stringify(hop)}, which is not a whole number in 1..${MAX_FEDERATION_HOPS}` };
+  }
+  const pathRaw = c.path;
+  if (!Array.isArray(pathRaw)) return { ok: false, reason: "the delegation chain claim carries no visited-path array" };
+  if (pathRaw.length > MAX_PATH_LEN) return { ok: false, reason: `the delegation chain claims a ${pathRaw.length}-host path, longer than the ${MAX_PATH_LEN} this build accepts` };
+  const path4 = [];
+  for (const entry of pathRaw) {
+    if (typeof entry !== "string" || entry.length === 0 || entry.length > 80) {
+      return { ok: false, reason: "the delegation chain's visited path holds an entry that is not a selfimpulse identity" };
+    }
+    path4.push(entry);
+  }
+  return { ok: true, claim: { chainId, hop, path: path4 } };
+}
+var observedChains = /* @__PURE__ */ new Map();
+function observeInboundChain(selfUser, packetId, claim, now = Date.now()) {
+  for (const [id, e] of [...observedChains]) if (now - e.lastSeenAt > PACKET_TTL_MS) observedChains.delete(id);
+  if (claim.path.includes(selfUser)) {
+    return {
+      ok: false,
+      reason: `this delegation chain has already been through "${selfUser}" (it names this host in its path), so accepting it again would close a loop \u2014 refused`
+    };
+  }
+  const entry = observedChains.get(claim.chainId);
+  if (entry && entry.packetIds.includes(packetId)) {
+    return { ok: false, reason: `packet ${packetId} was already executed for chain ${claim.chainId} \u2014 replay refused` };
+  }
+  const observedHop = (entry ? entry.observed : 0) + 1;
+  if (observedHop > MAX_FEDERATION_HOPS) {
+    return {
+      ok: false,
+      reason: `chain ${claim.chainId} has already been executed ${entry?.observed ?? 0} time(s) on "${selfUser}"; the federation depth limit is ${MAX_FEDERATION_HOPS} hops, so hop ${observedHop} is refused`
+    };
+  }
+  if (!entry && observedChains.size >= REPLAY_REGISTRY_CAP) {
+    return {
+      ok: false,
+      reason: `the federation chain registry is full (${REPLAY_REGISTRY_CAP} chains inside the packet TTL) \u2014 refusing rather than forgetting a live chain, because forgetting one is what lets a loop come back round`
+    };
+  }
+  if (entry) {
+    entry.observed = observedHop;
+    entry.lastSeenAt = now;
+    entry.packetIds.push(packetId);
+  } else {
+    observedChains.set(claim.chainId, { observed: observedHop, lastSeenAt: now, packetIds: [packetId] });
+  }
+  return { ok: true, settled: { chainId: claim.chainId, hop: claim.hop, path: [...claim.path, selfUser], observedHop } };
+}
+var MAX_INBOUND_PER_WINDOW = 32;
+var inboundWindow = { count: 0, startedAt: 0 };
+function inboundWindowRefused(now) {
+  if (inboundWindow.count === 0 || now - inboundWindow.startedAt > PACKET_TTL_MS) inboundWindow = { count: 0, startedAt: now };
+  if (inboundWindow.count >= MAX_INBOUND_PER_WINDOW) {
+    const waitS = Math.max(1, Math.ceil((PACKET_TTL_MS - (now - inboundWindow.startedAt)) / 1e3));
+    return `this receiver has executed ${inboundWindow.count} inbound delegations in the last ${Math.round(PACKET_TTL_MS / 1e3)}s and will not start another for ${waitS}s \u2014 the ceiling is what stops a peer from resetting its chain by inventing a new id`;
+  }
+  return null;
+}
+function declareOutboundChain(selfUser, packetId, parent) {
+  const claimed = typeof parent?.hop === "number" && Number.isInteger(parent.hop) && parent.hop > 0 ? parent.hop : 0;
+  const observed = typeof parent?.observedHop === "number" && Number.isInteger(parent.observedHop) && parent.observedHop > 0 ? parent.observedHop : 0;
+  const hop = Math.max(claimed, observed) + 1;
+  if (hop > MAX_FEDERATION_HOPS) {
+    return {
+      ok: false,
+      reason: `delegating onward would be hop ${hop}, past the federation depth limit of ${MAX_FEDERATION_HOPS} \u2014 this delegation ends here rather than becoming a chain nobody bounded`
+    };
+  }
+  const inherited = Array.isArray(parent?.path) ? parent.path.filter((p) => typeof p === "string" && p.length > 0 && p.length <= 80) : [];
+  if (inherited.slice(0, -1).includes(selfUser)) {
+    return {
+      ok: false,
+      reason: `this chain has already been through "${selfUser}" (the path it was handed names this host before its immediate parent), so re-delegating from here would close a loop \u2014 refused`
+    };
+  }
+  if (inherited.length >= MAX_PATH_LEN) {
+    return { ok: false, reason: `the delegation path already names ${inherited.length} hosts, which is the ${MAX_PATH_LEN} this build accepts \u2014 this delegation ends here` };
+  }
+  const chainId = typeof parent?.chainId === "string" && parent.chainId.length > 0 && parent.chainId.length <= MAX_CHAIN_ID_LEN ? parent.chainId : packetId;
+  return { ok: true, chain: { chainId, hop, path: inherited.length === 0 ? [selfUser] : inherited } };
+}
 async function sha256Hex2(text) {
   const subtle = globalThis.crypto?.subtle;
   if (!subtle) throw new Error("delegation digests require WebCrypto");
@@ -5827,7 +6075,10 @@ async function sha256Hex2(text) {
   return [...h].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 function packetExpired(ts, nowMs = Date.now()) {
-  return nowMs - new Date(ts).getTime() > PACKET_TTL_MS;
+  const at = new Date(ts).getTime();
+  if (!Number.isFinite(at)) return true;
+  if (at - nowMs > MAX_CLOCK_SKEW_MS) return true;
+  return nowMs - at > PACKET_TTL_MS;
 }
 function selfimpulseCardForTeamV10(team, interfaceUrl) {
   return {
@@ -5900,9 +6151,15 @@ async function handleInboundDelegation(remoteTeam, packet, inboundGate, bridge, 
     }
   });
   if (packet.toUser !== remoteTeam.user) return refused(`packet is addressed to "${packet.toUser}" but this selfimpulse is "${remoteTeam.user}"`);
-  if (packetExpired(packet.ts)) return refused("packet expired (TTL 10 min) \u2014 stale delegations are refused");
+  if (packetExpired(packet.ts)) {
+    return refused(`packet expired \u2014 older than the ${Math.round(PACKET_TTL_MS / 6e4)}min TTL, carrying a timestamp this host cannot read, or dated further than ${Math.round(MAX_CLOCK_SKEW_MS / 1e3)}s in the future`);
+  }
   const digest = await sha256Hex2(JSON.stringify({ ...packet, packetDigest: "" }));
   if (digest !== packet.packetDigest) return refused("packet digest mismatch \u2014 the packet was modified in transit");
+  const chainRead = readChainClaim(packet);
+  if (!chainRead.ok) return refused(`delegation-chain refusal: ${chainRead.reason}`);
+  const observed = observeInboundChain(remoteTeam.user, packet.id, chainRead.claim);
+  if (!observed.ok) return refused(`delegation-chain refusal: ${observed.reason}`);
   const findings = detectInjection(packet.task);
   if (findings.length > 0) return refused(`receiver-side GuardRail refused the inbound packet: ${findings.map((f) => f.code).join(", ")}`);
   const route = routeDelegation(remoteTeam, packet.task);
@@ -5935,12 +6192,16 @@ async function handleInboundDelegation(remoteTeam, packet, inboundGate, bridge, 
         ts,
         receiverPolicy: riskVerdict,
         execution: null,
-        receipt: null
+        receipt: null,
+        chain: observed.settled
       }
     };
   }
-  if (decidedInbound.has(packet.id)) return refused("delegation already decided \u2014 replay refused");
-  decidedInbound.add(packet.id);
+  const replayed = decidedInbound.claim(packet.id);
+  if (replayed) return refused(`delegation already decided \u2014 ${replayed}`);
+  const windowRefusal = inboundWindowRefused(Date.now());
+  if (windowRefusal) return refused(windowRefusal);
+  inboundWindow.count += 1;
   const claimed = sanitizeDeclaredAuthority(packet.declaredAuthority);
   const declared = claimed.capabilities.length > 0 ? claimed : null;
   const run = await runInboundDelegation(toTeammate, packet.task, packet.fromUser, {
@@ -5968,7 +6229,8 @@ async function handleInboundDelegation(remoteTeam, packet, inboundGate, bridge, 
         ts,
         execution: null,
         receipt: null,
-        receiverPolicy: riskVerdict
+        receiverPolicy: riskVerdict,
+        chain: observed.settled
       }
     };
   }
@@ -6000,7 +6262,8 @@ async function handleInboundDelegation(remoteTeam, packet, inboundGate, bridge, 
       ts,
       execution: run.execution,
       receipt: run.receipt,
-      receiverPolicy: riskVerdict
+      receiverPolicy: riskVerdict,
+      chain: observed.settled
     }
   };
 }
@@ -6092,6 +6355,8 @@ async function delegateViaA2A(opts) {
       }
     };
   }
+  const declaredChain = declareOutboundChain(fromTeam.user, id, opts.chain);
+  if (!declaredChain.ok) return refused(declaredChain.reason, { fromTeammate, toUser });
   const body = {
     vh: "delegation/1.0",
     id,
@@ -6101,13 +6366,14 @@ async function delegateViaA2A(opts) {
     task: cleanTask,
     tier,
     ts,
+    chain: declaredChain.chain,
     declaredAuthority: sanitizeDeclaredAuthority(authority)
   };
   const packetDigest = await sha256Hex2(JSON.stringify({ ...body, packetDigest: "" }));
   const packet = { ...body, packetDigest };
-  if (decidedDelegations.has(id)) return refused("delegation already decided \u2014 replay refused", { fromTeammate, toUser, packetDigest });
-  decidedDelegations.add(id);
-  busNote("operator", `delegation ${id} crossing to ${toUser} over A2A v1.0 (${tier})`, fromTeam.user);
+  const alreadyDecided = decidedDelegations.claim(id);
+  if (alreadyDecided) return refused(`delegation already decided \u2014 ${alreadyDecided}`, { fromTeammate, toUser, packetDigest });
+  busNote("operator", `delegation ${id} crossing to ${toUser} over A2A v1.0 (${tier}, chain hop ${declaredChain.chain.hop}/${MAX_FEDERATION_HOPS})`, fromTeam.user);
   let remote;
   try {
     remote = await sendMessage(opts.remoteRoot, {
@@ -6137,9 +6403,10 @@ async function delegateViaA2A(opts) {
 init_guardrail();
 init_guardrail();
 import { createServer } from "node:http";
-import { createHash } from "node:crypto";
+import { createHash as createHash2 } from "node:crypto";
 var MAX_BODY_BYTES = 1024 * 1024;
 var REPLAY_WINDOW_MS = 3e4;
+var REPLAY_SEEN_CAP = 4096;
 var AUDIT_CAP = 500;
 var TASK_CAP = 200;
 var STOP_HEADER = "x-si-stop-nonce";
@@ -6172,7 +6439,7 @@ function createA2AServer(opts) {
   const seen = /* @__PURE__ */ new Map();
   const audit = [];
   const cardJson = JSON.stringify(opts.card);
-  const cardEtag = `"${createHash("sha256").update(cardJson).digest("hex").slice(0, 32)}"`;
+  const cardEtag = `"${createHash2("sha256").update(cardJson).digest("hex").slice(0, 32)}"`;
   const note = (e) => {
     audit.push(e);
     if (audit.length > AUDIT_CAP) audit.splice(0, audit.length - AUDIT_CAP);
@@ -6186,11 +6453,24 @@ function createA2AServer(opts) {
       pushConfigs.delete(first);
     }
   };
-  const fingerprintOf = (req) => createHash("sha256").update(`${req.method}|${JSON.stringify(req.params ?? {})}`).digest("hex");
+  const fingerprintOf = (req) => {
+    const params = req.params;
+    const message = params?.message;
+    const canonical = stableStringify({
+      method: req.method,
+      // Only for message methods; a non-message method has no messageId to drop.
+      ...message && typeof message === "object" ? { params: { ...params, message: { ...message, messageId: "<per-attempt>" } } } : { params }
+    });
+    return createHash2("sha256").update(`${req.method}|${canonical}`).digest("hex");
+  };
   const replayed = (fp) => {
     const now = Date.now();
     for (const [k, ts] of [...seen]) if (now - ts > REPLAY_WINDOW_MS) seen.delete(k);
     if (seen.has(fp)) return true;
+    if (seen.size >= REPLAY_SEEN_CAP) {
+      const oldest = seen.keys().next().value;
+      if (oldest !== void 0) seen.delete(oldest);
+    }
     seen.set(fp, now);
     return false;
   };
@@ -6702,7 +6982,7 @@ function createA2AServer(opts) {
 }
 
 // src/mission/altersend.ts
-import { createHash as createHash2, timingSafeEqual } from "node:crypto";
+import { createHash as createHash3, timingSafeEqual } from "node:crypto";
 import * as fs from "node:fs";
 import * as path2 from "node:path";
 var DEFAULT_LIMITS = {
@@ -6715,8 +6995,8 @@ var DEFAULT_LIMITS = {
 function contentId(digest) {
   return digest.replace("sha256:", "").slice(0, 24);
 }
-function digestOf(bytes) {
-  return `sha256:${createHash2("sha256").update(bytes).digest("hex")}`;
+function digestOf2(bytes) {
+  return `sha256:${createHash3("sha256").update(bytes).digest("hex")}`;
 }
 function safeName(raw, maxLength = DEFAULT_LIMITS.maxNameLength) {
   if (typeof raw !== "string" || raw.length === 0) return { ok: false, reason: "name:empty" };
@@ -6789,7 +7069,7 @@ var AlterSendStore = class {
     if (entry.bytes) return entry.bytes;
     if (!entry.objectPath) throw new Error("altersend: object is not on disk");
     const bytes = fs.readFileSync(entry.objectPath);
-    if (digestOf(bytes) !== entry.offer.digest) throw new Error("altersend: object failed its digest on read");
+    if (digestOf2(bytes) !== entry.offer.digest) throw new Error("altersend: object failed its digest on read");
     return bytes;
   }
   /**
@@ -6815,7 +7095,7 @@ var AlterSendStore = class {
       at,
       decision,
       detail,
-      digest: `sha256:${createHash2("sha256").update(payload).digest("hex")}`
+      digest: `sha256:${createHash3("sha256").update(payload).digest("hex")}`
     };
     this.receipts.push(receipt);
     return receipt;
@@ -6863,7 +7143,7 @@ var AlterSendStore = class {
       this.record(":", "refused", "store-bytes");
       return { ok: false, reason: "store:full" };
     }
-    const digest = digestOf(file.bytes);
+    const digest = digestOf2(file.bytes);
     const id = contentId(digest);
     if (this.entries.has(id)) return { ok: false, reason: "file:already-offered" };
     const offer = {
@@ -6910,7 +7190,7 @@ var AlterSendStore = class {
       this.record(id, "refused", err instanceof Error ? err.message : "the object could not be read back");
       return { ok: false, reason: "file:unreadable" };
     }
-    if (digestOf(current) !== e.offer.digest) {
+    if (digestOf2(current) !== e.offer.digest) {
       e.decision = "refused";
       e.detail = "digest-mismatch";
       this.record(id, "refused", "the bytes do not match the digest the sender published");
@@ -6978,7 +7258,7 @@ var AlterSendStore = class {
     for (let i = 0; i < this.receipts.length; i += 1) {
       const r = this.receipts[i];
       const payload = `${prev}|${r.id}|${r.decision}|${r.detail}|${r.at}`;
-      const want = `sha256:${createHash2("sha256").update(payload).digest("hex")}`;
+      const want = `sha256:${createHash3("sha256").update(payload).digest("hex")}`;
       if (want.length !== r.digest.length || !timingSafeEqual(Buffer.from(want), Buffer.from(r.digest))) {
         return { ok: false, brokenAt: i };
       }
@@ -7044,7 +7324,7 @@ var ECDSA2 = { name: "ECDSA", namedCurve: "P-256" };
 async function makeSelfImpulseIdentity() {
   const kp = await crypto.subtle.generateKey(ECDSA2, true, ["sign", "verify"]);
   const publicJwk = await crypto.subtle.exportKey("jwk", kp.publicKey);
-  const fp = createHash3("sha256").update(JSON.stringify(publicJwk)).digest("hex").slice(0, 16);
+  const fp = createHash4("sha256").update(JSON.stringify(publicJwk)).digest("hex").slice(0, 16);
   return { fp, privateKey: kp.privateKey, publicJwk };
 }
 function isExecutable(file) {
@@ -7347,6 +7627,7 @@ async function startA2ARuntime(opts) {
     missing.push("no in-process seat runner on this host (set SI_A2A_PROVIDER_KEY to run seats)");
   }
   if (!bridge.repoRoot) missing.push("no repository bound");
+  const inboundCaps = inboundCapsFor(bridge.inboundCaps);
   const describe = () => ({
     files: {
       enabled: files !== null,
@@ -7373,7 +7654,14 @@ async function startA2ARuntime(opts) {
     policy: {
       receiverRiskMode: opts.receiverRiskMode ?? "high-and-critical",
       riskyGate: typeof riskyGate === "function" ? "custom" : riskyGate,
-      guardrail: "inbound scan + egress check + replay window"
+      guardrail: "inbound scan + egress check + replay window",
+      maxFederationHops: MAX_FEDERATION_HOPS,
+      inboundCaps: {
+        maxCostUsd: inboundCaps.maxCostUsd ?? 0,
+        maxTurns: inboundCaps.maxTurns ?? 0,
+        maxInvocations: inboundCaps.maxInvocations ?? 0,
+        maxWallClockMs: inboundCaps.maxWallClockMs ?? 0
+      }
     },
     bridge: {
       executable: missing.length === 0,
@@ -7408,7 +7696,8 @@ async function startA2ARuntime(opts) {
       tier: o.tier,
       authority: o.authority,
       authorization: o.authorization,
-      senderGate: o.senderGate
+      senderGate: o.senderGate,
+      chain: o.chain
     }),
     stop: async () => {
       await server.stop();
@@ -7474,7 +7763,363 @@ module.exports = { authorize };
   };
 }
 
+// src/security/ownerRoot.ts
+import { createHash as createHash6, createPrivateKey, createPublicKey, hkdfSync, pbkdf2Sync, sign as edSign2, verify as edVerify2 } from "node:crypto";
+
+// src/security/sovereign.ts
+import { createHash as createHash5, generateKeyPairSync, sign as edSign, verify as edVerify } from "node:crypto";
+function workingRoot() {
+  try {
+    if (typeof process !== "undefined" && typeof process.cwd === "function") {
+      const cwd = process.cwd();
+      if (typeof cwd === "string" && cwd.length > 0) return cwd;
+    }
+  } catch {
+  }
+  return "/";
+}
+function requestProfileOf(node) {
+  const cfg = node.config ?? {};
+  const bool = (k, dflt) => typeof cfg[k] === "boolean" ? cfg[k] : dflt;
+  const riskRaw = String(cfg.maxRisk ?? "low").toLowerCase();
+  const maxRisk = riskRaw === "critical" || riskRaw === "high" || riskRaw === "medium" ? riskRaw : "low";
+  return {
+    agentId: String(node.id ?? node.title ?? "seat"),
+    owner: String(cfg.owner ?? "owner"),
+    allowWrite: bool("allowWrite", false),
+    allowShell: bool("allowShell", false),
+    allowNetwork: bool("allowNetwork", false),
+    root: String(cfg.workspaceRoot ?? workingRoot()),
+    budgetCeiling: Number(cfg.budgetCeiling ?? 0),
+    maxRisk
+  };
+}
+function profileDigest(p) {
+  return createHash5("sha256").update(`si.profile.v1
+${stableStringify(p)}`).digest("hex");
+}
+function profileIsEffectful(p) {
+  return p.allowWrite || p.allowShell || p.allowNetwork || p.maxRisk !== "low";
+}
+var MANDATE_FORMAT = "si.mandate.v1";
+function mandateCanonical2(m) {
+  return stableStringify({
+    v: m.v,
+    agentId: m.agentId,
+    owner: m.owner,
+    profile: m.profile,
+    env: m.env,
+    issuedAt: m.issuedAt,
+    expiresAt: m.expiresAt
+  });
+}
+function sessionSigner() {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const pubDer = publicKey.export({ type: "spki", format: "der" });
+  const id = createHash5("sha256").update(pubDer).digest("hex").slice(0, 16);
+  return {
+    id,
+    sign: (data) => edSign(null, Buffer.from(data, "utf8"), privateKey).toString("base64"),
+    verify: (data, sig) => {
+      try {
+        return edVerify(null, Buffer.from(data, "utf8"), publicKey, Buffer.from(sig, "base64"));
+      } catch {
+        return false;
+      }
+    }
+  };
+}
+function issueMandate(profile, signer, ttlMs = 60 * 6e4) {
+  const issuedAt = Date.now();
+  const m = {
+    v: MANDATE_FORMAT,
+    agentId: profile.agentId,
+    owner: profile.owner,
+    profile: profileDigest(profile),
+    env: {
+      allowWrite: profile.allowWrite,
+      allowShell: profile.allowShell,
+      allowNetwork: profile.allowNetwork,
+      root: profile.root,
+      budgetCeiling: profile.budgetCeiling,
+      maxRisk: profile.maxRisk
+    },
+    issuedAt,
+    expiresAt: issuedAt + Math.max(1, ttlMs)
+  };
+  return { ...m, signature: signer.sign(mandateCanonical2(m)) };
+}
+function verifyMandate(m, signer) {
+  if (!m || typeof m !== "object" || !m.signature) {
+    return { ok: false, reason: "missing", detail: "no mandate: a profile without a signature issues no authority" };
+  }
+  if (!m.owner || typeof m.owner !== "string") {
+    return { ok: false, reason: "no-owner", detail: "the mandate names no human principal; an anonymous authority is not an authority" };
+  }
+  if (!signer.verify(mandateCanonical2(m), m.signature)) {
+    return { ok: false, reason: "bad-signature", detail: `the mandate's signature does not verify against the owner key ${signer.id}` };
+  }
+  if (Date.now() > m.expiresAt) {
+    return { ok: false, reason: "expired", detail: `the mandate expired at ${new Date(m.expiresAt).toISOString()}` };
+  }
+  return { ok: true, mandate: m };
+}
+function envelopeFromMandate(m, signer) {
+  if (!verifyMandate(m, signer).ok) return null;
+  return {
+    allowWrite: m.env.allowWrite === true,
+    allowShell: m.env.allowShell === true,
+    allowNetwork: m.env.allowNetwork === true,
+    root: String(m.env.root),
+    budgetCeiling: Number(m.env.budgetCeiling) || 0,
+    maxRisk: m.env.maxRisk
+  };
+}
+var FRONT_DOOR_AGENT = "si.front-door.captain";
+var FRONT_DOOR_TTL_MS = 60 * 6e4;
+var DENY_ALL_ENVELOPE = {
+  allowWrite: false,
+  allowShell: false,
+  allowNetwork: false,
+  root: workingRoot(),
+  budgetCeiling: 0,
+  maxRisk: "low"
+};
+var SovereignAuthority = class {
+  bootstrap;
+  ownerSigner = null;
+  issued = /* @__PURE__ */ new Map();
+  revoked = /* @__PURE__ */ new Set();
+  constructor(signer) {
+    this.bootstrap = signer ?? null;
+  }
+  /** ONE authority root. The session key bootstraps (labelled honestly as
+   *  "bootstrap"); binding the OWNER's key re-roots every issuance. */
+  get root() {
+    return this.ownerSigner ? "owner" : "bootstrap";
+  }
+  /** Bind the owner's signer — the human's key becomes THE root. Idempotent
+   *  for the same key; the bootstrap key keeps verifying nothing new. */
+  bindOwnerSigner(s) {
+    this.ownerSigner = s;
+  }
+  /** DROP the owner binding — the vault-lock act. The root reverts to the
+   *  labelled bootstrap, and every owner-signed artifact (mandates AND
+   *  capabilities) stops verifying from this moment: a key that is gone
+   *  cannot vouch. Re-binding with the same passphrase restores the same
+   *  key, and with it the same mandates. */
+  unbindOwnerSigner() {
+    this.ownerSigner = null;
+  }
+  get rootSigner() {
+    this.bootstrap ??= sessionSigner();
+    return this.ownerSigner ?? this.bootstrap;
+  }
+  get signerId() {
+    const bound = this.ownerSigner ?? this.bootstrap;
+    if (bound) return bound.id;
+    return "unbound";
+  }
+  /** The signing root every other authority artifact MUST share —
+   *  capabilities sign with exactly this key. One root, no side keys. */
+  currentRootSigner() {
+    return this.rootSigner;
+  }
+  /** The OWNER act — an explicit re-grant. The ONLY path that lifts a
+   *  revocation; mandateFor refuses revoked seats and never un-revokes. */
+  regrant(node, ttlMs = 60 * 6e4) {
+    if (this.root !== "owner") {
+      return { ok: false, reason: "owner-required", detail: "only the bound owner root may re-grant a revoked seat" };
+    }
+    const profile = requestProfileOf(node);
+    this.revoked.delete(profile.agentId);
+    return this.mandateFor(node, ttlMs);
+  }
+  /** Revoke a seat — the roster's revocation flows through here, so the
+   *  very next governed read fail-closes. Only an owner act (a fresh
+   *  mandate) re-arms the seat. */
+  revoke(agentId) {
+    this.revoked.add(agentId);
+  }
+  isRevoked(agentId) {
+    return this.revoked.has(agentId);
+  }
+  /** The seats under mandate — the IAM roster's source of truth. */
+  enrolledAgents() {
+    return [...this.issued.keys()];
+  }
+  enrolledMandateOf(agentId) {
+    return this.issued.get(agentId)?.mandate ?? null;
+  }
+  /** The mandate for a node's CURRENT profile — issuing one if the profile
+   *  is new or changed, re-verifying the cached one if it is not. Issuance
+   *  here is the owner's standing act (the app owner IS the human principal
+   *  for local seats); every issuance is returned with its signing key id so
+   *  the caller can journal it. */
+  mandateFor(node, ttlMs = 60 * 6e4) {
+    const profile = requestProfileOf(node);
+    const digest = profileDigest(profile);
+    if (this.root === "bootstrap" && profileIsEffectful(profile)) {
+      return { ok: false, reason: "bootstrap-effectful-mandate", detail: "bootstrap authority is read-only until the owner root is bound" };
+    }
+    if (this.revoked.has(profile.agentId)) {
+      return { ok: false, reason: "revoked", detail: "this seat is revoked \u2014 authority stays off until the owner re-grants it" };
+    }
+    const cached2 = this.issued.get(profile.agentId);
+    if (cached2 && cached2.digest === digest) {
+      const check = verifyMandate(cached2.mandate, this.rootSigner);
+      if (check.ok) return { ok: true, mandate: check.mandate, issued: false, signerId: this.rootSigner.id };
+      if (check.reason === "expired") {
+        const fresh2 = issueMandate(profile, this.rootSigner, ttlMs);
+        this.issued.set(profile.agentId, { mandate: fresh2, digest });
+        return { ok: true, mandate: fresh2, issued: true, signerId: this.rootSigner.id };
+      }
+      return { ok: false, reason: check.reason, detail: check.detail };
+    }
+    const fresh = issueMandate(profile, this.rootSigner, ttlMs);
+    this.issued.set(profile.agentId, { mandate: fresh, digest });
+    return { ok: true, mandate: fresh, issued: true, signerId: this.rootSigner.id };
+  }
+  /** The LIVE authority read — called before every governed step.
+   *
+   *  Returns the envelope ONLY if a mandate exists for this node, verifies
+   *  against the owner key, is unexpired, AND was issued over the profile
+   *  the node's configuration carries RIGHT NOW. Anything else returns null
+   *  and the governed loop fail-closes; that null is what makes drift
+   *  detection real instead of decorative. */
+  read(node) {
+    const profile = requestProfileOf(node);
+    const cached2 = this.issued.get(profile.agentId);
+    if (!cached2) return null;
+    if (this.revoked.has(profile.agentId)) return null;
+    if (cached2.digest !== profileDigest(profile)) return null;
+    const check = verifyMandate(cached2.mandate, this.rootSigner);
+    if (!check.ok) return null;
+    return envelopeFromMandate(check.mandate, this.rootSigner);
+  }
+  /** The verified mandate for a node, if one is live. */
+  mandateOf(node) {
+    const profile = requestProfileOf(node);
+    const cached2 = this.issued.get(profile.agentId);
+    if (!cached2 || this.revoked.has(profile.agentId) || cached2.digest !== profileDigest(profile)) return null;
+    const check = verifyMandate(cached2.mandate, this.rootSigner);
+    return check.ok ? check.mandate : null;
+  }
+  /** The front-door envelope — the Captain's own seat, judged by the same
+   *  authority as every other seat. Conservative by construction: the front
+   *  door steers anything risky and refuses anything critical on its own
+   *  authority, exactly like the governed loop. */
+  frontDoorEnvelope() {
+    const claim = this.mandateFor({ id: FRONT_DOOR_AGENT, config: { owner: "owner" } }, FRONT_DOOR_TTL_MS);
+    if (!claim.ok) return DENY_ALL_ENVELOPE;
+    return envelopeFromMandate(claim.mandate, this.rootSigner) ?? DENY_ALL_ENVELOPE;
+  }
+};
+var sovereign = new SovereignAuthority();
+
+// src/security/capability.ts
+var DEFAULT_CAPABILITY_TTL_MS = 10 * 6e4;
+var registry = /* @__PURE__ */ new Map();
+function invalidateCapabilitiesForRoot(rootKeyId) {
+  let killed = 0;
+  for (const entry of registry.values()) {
+    if (entry.mintedRootKeyId === rootKeyId && !entry.invalidated) {
+      entry.invalidated = true;
+      killed += 1;
+    }
+  }
+  return killed;
+}
+var registrySealed = false;
+function sealReadOnlyRegistry() {
+  registrySealed = true;
+}
+
+// src/engine/vault.ts
+var VAULT_META_KEY = "vh.vault.meta.v1";
+var enc4 = new TextEncoder();
+var dec = new TextDecoder();
+function storage2() {
+  try {
+    return globalThis.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+function readMeta() {
+  const s = storage2();
+  if (!s) return null;
+  try {
+    const raw = JSON.parse(s.getItem(VAULT_META_KEY) ?? "null");
+    return raw && raw.v === "si-vault-meta/1" ? raw : null;
+  } catch {
+    return null;
+  }
+}
+function vaultKdfParams() {
+  const meta = readMeta();
+  return meta ? { saltB64: meta.saltB64, iterations: meta.iterations } : null;
+}
+
+// src/security/ownerRoot.ts
+var OWNER_ROOT_SALT = "si.owner-root.v1";
+var OWNER_ROOT_INFO = "ed25519 root seed";
+function ed25519Pkcs8Prefix() {
+  return Buffer.from("302e020100300506032b657004220420", "hex");
+}
+function deriveOwnerSigner(passphrase) {
+  let material;
+  const kdf = vaultKdfParams();
+  if (kdf) {
+    material = pbkdf2Sync(passphrase, Buffer.from(kdf.saltB64, "base64"), kdf.iterations, 32, "sha256");
+  } else {
+    material = Buffer.from(passphrase, "utf8");
+  }
+  const seed = Buffer.from(hkdfSync("sha256", material, OWNER_ROOT_SALT, OWNER_ROOT_INFO, 32));
+  const privateKey = createPrivateKey({ key: Buffer.concat([ed25519Pkcs8Prefix(), seed]), format: "der", type: "pkcs8" });
+  const publicKey = createPublicKey(privateKey);
+  const pubDer = publicKey.export({ type: "spki", format: "der" });
+  const id = createHash6("sha256").update(pubDer).digest("hex").slice(0, 16);
+  return {
+    id,
+    sign: (data) => edSign2(null, Buffer.from(data, "utf8"), privateKey).toString("base64"),
+    verify: (data, sig) => {
+      try {
+        return edVerify2(null, Buffer.from(data, "utf8"), publicKey, Buffer.from(sig, "base64"));
+      } catch {
+        return false;
+      }
+    }
+  };
+}
+function bindOwnerRoot(passphrase) {
+  try {
+    const previous = sovereign.signerId;
+    const signer = deriveOwnerSigner(passphrase);
+    sovereign.bindOwnerSigner(signer);
+    if (previous !== signer.id) invalidateCapabilitiesForRoot(previous);
+    return { ok: true, signerId: signer.id };
+  } catch (e) {
+    return { ok: false, error: `the owner root could not be bound: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+function bindOwnerRootFromEnv(env) {
+  const source = env ?? (typeof process !== "undefined" && process.env ? process.env : {});
+  const secret = source.SI_OWNER_SECRET;
+  if (typeof secret !== "string" || secret.length === 0) return false;
+  return bindOwnerRoot(secret).ok;
+}
+
+// src/selfimpulse/engine/policyGateway.ts
+var policySealed = false;
+function sealPolicyRegistry() {
+  policySealed = true;
+}
+
 // tools/si-host.entry.ts
+bindOwnerRootFromEnv();
+sealReadOnlyRegistry();
+sealPolicyRegistry();
 function parseArgv(argv) {
   const out = {};
   const list = [];

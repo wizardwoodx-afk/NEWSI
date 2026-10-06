@@ -30,12 +30,54 @@ export function Chat({ title }: { title: string }): React.ReactElement {
     return () => clearInterval(t);
   }, [busy, gate]);
 
+  /* WHAT GETS SAID, AND WHAT DOES NOT.
+     Priority, most urgent first: a pending gate (it stops the run and demands a
+     decision), then the newest message (the actual content), then the run going
+     quiet-but-busy.
+     The ROTATION IS DELIBERATELY NOT ANNOUNCED. The visible line changes every
+     2.6s; a polite region that re-fires on that cadence is not a status update,
+     it is a 23-interruptions-a-minute wall of speech that makes the transcript
+     unusable. The run's arrival is announced once; the rotating phrases are
+     ambience for people who can see them. */
+  const [announced, setAnnounced] = useState("");
+  /* Seeded with what is ALREADY in the transcript so a cold open (a remembered
+     conversation, a rehydrated session) does not read the whole backlog aloud. */
+  const spokenMsg = useRef<number>(msgs.length > 0 ? msgs[msgs.length - 1]!.id : 0);
+  const wasBusy = useRef(busy);
+  useEffect(() => {
+    const enteredBusy = busy && !wasBusy.current;
+    wasBusy.current = busy;
+    if (gate) { setAnnounced(`Your approval is needed. ${gate.ask.summary}`); return; }
+    const last = msgs[msgs.length - 1];
+    if (last && last.id !== spokenMsg.current) {
+      spokenMsg.current = last.id;
+      setAnnounced(`${last.role === "user" ? "You said" : `${title} answered`}: ${last.text}`);
+      return;
+    }
+    if (enteredBusy) setAnnounced(`${title} is working — ${THOUGHTS[0]}. The live graph is on the Work board.`);
+  }, [gate, busy, msgs, title]);
+
   const fmt = (iso: string) => { try { return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
   return (
     <>
       <header className="top"><h2>{openSession?.title ?? "Conversation"}</h2><span className="sub">{openSession ? "from memory" : "this session"}</span>
         <div className="right"><button className="btn sm ghost" onClick={() => go("memory")}>← Back to memory</button><button className="btn sm ghost" onClick={() => go("work")}>Watch the work</button></div></header>
-      <div className="scroll"><div className="thread">
+      <div className="scroll">
+        {/* THE ANNOUNCER. One polite live region, mounted EMPTY and rendered BEFORE
+            the transcript, so the first thing that ever changes is text going into a
+            region that was already in the document. That ordering is the whole trick:
+            a live region inserted at the same instant as its own content is routinely
+            silent, and it is the single most common way a chat becomes mute.
+            It is `.sr` (vh.css) rather than visible, because it is a duplicate of
+            information the transcript already carries — it exists only to be spoken.
+            WHY NOT `aria-live` ON `.thread`: a live region announces its own contents
+            on every mutation, and this transcript mutates on every arriving message,
+            so the whole history would be re-read aloud each time — the polite region
+            becomes a wall of repetition and is unusable. The transcript stays ordinary
+            content that a screen-reader user reads at their own pace; this region
+            carries ONE line about the newest event only. */}
+        <p className="sr" role="status" aria-live="polite" aria-atomic="true">{announced}</p>
+        <div className="thread">
         {msgs.length === 0 && <div className="empty"><h3>Nothing here yet</h3><p>Start with the Steward and the conversation will appear here.</p></div>}
         {msgs.map((m) => (
           <div key={m.id} className={`msg ${m.role === "user" ? "user" : ""}`}>

@@ -249,8 +249,9 @@ async function main(): Promise<void> {
     "the heartbeat path must resolve its subject through the identity seam, not a constant");
   ok("gate-blocked user runs leave a capped check-back (production scheduleFollowUp caller)",
     ncSrc.includes('scheduleFollowUp("verify"') && ncSrc.includes('resp.outcome === "gated-out"'));
-  ok("the heartbeat is armed above level 0 and re-armed on every level change",
-    /setInterval\(\(\) => \{ void get\(\)\.wakeNow\(\); \}, HEARTBEAT_DEFAULT_MS\)/.test(ncSrc) && /armHeartbeat\(get\)/.test(ncSrc) && /level === 0/.test(ncSrc));
+  ok("the heartbeat is armed above level 0 and re-armed on every level change (and ticks the intake triggers through the governed fire)",
+    /setInterval\(\(\) => \{\s*void get\(\)\.wakeNow\(\);/.test(ncSrc) && /armHeartbeat\(get\)/.test(ncSrc) && /level === 0/.test(ncSrc)
+    && /dueTriggers\(\)/.test(ncSrc) && /fireTrigger\(/.test(ncSrc));
   ok("run failures feed the circuit breaker (production reportFailure caller)",
     ncSrc.includes("reportFailure(loadInitiative());") && ncSrc.includes("The run failed before it could answer"));
   ok("receipts say what ran — 'executed through the real engine' renders with per-act verdicts",

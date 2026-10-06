@@ -55,19 +55,28 @@ async function filesFromDrop(dt: DataTransfer): Promise<File[]> {
   return Array.from(dt.files ?? []);
 }
 
-/** The share row: the five formats people actually hand over, each with its own
- *  minimal glyph so the door says what it accepts without a paragraph. The
- *  titles carry the full disposition (read / listed) from the product's own
- *  wording — an icon that promises "opens everything" would be a lie the
- *  refusals later contradict. Rendering is gated on `onFiles` like the attach
- *  control itself: no host, no claim. */
-const SHARE_TYPES: Array<{ cls: string; tag: string; title: string }> = [
-  { cls: "ic-f-pdf", tag: "PDF", title: "PDF — read for you, structure only" },
-  { cls: "ic-f-doc", tag: "DOCX", title: "Word documents — read for you" },
-  { cls: "ic-f-sheet", tag: "XLSX", title: "Spreadsheets — tables are read" },
-  { cls: "ic-f-slides", tag: "PPTX", title: "Slides — every slide is read" },
-  { cls: "ic-f-zip", tag: "ZIP", title: "Archives — listed and read, never unpacked loose" },
-];
+/** The share row is GONE, and this comment is the record of why.
+ *
+ * It used to render five chips — PDF · DOCX · XLSX · PPTX · ZIP — beside the
+ * paperclip, each with a glyph and a tooltip. The reasoning at the time was
+ * that the door should "say what it accepts without a paragraph". Measured
+ * against the actual UI, that was wrong on three counts:
+ *
+ *   1. THEY WERE NOT CONTROLS. They were `<span>`s. They looked like buttons,
+ *      they sat in a button row, and clicking one did nothing at all. A chip
+ *      that reads as clickable and is not is worse than no chip.
+ *   2. THEY STATED A LIMIT THAT WAS NEVER THERE. The hidden file input has no
+ *      `accept` attribute, so the engine's own reader decides — it handles far
+ *      more than these five. Five chips told the user "these five only", which
+ *      is a false promise about the product's capability.
+ *   3. THEY CROWDED THE ONE CONTROL THAT MATTERED. The bar held SEVEN
+ *      affordances (five chips, a paperclip, a folder) for one action. The
+ *      paperclip is the action; the rest was decoration competing with it.
+ *
+ * The information is not lost, it is MOVED: the paperclip's `title` now carries
+ * the formats, so the capability is discoverable on hover without spending
+ * permanent horizontal space on it. This is the ordinary pattern — one
+ * attachment button, its accepted types in its tooltip. */
 
 export function Composer({ value, onChange, onSend, busy, placeholder, small, onFiles }: {
   value: string; onChange: (v: string) => void; onSend: () => void; busy: boolean;
@@ -75,7 +84,14 @@ export function Composer({ value, onChange, onSend, busy, placeholder, small, on
   /** Present when the host can ingest documents. Omit and no attach control renders. */
   onFiles?: (files: Array<{ name: string; bytes: Uint8Array }>) => Promise<{ proposed: unknown[]; refused: unknown[]; structuralRefused: unknown[] }> | void;
 }): React.ReactElement {
-  const input = useRef<HTMLInputElement>(null);
+  /* Two hidden inputs, two intents, ONE visible control (see the note at the
+     paperclip below). `fileRef` is the ordinary file picker; `dirRef` carries
+     `webkitdirectory` and is reached by right-clicking that same button. This
+     used to be ONE ref plus a `querySelector('input[webkitdirectory]')` from
+     the separate folder button, which coupled the control to DOM shape — refs
+     state the intent directly. */
+  const fileRef = useRef<HTMLInputElement>(null);
+  const dirRef = useRef<HTMLInputElement>(null);
   const [picked, setPicked] = useState<string | null>(null);
   /* Nested-element drag counter. dragEnter/dragLeave fire for every child so a
      boolean `over` would flicker; the reducer keeps a depth count and over is
@@ -129,45 +145,57 @@ export function Composer({ value, onChange, onSend, busy, placeholder, small, on
     >
       <textarea
         value={value} placeholder={placeholder} rows={small ? 2 : 3}
+        /* N3 names what the field takes. The design has no visible label above
+           the composer — the whole box IS the affordance — so the name is carried
+           in ARIA rather than in a caption that would change the design. The send
+           shortcut is DECLARED rather than left as folklore: Enter sends, Shift+Enter
+           breaks the line, and that is invisible to anyone who is not already
+           pressing keys. Deliberately NO aria-describedby here — the attach/send
+           status line below already carries role="status", and pointing the field at
+           it would make the same sentence be spoken twice. */
         aria-label="Describe what you need"
+        aria-keyshortcuts="Enter"
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (value.trim() && !busy) onSend(); } }}
       />
       <div className="bar">
         {onFiles && (
           <>
-            {/* The share row — the formats this door accepts, in glyphs. Quiet
-                by construction: a hint of what lands here, not a toolbar. */}
-            <span className="ftypes" aria-label="Accepts PDF, DOCX, XLSX, PPTX and ZIP files">
-              {SHARE_TYPES.map((t) => (
-                <span key={t.cls} className="ftype" title={t.title}>
-                  <i className={`ic ${t.cls}`} aria-hidden />
-                  <span aria-hidden>{t.tag}</span>
-                </span>
-              ))}
-            </span>
+            {/* ONE attachment control.
+                *
+                * It was a paperclip PLUS a separate folder button, and the point
+                * of the change is that "attach" is a single intent — asking the
+                * user to pick a mechanism before they have picked a file is the
+                * kind of question a UI should not ask.
+                *
+                * Rather than delete folder support, the paperclip now opens the
+                * FILE picker on a plain click and the FOLDER picker on a
+                * right-click, with the menu key as the keyboard equivalent. Both
+                * routes are declared on the button (`aria-keyshortcuts`), so the
+                * shortcut is announced rather than being a hidden gesture, and
+                * the tooltip names both.
+                *
+                * Nothing is guessed away: the two `<input>`s below are the SAME
+                * pair that existed before, reached by a different route. */}
             <button
               className="attach"
               type="button"
-              aria-label="Attach files or a folder"
-              title="Attach files or a folder — dropped folders are read up to 8 levels deep"
-              onClick={() => input.current?.click()}
+              aria-label="Attach files"
+              aria-keyshortcuts="ContextMenu"
+              title="Attach files — right-click for a whole folder. Dropped folders are read up to 8 levels deep."
+              onClick={() => fileRef.current?.click()}
+              onContextMenu={(e) => { e.preventDefault(); dirRef.current?.click(); }}
             >
               <i className="ic ic-clip" />
             </button>
-            {/* webkitdirectory lets a folder be picked directly, not only dropped */}
             <input
-              ref={input} className="sr" type="file" multiple hidden={false}
+              ref={fileRef} className="sr" type="file" multiple hidden={false} aria-label="Choose files to attach"
               onChange={(e) => { const f = Array.from(e.target.files ?? []); e.target.value = ""; void ingest(f); }}
             />
             <input
-              className="sr" type="file" multiple {...({ webkitdirectory: "" } as DirInputProps)}
+              ref={dirRef} className="sr" type="file" multiple aria-label="Choose a folder to attach" {...({ webkitdirectory: "" } as DirInputProps)}
               onChange={(e) => { const f = Array.from(e.target.files ?? []); e.target.value = ""; void ingest(f); }}
             />
-            <button className="attach folder" type="button" aria-label="Attach a folder" title="Attach a folder" onClick={() => {
-              const d = input.current?.parentElement?.querySelector<HTMLInputElement>('input[webkitdirectory]');
-              d?.click();
-            }}><i className="ic ic-folder" /></button>
           </>
         )}
         <span className="pick" role="status" aria-live="polite">{picked ?? ""}</span>

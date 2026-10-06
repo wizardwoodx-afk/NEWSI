@@ -1,178 +1,147 @@
 # SelfImpulse
 
-**Agentic impulse, for all.**
+**Intelligence That Collaborates.**
 
 SelfImpulse is an on-device AI captain. You describe the outcome you want; a
-crew of specialist agents does the work on your own machine, under your own
-provider key; every action — and every refusal — is signed into a receipt you
-can verify later. Built on the **MJ** engine.
+crew of specialists does the work on your machine, under your own provider
+key. Every action — and every refusal — is sealed into a receipt you can
+verify later, offline, with one command. Built on the **MJ** engine.
 
 ---
 
 ## What you get
 
-- **Captain** — one calm place to ask. The Captain routes your request to the
-  right specialists, executes only when a provider is connected, and answers
-  in words when it can't.
-- **The company** — the product is organised like one, and no rung is ever
-  skipped. You speak only with the **Captain** (the CEO). The Captain briefs a
-  **Consul** — one per domain, sixteen in all — who reports up to it and never
-  addresses you or a sub-agent. Each Consul oversees its desks' **Adepts** (the
-  team leads), and each Adept leads a crew of **sub-agents** who do the work. A
-  message moves exactly one rung up or down (`src/engine/chain.ts`);
-  `probe/workspace` pins the law and refuses a desk that has no Consul.
-- **Work** — watch the crew work as a live 3D mission DAG, drawn rung by rung:
-  you → the Captain → a Consul → an Adept → sub-agents → tools → receipts.
-  Risky actions pause here for your approval.
-- **Specialists** — domain teams (frontend, engineering, healthcare, finance
-  and more). The Captain picks ≤3 candidates per mission; execution expands
-  to at most twenty-five live seats on the floor (see
-  [`docs/design/specialist-routing.md`](docs/design/specialist-routing.md)).
-- **Federation** — let other SelfImpulse nodes delegate work to this one over the
-  A2A wire protocol. Mounting is explicit: the screen says what the bundled host
-  does (bind a port, publish a signed agent card, verify its own engine pin
-  before listening) and you turn it on. The host is **supervised**, not fired as
-  a command with a timeout: it stays up until you unmount it, the status you see
-  is the OS's answer rather than a stored flag, and quitting the app unmounts it
-  so a card never outlives the window. This app does not open a listener on
-  launch, and every inbound delegation must state the authority it carries —
-  unstated authority is refused by name, not executed under an invented ceiling.
-  You choose the bind scope before mounting — this machine only (127.0.0.1) or
-  your network — and there is no wildcard option. To let another machine in, tick
-  **pairing**: the app shows a one-time code, the peer redeems it once, and it
-  gets a credential scoped to delegation. The host's own token never leaves the
-  process and is not on screen. Unmounting asks the host to stop itself and only
-  kills it if it will not.
-- **Receipts** — a compact ledger of everything that happened, each line
-  digest-stamped; export it as a file. Refusals additionally carry a signed
-  `11h-decision/1` receipt bound to the evidence pack it was made against.
-- **Docs** — teach the Captain from your own documents. Paste one or load a
-  file; the engine distills its *structure* (procedure, decision rules, failure
-  modes) into a knowledge proposal and you approve or dismiss it. It will not
-  summarize, it will not install anything on its own, and it tells you whether
-  the content stayed on this machine.
-- **Memory** — your conversations become a graph you can move through;
-  double-click a node to return to that conversation. Memory can be
-  encrypted at rest with the local vault, and can be switched off.
-- **Settings** — provider, vault, autonomy level, federation with another
-  owner, appearance, and the guardrail manifest.
+- **The Captain** — one calm place to ask. The Captain routes your request to
+  the right specialists and answers in words when it can't act. It answers to
+  any name you give it.
+- **The crew** — a company, organised. Captain → Consul → Adept → crew, one
+  rung at a time. The crew is internal: you work with one Captain, not a
+  roster.
+- **Work** — watch a mission as a live 3D graph, from your request down to
+  its receipts. Risky steps pause and ask. Approve once, or refuse with a
+  reason — both are receipted.
+- **Connect** — mail, calendar, repositories, documents. A connection is a
+  declared, inspectable policy: one purpose, one address range, scopes in
+  plain words. Connecting teaches the crew where it may go; it never adds a
+  tool. Mutations still stop at the gate.
+- **Federation** — your Captain works with another owner's Captain over the
+  A2A protocol. Mounting is explicit, pairing is a one-time code, and every
+  crossing is receipted on both sides. You choose the reach: this machine
+  only, or your network.
+- **Receipts** — a hash-chained ledger of everything that happened. Export a
+  mission as a single signed record and verify it anywhere:
+  `node tools/verify-mission-record.mjs record.json` — no install, no state.
+- **Docs** — teach the Captain from your own documents. Structure is
+  distilled, proposed, and installed only when you approve. Handling is
+  disclosed: what stayed on this machine, and what (if anything) went to a
+  provider.
+- **Memory** — conversations become a graph you can move through in 3D.
+  Double-click a node to return to that conversation. Encrypted at rest
+  behind the vault; one switch turns it off. Memory compounds: working,
+  episodic and semantic tiers, with promotion you can walk back to the
+  episodes it was distilled from.
+- **Durable runs** — in progress. The tamper-evident checkpoint chain, the
+  resume verdict and the journal serializer are built and pinned
+  (`src/mission/runCheckpoints.ts`, `probe/durableRuns.test.ts`), and a settled
+  mission wave already appends to the chain. What does not work yet: the chain
+  is held in memory, so it dies with the process, and the loader that would
+  restore it after a restart (`restoreRunJournal`) has no caller in `src/`. A
+  crash therefore resumes from the mission runtime's own task state, not yet
+  from this chain. Treat "a crash resumes instead of restarting" as the
+  intended behaviour, not the current one.
+- **Intake triggers** — schedules, signed webhooks and named events that
+  start runs for you. A trigger is a doorbell, not a key: everything it starts
+  goes through the same gate as your own requests.
+- **Governance evals** — the governed behaviors (risky asks gate, denials
+  execute nothing, safe asks run) held by an explicit baseline, with a
+  regression gate that names what moved.
+- **Ledgers** — the books a fleet is asked to open. Agent FinOps: per-seat,
+  per-mission spend with a chargeback export — dollar-known and dollar-unknown
+  kept honestly apart. Fleet identity: who owns every seat, under which key,
+  revocable. Assurance: a measured score that refuses to exist without
+  evidence.
+- **Capabilities** — a human approval at the gate is not UI state. It mints a
+  signed, scoped, expiring, redeem-once capability that the execution plane
+  must verify and redeem before any effect — audience-bound, depth-zero,
+  fail-closed. One root signs everything: the owner's own key — derived from
+  the vault passphrase through the vault's own hardened KDF at unlock — signs
+  mandates and capabilities alike, and locking the vault takes that authority
+  out of memory: the root unbinds and every outstanding capability dies. A
+  revoked seat stays revoked until the owner explicitly re-grants it, and
+  before the owner's key is bound the console can read but not effect — no
+  owner proof, no effectful capability, at the capability mint OR the
+  mandate issuance. Re-granting a revoked seat requires the owner's key —
+  bootstrap cannot resurrect a seat — and the read-only registry seals at
+  trusted startup, so loaded code can never redefine what "read" means.
 
-## Principles the code enforces
+## Eight finishes
 
-- **On-device.** Nothing leaves your machine without a signed authority and a
-  receipt. No telemetry.
+Holst, Obsidian, Azure, Titanium, Caesar and Stratos for the night; Platinum
+and Akaroa for the day. Every ground is a shade, never an extreme, and each
+finish carries one accent. `src/ui/store.ts` is the one list of them.
+
+Two stylesheets paint those finishes and both are measured:
+`node tools/contrast-check.mjs` parses `src/ui/vh.css` (the screen interiors)
+and `src/ui/si/si.css` (the shell chrome, under its own `--si-*` names),
+composites every translucent wash over the ground it is painted on, and
+computes real WCAG 2.x ratios across all eight finishes: text at 4.5:1, and
+focus indicators and component state at 3:1, which is the bar WCAG's Non-text
+Contrast and Focus Appearance criteria set.
+
+It currently exits non-zero, and that is the point: the tool is a gate, not a
+certificate. The open failures it names are in the two stylesheets — the primary
+action's label drops under 4.5:1 on its hover fill, the light finishes' rail
+tertiary ink falls short on the rail ground, the field placeholder and the
+deepest-ground code block fall short on their own fills, and the accent pill's
+ink falls short on its own wash. Run it for the current list rather than taking
+this paragraph's word for it; the count moves as the sheets change.
+
+This is not a claim of AA compliance. It is a list of the pairings a rule
+actually paints, checked against the ground each is painted on, plus an
+explicit statement of what the check does not cover: a pairing no rule paints,
+a font size read from the cascade rather than declared, and any ink or wash an
+image, gradient or filter contributes.
+
+## The law the code enforces
+
+- **On-device.** Every agent runs in-process, on your own provider key — no
+  external agent binary is reachable from the app, and the Rust allowlist has
+  no coding agent in it. Nothing leaves your machine without a signed authority
+  and a receipt. There is no product telemetry endpoint; the one OTLP exporter
+  in the tree (`src/mission/otel.ts`) is called by nothing in `src/`.
 - **Your key, sealed.** Provider keys live in memory for the session, or
-  encrypted at rest behind a passphrase vault — never plaintext.
-- **The human gate.** Actions above the safe tier stop and ask. Approvals
-  *and* refusals are receipted.
-- **Honest outcomes.** Without a provider the Captain *plans*; it never
-  dresses a plan as an execution. Live-data claims are fetched and checked
-  before they are called verified.
-- **Bounded autonomy.** Above "Off", a heartbeat lets the Captain act on its
-  own inside hard caps, through the same engine path as a typed message, with
-  a circuit breaker on failure.
-- **The crew is internal.** Agents appear as AGENT 01, 02… — you work with
-  one Captain, not a roster.
-- **Every agent runs in-process, on your own provider key.** Earlier releases
-  seated third-party coding-agent CLIs as a governed tier. **That tier is
-  removed from the product.** The native
-  handlers that could execute one are deleted — `cli_invoke`,
-  `cli_providers_detect`, the CLI allowlist, the custom-harness registry and
-  the whole ACP bridge — and no agent binary is reachable from the app any
-  more. What ships is a native loop: the Governor seats, scopes and receipts
-  work, and the Captain runs it in this process. `probe/noExternalCli.test.ts`
-  fails the build if any of it comes back.
-- **The loop is governed, not merely run.** Authority is decided once at the
-  door and re-checked before **every** tool call — a step that drifts outside its
-  envelope is stopped mid-run, with the reason recorded, not flagged in review
-  afterwards. Every prompt, authorization, tool call and outcome is a hash-chained
-  node in an **action provenance graph**, so a receipt can be walked back to the
-  decision that caused it. Each decision is appended to a **tamper-evident
-  decision journal**: edit one entry and every entry after it fails to verify.
-  Human oversight is **tiered** — approval before a run, intervention during
-  one, audit after — with the asymmetry made explicit: a silent approval or
-  intervention fails *closed*, a silent audit does not retroactively discard
-  verified work. The guard runs on both sides of every call, because a tool that
-  was authorized can still return something that warrants stopping.
-- **The A2A host ships inside the app bundle.** Federation is not a feature you
-  install separately: `tools/si-host.mjs` and its byte-pinned engine are
-  declared in `bundle.resources`, and the app reports the resolved path and
-  whether the bundle is actually present.
-
-The full list of what the product physically cannot do is in
-**Settings → About → Guardrail manifest**, and every line is pinned by a test.
+  encrypted at rest behind a passphrase vault.
+- **The human gate.** Actions above the safe tier stop and ask — and the
+  gate is fail-closed: without permission, nothing runs.
+- **Honest outcomes.** Without a provider the Captain plans, and says so.
+  A claim is fetched and checked before it is called verified.
+- **Bounded autonomy.** You choose how far the Captain may go on its own —
+  inside hard caps, through the same governed path, with a circuit breaker.
 
 ## Run it
 
-Requires Node 22.12 or newer.
-
 ```bash
 npm install
-npm run dev          # web app on http://localhost:5173
-npm run build        # production build → dist/
+npm test                # the full gate — every suite
+npm run dev             # the web app
+npm run tauri:build     # the desktop shell
+node verify/run.mjs     # the offline verification pack — zero install
 ```
 
-Desktop builds (Tauri) are described in [`docs/setup/DESKTOP-NATIVE.md`](docs/setup/DESKTOP-NATIVE.md)
-and [`docs/setup/BUILD-NATIVE.md`](docs/setup/BUILD-NATIVE.md). Laptop install notes are in
-[`docs/setup/INSTALL-ON-LAPTOP.md`](docs/setup/INSTALL-ON-LAPTOP.md); hosted preview in
-[`docs/setup/DEPLOY-VERCEL.md`](docs/setup/DEPLOY-VERCEL.md).
+Node 22.12+. Desktop build needs the Rust toolchain
+([docs/setup/DESKTOP-NATIVE.md](docs/setup/DESKTOP-NATIVE.md)).
 
-## Verify it yourself
+## Where to read more
 
-Every claim above is a probe you can run.
-
-```bash
-npx tsc --noEmit                  # types
-node tools/run-all-probes.mjs     # the full dev gate
-node verify/run.mjs               # the offline pack — no install, node builtins only
-sh scripts/verify.sh             # the same, from a clean unzip
-```
-
-The runners report their own suite counts; do not take this file's word for
-it. The verification record for this build is in
-[docs/history/releases/RELEASE-VERIFICATION.md](docs/history/releases/RELEASE-VERIFICATION.md).
-
-## The engine
-
-SelfImpulse is the product. **MJ** is the engine underneath: the
-specialist registry and routing, the human gate, the receipt chain, the
-memory graph, the vault, federation between owners, and the self-improvement
-loop with its external verifier. The engine keeps its own build identity in
-`src/version.ts` for manifests and receipts; the product never shows a
-version number.
-
-Engine documentation, design notes and the complete release history live in
-[docs/](docs/README.md) and [docs/history/](docs/history/).
-
-## Layout
-
-```
-src/ui/          the product — Shell, screens, store, one stylesheet (vh.css)
-src/brand.ts     the product's name and tagline (one source of truth)
-src/engine/        the engine — routing, gate, receipts, memory, vault, federation, RSI
-src/mission/     custody, egress, capability and privacy guards
-src/selfimpulse/       the selfimpulse engine, drills and harness seams
-probe/           the test suites (every guarantee above has one)
-verify/          the zero-dependency offline pack
-tools/           builders: MCP engine, host engine, offline pack, version bump
-src-tauri/       the desktop shell
-```
+| Read | For |
+|---|---|
+| [docs/STORY.md](docs/STORY.md) | the product narrative, one spine |
+| [docs/releases/FEATURES.md](docs/releases/FEATURES.md) | every feature, and where it lives |
+| [docs/VERIFICATION.md](docs/VERIFICATION.md) | how everything above is proved |
+| [docs/setup/](docs/setup/) | install, desktop build, deploy |
+| [docs/internal/](docs/internal/) | engineering records: limits, compatibility, gap audits |
 
 ## License
 
-Copyright © 2024–2026 K.S. / SelfImpulse. All rights reserved.
-Third-party notices: [`docs/legal/THIRD-PARTY-NOTICES.md`](docs/legal/THIRD-PARTY-NOTICES.md).
-
-## Security
-
-See [`SECURITY.md`](SECURITY.md) for the disclosure policy and what is (and
-is not) in scope. The short version: IPC handlers enforce what TypeScript
-policy promises, egress and SSRF guards live on the fetch path, and child
-processes spawn through a scrubbed environment inside workspace-root
-containment.
-
-## Contributing
-
-See [`CONTRIBUTING.md`](CONTRIBUTING.md). The three bars are `tsc`, `npm
-test`, and `node verify/run.mjs` — all green, every commit. CI runs them on
-every PR via `.github/workflows/gate.yml`.
+[MIT](LICENSE). Third-party notices:
+[docs/legal/THIRD-PARTY-NOTICES.md](docs/legal/THIRD-PARTY-NOTICES.md).

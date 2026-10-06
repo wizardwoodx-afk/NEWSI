@@ -1,8 +1,8 @@
 {
   "name": "selfimpulse",
   "private": true,
-  "version": "1.0.0",
-  "description": "SelfImpulse \u2014 agentic impulse for remaining.",
+  "version": "1.9.1",
+  "description": "SelfImpulse — Intelligence That Collaborates.",
   "type": "module",
   "engines": {
     "node": ">=22.12.0"
@@ -21,7 +21,7 @@
     "unit": "node tools/run-unit.mjs",
     "host": "node tools/si-host.mjs",
     "host:build": "node tools/build-host.mjs",
-    "web:build": "vite build && rm -rf web-build && cp -r dist web-build",
+    "web:build": "vite build && node tools/sync-web-build.mjs",
     "bump:patch": "node tools/bump-version.mjs patch",
     "bump:minor": "node tools/bump-version.mjs minor",
     "bump:show": "node tools/bump-version.mjs show",

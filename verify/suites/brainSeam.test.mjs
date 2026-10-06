@@ -21,6 +21,47 @@ var init_version = __esm({
   }
 });
 
+// src/app/id.ts
+function cryptoToken() {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  if (c && typeof c.getRandomValues === "function") {
+    const bytes = new Uint8Array(16);
+    c.getRandomValues(bytes);
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  degradedSeq += 1;
+  return `nocrypto-fallback-${degradedSeq.toString(36)}`;
+}
+function uid(prefix) {
+  return `${prefix}-${cryptoToken()}`;
+}
+function nowIso() {
+  return (/* @__PURE__ */ new Date()).toISOString();
+}
+var degradedSeq;
+var init_id = __esm({
+  "src/app/id.ts"() {
+    "use strict";
+    degradedSeq = 0;
+  }
+});
+
+// src/app/desktop.ts
+function detectHost() {
+  if (typeof window === "undefined") return "web";
+  const w = window;
+  if (w.__TAURI_INTERNALS__) return "tauri";
+  if (w.__TAURI__) return "tauri";
+  if (typeof navigator !== "undefined" && /tauri/i.test(navigator.userAgent)) return "tauri";
+  return "web";
+}
+var init_desktop = __esm({
+  "src/app/desktop.ts"() {
+    "use strict";
+  }
+});
+
 // src/security/ipClassify.ts
 function expandIpv6(input2) {
   let s = input2;
@@ -204,47 +245,6 @@ var init_guardrail = __esm({
     };
     BLOCKED_HOST_SUFFIXES = [".internal", ".local", ".localhost"];
     callRateGate = new RateGate(120, 6e4);
-  }
-});
-
-// src/app/id.ts
-function cryptoToken() {
-  const c = globalThis.crypto;
-  if (c && typeof c.randomUUID === "function") return c.randomUUID();
-  if (c && typeof c.getRandomValues === "function") {
-    const bytes = new Uint8Array(16);
-    c.getRandomValues(bytes);
-    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-  }
-  degradedSeq += 1;
-  return `nocrypto-fallback-${degradedSeq.toString(36)}`;
-}
-function uid(prefix) {
-  return `${prefix}-${cryptoToken()}`;
-}
-function nowIso() {
-  return (/* @__PURE__ */ new Date()).toISOString();
-}
-var degradedSeq;
-var init_id = __esm({
-  "src/app/id.ts"() {
-    "use strict";
-    degradedSeq = 0;
-  }
-});
-
-// src/app/desktop.ts
-function detectHost() {
-  if (typeof window === "undefined") return "web";
-  const w = window;
-  if (w.__TAURI_INTERNALS__) return "tauri";
-  if (w.__TAURI__) return "tauri";
-  if (typeof navigator !== "undefined" && /tauri/i.test(navigator.userAgent)) return "tauri";
-  return "web";
-}
-var init_desktop = __esm({
-  "src/app/desktop.ts"() {
-    "use strict";
   }
 });
 
@@ -1760,11 +1760,267 @@ function wrapRealModelBrain(base, deps = realBrainDeps, prefOverride) {
 // src/selfimpulse/engine/selfimpulse.ts
 init_version();
 
-// src/selfimpulse/engine/proof.ts
-var enc = new TextEncoder();
+// src/security/actionGraph.ts
+function stableStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const entries = Object.entries(value).filter(([, v]) => v !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(",")}}`;
+}
 
-// src/selfimpulse/engine/webSearch.ts
-init_guardrail();
+// src/security/sovereign.ts
+import { createHash, generateKeyPairSync, sign as edSign, verify as edVerify } from "node:crypto";
+function workingRoot() {
+  try {
+    if (typeof process !== "undefined" && typeof process.cwd === "function") {
+      const cwd = process.cwd();
+      if (typeof cwd === "string" && cwd.length > 0) return cwd;
+    }
+  } catch {
+  }
+  return "/";
+}
+function requestProfileOf(node2) {
+  const cfg = node2.config ?? {};
+  const bool = (k, dflt) => typeof cfg[k] === "boolean" ? cfg[k] : dflt;
+  const riskRaw = String(cfg.maxRisk ?? "low").toLowerCase();
+  const maxRisk = riskRaw === "critical" || riskRaw === "high" || riskRaw === "medium" ? riskRaw : "low";
+  return {
+    agentId: String(node2.id ?? node2.title ?? "seat"),
+    owner: String(cfg.owner ?? "owner"),
+    allowWrite: bool("allowWrite", false),
+    allowShell: bool("allowShell", false),
+    allowNetwork: bool("allowNetwork", false),
+    root: String(cfg.workspaceRoot ?? workingRoot()),
+    budgetCeiling: Number(cfg.budgetCeiling ?? 0),
+    maxRisk
+  };
+}
+function profileDigest(p) {
+  return createHash("sha256").update(`si.profile.v1
+${stableStringify(p)}`).digest("hex");
+}
+function profileIsEffectful(p) {
+  return p.allowWrite || p.allowShell || p.allowNetwork || p.maxRisk !== "low";
+}
+var MANDATE_FORMAT = "si.mandate.v1";
+function mandateCanonical2(m) {
+  return stableStringify({
+    v: m.v,
+    agentId: m.agentId,
+    owner: m.owner,
+    profile: m.profile,
+    env: m.env,
+    issuedAt: m.issuedAt,
+    expiresAt: m.expiresAt
+  });
+}
+function sessionSigner() {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const pubDer = publicKey.export({ type: "spki", format: "der" });
+  const id = createHash("sha256").update(pubDer).digest("hex").slice(0, 16);
+  return {
+    id,
+    sign: (data) => edSign(null, Buffer.from(data, "utf8"), privateKey).toString("base64"),
+    verify: (data, sig) => {
+      try {
+        return edVerify(null, Buffer.from(data, "utf8"), publicKey, Buffer.from(sig, "base64"));
+      } catch {
+        return false;
+      }
+    }
+  };
+}
+function issueMandate(profile, signer, ttlMs = 60 * 6e4) {
+  const issuedAt = Date.now();
+  const m = {
+    v: MANDATE_FORMAT,
+    agentId: profile.agentId,
+    owner: profile.owner,
+    profile: profileDigest(profile),
+    env: {
+      allowWrite: profile.allowWrite,
+      allowShell: profile.allowShell,
+      allowNetwork: profile.allowNetwork,
+      root: profile.root,
+      budgetCeiling: profile.budgetCeiling,
+      maxRisk: profile.maxRisk
+    },
+    issuedAt,
+    expiresAt: issuedAt + Math.max(1, ttlMs)
+  };
+  return { ...m, signature: signer.sign(mandateCanonical2(m)) };
+}
+function verifyMandate(m, signer) {
+  if (!m || typeof m !== "object" || !m.signature) {
+    return { ok: false, reason: "missing", detail: "no mandate: a profile without a signature issues no authority" };
+  }
+  if (!m.owner || typeof m.owner !== "string") {
+    return { ok: false, reason: "no-owner", detail: "the mandate names no human principal; an anonymous authority is not an authority" };
+  }
+  if (!signer.verify(mandateCanonical2(m), m.signature)) {
+    return { ok: false, reason: "bad-signature", detail: `the mandate's signature does not verify against the owner key ${signer.id}` };
+  }
+  if (Date.now() > m.expiresAt) {
+    return { ok: false, reason: "expired", detail: `the mandate expired at ${new Date(m.expiresAt).toISOString()}` };
+  }
+  return { ok: true, mandate: m };
+}
+function envelopeFromMandate(m, signer) {
+  if (!verifyMandate(m, signer).ok) return null;
+  return {
+    allowWrite: m.env.allowWrite === true,
+    allowShell: m.env.allowShell === true,
+    allowNetwork: m.env.allowNetwork === true,
+    root: String(m.env.root),
+    budgetCeiling: Number(m.env.budgetCeiling) || 0,
+    maxRisk: m.env.maxRisk
+  };
+}
+var FRONT_DOOR_AGENT = "si.front-door.captain";
+var FRONT_DOOR_TTL_MS = 60 * 6e4;
+var DENY_ALL_ENVELOPE = {
+  allowWrite: false,
+  allowShell: false,
+  allowNetwork: false,
+  root: workingRoot(),
+  budgetCeiling: 0,
+  maxRisk: "low"
+};
+var SovereignAuthority = class {
+  bootstrap;
+  ownerSigner = null;
+  issued = /* @__PURE__ */ new Map();
+  revoked = /* @__PURE__ */ new Set();
+  constructor(signer) {
+    this.bootstrap = signer ?? null;
+  }
+  /** ONE authority root. The session key bootstraps (labelled honestly as
+   *  "bootstrap"); binding the OWNER's key re-roots every issuance. */
+  get root() {
+    return this.ownerSigner ? "owner" : "bootstrap";
+  }
+  /** Bind the owner's signer — the human's key becomes THE root. Idempotent
+   *  for the same key; the bootstrap key keeps verifying nothing new. */
+  bindOwnerSigner(s) {
+    this.ownerSigner = s;
+  }
+  /** DROP the owner binding — the vault-lock act. The root reverts to the
+   *  labelled bootstrap, and every owner-signed artifact (mandates AND
+   *  capabilities) stops verifying from this moment: a key that is gone
+   *  cannot vouch. Re-binding with the same passphrase restores the same
+   *  key, and with it the same mandates. */
+  unbindOwnerSigner() {
+    this.ownerSigner = null;
+  }
+  get rootSigner() {
+    this.bootstrap ??= sessionSigner();
+    return this.ownerSigner ?? this.bootstrap;
+  }
+  get signerId() {
+    const bound = this.ownerSigner ?? this.bootstrap;
+    if (bound) return bound.id;
+    return "unbound";
+  }
+  /** The signing root every other authority artifact MUST share —
+   *  capabilities sign with exactly this key. One root, no side keys. */
+  currentRootSigner() {
+    return this.rootSigner;
+  }
+  /** The OWNER act — an explicit re-grant. The ONLY path that lifts a
+   *  revocation; mandateFor refuses revoked seats and never un-revokes. */
+  regrant(node2, ttlMs = 60 * 6e4) {
+    if (this.root !== "owner") {
+      return { ok: false, reason: "owner-required", detail: "only the bound owner root may re-grant a revoked seat" };
+    }
+    const profile = requestProfileOf(node2);
+    this.revoked.delete(profile.agentId);
+    return this.mandateFor(node2, ttlMs);
+  }
+  /** Revoke a seat — the roster's revocation flows through here, so the
+   *  very next governed read fail-closes. Only an owner act (a fresh
+   *  mandate) re-arms the seat. */
+  revoke(agentId) {
+    this.revoked.add(agentId);
+  }
+  isRevoked(agentId) {
+    return this.revoked.has(agentId);
+  }
+  /** The seats under mandate — the IAM roster's source of truth. */
+  enrolledAgents() {
+    return [...this.issued.keys()];
+  }
+  enrolledMandateOf(agentId) {
+    return this.issued.get(agentId)?.mandate ?? null;
+  }
+  /** The mandate for a node's CURRENT profile — issuing one if the profile
+   *  is new or changed, re-verifying the cached one if it is not. Issuance
+   *  here is the owner's standing act (the app owner IS the human principal
+   *  for local seats); every issuance is returned with its signing key id so
+   *  the caller can journal it. */
+  mandateFor(node2, ttlMs = 60 * 6e4) {
+    const profile = requestProfileOf(node2);
+    const digest = profileDigest(profile);
+    if (this.root === "bootstrap" && profileIsEffectful(profile)) {
+      return { ok: false, reason: "bootstrap-effectful-mandate", detail: "bootstrap authority is read-only until the owner root is bound" };
+    }
+    if (this.revoked.has(profile.agentId)) {
+      return { ok: false, reason: "revoked", detail: "this seat is revoked \u2014 authority stays off until the owner re-grants it" };
+    }
+    const cached2 = this.issued.get(profile.agentId);
+    if (cached2 && cached2.digest === digest) {
+      const check2 = verifyMandate(cached2.mandate, this.rootSigner);
+      if (check2.ok) return { ok: true, mandate: check2.mandate, issued: false, signerId: this.rootSigner.id };
+      if (check2.reason === "expired") {
+        const fresh2 = issueMandate(profile, this.rootSigner, ttlMs);
+        this.issued.set(profile.agentId, { mandate: fresh2, digest });
+        return { ok: true, mandate: fresh2, issued: true, signerId: this.rootSigner.id };
+      }
+      return { ok: false, reason: check2.reason, detail: check2.detail };
+    }
+    const fresh = issueMandate(profile, this.rootSigner, ttlMs);
+    this.issued.set(profile.agentId, { mandate: fresh, digest });
+    return { ok: true, mandate: fresh, issued: true, signerId: this.rootSigner.id };
+  }
+  /** The LIVE authority read — called before every governed step.
+   *
+   *  Returns the envelope ONLY if a mandate exists for this node, verifies
+   *  against the owner key, is unexpired, AND was issued over the profile
+   *  the node's configuration carries RIGHT NOW. Anything else returns null
+   *  and the governed loop fail-closes; that null is what makes drift
+   *  detection real instead of decorative. */
+  read(node2) {
+    const profile = requestProfileOf(node2);
+    const cached2 = this.issued.get(profile.agentId);
+    if (!cached2) return null;
+    if (this.revoked.has(profile.agentId)) return null;
+    if (cached2.digest !== profileDigest(profile)) return null;
+    const check2 = verifyMandate(cached2.mandate, this.rootSigner);
+    if (!check2.ok) return null;
+    return envelopeFromMandate(check2.mandate, this.rootSigner);
+  }
+  /** The verified mandate for a node, if one is live. */
+  mandateOf(node2) {
+    const profile = requestProfileOf(node2);
+    const cached2 = this.issued.get(profile.agentId);
+    if (!cached2 || this.revoked.has(profile.agentId) || cached2.digest !== profileDigest(profile)) return null;
+    const check2 = verifyMandate(cached2.mandate, this.rootSigner);
+    return check2.ok ? check2.mandate : null;
+  }
+  /** The front-door envelope — the Captain's own seat, judged by the same
+   *  authority as every other seat. Conservative by construction: the front
+   *  door steers anything risky and refuses anything critical on its own
+   *  authority, exactly like the governed loop. */
+  frontDoorEnvelope() {
+    const claim2 = this.mandateFor({ id: FRONT_DOOR_AGENT, config: { owner: "owner" } }, FRONT_DOOR_TTL_MS);
+    if (!claim2.ok) return DENY_ALL_ENVELOPE;
+    return envelopeFromMandate(claim2.mandate, this.rootSigner) ?? DENY_ALL_ENVELOPE;
+  }
+};
+var sovereign = new SovereignAuthority();
+
+// src/security/capability.ts
+var DEFAULT_CAPABILITY_TTL_MS = 10 * 6e4;
 
 // src/mission/missionLoop.ts
 init_id();
@@ -1957,6 +2213,12 @@ var DEMO_POLICY = {
 
 // src/mission/caps.ts
 var DEFAULT_CAPS = { timeoutMs: 10 * 60 * 1e3, maxTurns: 40, maxCostUsd: 5 };
+var INBOUND_DELEGATION_CAPS = {
+  maxCostUsd: 2,
+  maxTurns: 40,
+  maxInvocations: 4,
+  maxWallClockMs: 30 * 6e4
+};
 
 // src/mission/interAgentChannel.ts
 var InterAgentMessageBus = class {
@@ -2225,7 +2487,7 @@ var INITIAL_REPUTATIONS = Object.fromEntries(
 init_client();
 
 // src/mission/receipts.ts
-var enc2 = new TextEncoder();
+var enc = new TextEncoder();
 
 // src/mission/harnessAdapters.ts
 var LocalTestHarness = class {
@@ -2300,6 +2562,13 @@ init_id();
 
 // src/selfimpulse/engine/bridge.ts
 init_version();
+
+// src/selfimpulse/engine/proof.ts
+var enc2 = new TextEncoder();
+
+// src/selfimpulse/engine/webSearch.ts
+init_guardrail();
+init_egressNet();
 
 // src/selfimpulse/engine/providers.ts
 init_client();

@@ -15,8 +15,39 @@
  *   • an imported skill is a playbook, not a capability grant — it composes
  *     into the routed specialist's prompt exactly like a seeded skill and
  *     grants no tools of its own.
+ *
+ * THE DOOR (19.7.16 — the guard that was missing here).
+ *   A skill body is not a document: it is concatenated straight into a SYSTEM
+ *   PROMPT (skills.ts → buildSpecialistPrompt), and from there a model can emit
+ *   a ```tool block that hermesRuntime dispatches as a real shell/fs/mcp call.
+ *   The documents path has had `scanForInjection` since 19.7.10 (mission/
+ *   fileIngest.ts:339-343); skills did not, so an imported SKILL.md was the one
+ *   untrusted input with a shorter path to the engine than a PDF had.
+ *
+ *   TRUST TIERS, named once, because three paths reach this module and only one
+ *   of them is authored by the person who owns the machine:
+ *
+ *     · BUNDLED  — the three playbooks under skills/ (SKILL.md) and the seeded
+ *                  SKILLS array in skills.ts. Shipped with the product, reviewed
+ *                  with it. This module never has to defend against them.
+ *     · IMPORTED — anything a user pasted, a file gave us, or another ecosystem's
+ *                  skill-format export produced. UNTRUSTED: the author is not the
+ *                  owner. Stripped of invisible characters, scanned, and refused
+ *                  on `critical` — the same rule, in the same tone, as the
+ *                  document door.
+ *     · RSI-DRAFTED — an RSI draft's body is composed from ledger evidence and
+ *                  then hand-assembled into a SKILL.md by applyRsiDraft, which
+ *                  DEFAULTS `category: *`. It arrives on the "pasted" path and
+ *                  is treated as IMPORTED (untrusted), never as bundled, and
+ *                  never as owner-authored — see the wildcard rule below.
+ *
+ *   WHAT THIS MODULE DOES NOT DECIDE. `scanForInjection` returns findings and a
+ *   suggested tier; the refusal below is the gate, and it is the same shape as
+ *   every other gate in the product: refuse in plain words, name what fired,
+ *   store nothing.
  */
 import type { VhSkill } from "./skills";
+import { scanForInjection, scanLine, stripInvisible, type InjectionScan } from "../security/injectionGuard";
 
 export interface ImportedSkill extends VhSkill {
   /** Which ecosystem the text came from (or "pasted" for raw imports). */
@@ -32,6 +63,124 @@ export interface ImportedSkill extends VhSkill {
   allowedTools: string[];
   /** VH category binding (frontmatter `category:` — VH extension, documented). */
   category?: string;
+  /**
+   * How many invisible characters the door removed from this text. Absent means
+   * none. It is a field rather than a silent fix because a stored skill whose
+   * text differed from the text the owner pasted is a record that disagrees
+   * with itself.
+   */
+  strippedInvisible?: number;
+  /** The scan verdict that let this in, for the ledger. Absent = never scanned. */
+  scanNote?: string;
+}
+
+/* ── the door's bounds ───────────────────────────────────────────────────── */
+
+/**
+ * Progressive disclosure's own bound. Every seeded body in skills.ts is under
+ * 2000 characters (probe/skills.test.ts pins it) and a playbook is a numbered
+ * procedure plus a checklist; anything much longer than this is trying to fill
+ * the prompt rather than to describe a procedure. REJECTED, not truncated: a
+ * silent truncation would leave the owner believing a skill was installed whole
+ * when half of it was quietly dropped, and it would let an attacker push a
+ * leading, in-budget payload with an arbitrary tail behind it.
+ */
+export const MAX_IMPORTED_BODY_CHARS = 4000;
+/** Frontmatter and body together. Bounded so parsing is bounded. */
+export const MAX_IMPORTED_RAW_CHARS = 8000;
+
+/**
+ * A refusal, as a value. Callers that want to distinguish "the door said no"
+ * from "a bug threw" can catch this; callers that only report the message
+ * (applyRsiDraft, the Skills desk) need nothing else.
+ */
+export class SkillImportRefusal extends Error {
+  readonly scan: InjectionScan | null;
+  constructor(message: string, scan: InjectionScan | null = null) {
+    super(message);
+    this.name = "SkillImportRefusal";
+    this.scan = scan;
+  }
+}
+
+/**
+ * F2 — the wildcard, decided once.
+ *
+ * `category: "*"` on an imported skill means "put this text in front of EVERY
+ * specialist", which is the widest possible blast radius for text whose author
+ * is not the owner. It was reachable two ways: by hand in frontmatter, and by
+ * DEFAULT through applyRsiDraft (rsi.ts:233 writes `category: ${d.category ??
+ * "*"}`, so every category-less RSI draft asked for the wildcard). That file is
+ * not ours to change, so the rule lives here and at the binding site.
+ *
+ * Imported skills therefore may NOT bind to the wildcard. skills.ts enforces the
+ * matching half — an imported skill binds to a specialist only when its category
+ * is a concrete string equal to that specialist's — so a wildcard record already
+ * sitting in localStorage from before this rule also binds to nobody.
+ *
+ * This is deliberately a loud refusal rather than a silent rewrite to the first
+ * category we liked: rewriting would import something the owner did not ask for,
+ * and the RSI path would then report success for a playbook that never binds.
+ */
+const WILDCARD = "*";
+
+function assertBindable(parsed: { category?: string }): void {
+  if (parsed.category === WILDCARD) {
+    throw new SkillImportRefusal(
+      `This skill declares category "${WILDCARD}", which would put its text in front of every specialist. ` +
+        "Imported skills bind to one named category — give it the category it is actually for " +
+        "(for example `category: code`) and import it again. Bundled skills are the only ones that may be unbound.",
+    );
+  }
+}
+
+/**
+ * F1 + F3(bound) — the gate itself, in the order the document door uses.
+ *
+ *   1. INVISIBLE CHARACTERS ARE REMOVED, and the count is kept. A skill carrying
+ *      instructions in a channel no human can see should be stored the way it
+ *      READS, not the way it was written.
+ *   2. THE TEXT IS SCANNED, and `critical` is a refusal — in the guard's own
+ *      words, plus the ledger line naming which detectors fired so the owner can
+ *      open the file and judge.
+ *
+ * Lower tiers are DELIBERATELY not blocking, and the reason matters: `risky` is
+ * one high-severity finding, or a hidden-text channel alone, or three mediums.
+ * Those are text a competent operator may well have written — a security playbook
+ * legitimately discusses prompt injection, "api_key:" assignment examples, and
+ * base64 snippets, and refusing those would train the owner that the door is
+ * noise. Blocking every `risky` import would push owners toward a door that does
+ * not work, which is how doors get turned off. So `risky` is admitted, the scan
+ * line rides on the stored record (`scanNote`) so the finding is disclosed rather
+ * than remembered, and `critical` — content aimed at the agent — is refused.
+ * This is the same trade the document door makes (fileIngest.ts:336-338), and it
+ * is a seatbelt, not a wall.
+ *
+ * Lower tiers still cannot escalate: an imported skill grants no tools, whatever
+ * the scan says.
+ */
+function assessImport(raw: string): { text: string; scan: InjectionScan; strippedInvisible: number } {
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    throw new SkillImportRefusal("There is no skill text here to import — nothing was installed.");
+  }
+  if (raw.length > MAX_IMPORTED_RAW_CHARS) {
+    throw new SkillImportRefusal(
+      `This skill is ${raw.length.toLocaleString()} characters, above the ${MAX_IMPORTED_RAW_CHARS.toLocaleString()} one import holds. ` +
+        "A playbook is a procedure and a checklist; split the long one into skills rather than importing a wall.",
+    );
+  }
+
+  const strip = stripInvisible(raw);
+  const removed = strip.zeroWidth + strip.tags + strip.bidi;
+  const scan = scanForInjection(strip.text);
+  if (scan.tier === "critical") {
+    throw new SkillImportRefusal(
+      `${scan.refusal ?? "This skill carries text shaped like instructions aimed at the agent rather than a playbook."} ` +
+        `Nothing was installed. ${scanLine(scan, "skill")}. Open the file and read it yourself before bringing it in.`,
+      scan,
+    );
+  }
+  return { text: strip.text, scan, strippedInvisible: removed };
 }
 
 export interface SkillEligibility {
@@ -169,6 +318,86 @@ export function skillEligibility(s: Pick<ImportedSkill, "needsEnv" | "needsBins"
   return { eligible: true, reasons };
 }
 
+/* ── the second door: binding time ───────────────────────────────────────── */
+
+/**
+ * THE IMPORT DOOR IS NECESSARY AND NOT SUFFICIENT.
+ *
+ * `importedSkills()` reads JSON out of `localStorage["engine.skills.imported.v1"]`.
+ * In a browser that store is writable by any script on the page — one
+ * `localStorage.setItem` plants a "skill" that never went near `importSkillMd`, and
+ * a skill record written by an older build predates the scan entirely. So the
+ * check is repeated where the text is actually USED, and this is the check that
+ * closes the store-write path. Re-scanning costs one regex pass over a few
+ * kilobytes at prompt-composition time; a prompt-injection payload in the system
+ * prompt costs the machine.
+ *
+ * The import-time rules are applied verbatim here, not a looser version:
+ * invisible characters in a STORED body mean the record disagrees with what a
+ * reader sees, an oversized body means the bound is not being honoured, and a
+ * `critical` scan means the text is aimed at the agent. All three refuse.
+ */
+export interface BindVerdict {
+  bindable: boolean;
+  /** Why, in words. An empty array means it binds and nothing was flagged. */
+  reasons: string[];
+}
+
+export function bindVerdict(s: ImportedSkill, category: string): BindVerdict {
+  const reasons: string[] = [];
+
+  if (s.category === WILDCARD) {
+    reasons.push(`declares category "${WILDCARD}" — imported skills never bind to every specialist`);
+  } else if (typeof s.category !== "string" || s.category.length === 0) {
+    reasons.push("declares no category — it binds to no specialist, not even by name");
+  } else if (s.category !== category) {
+    reasons.push(`declares category "${s.category}", not "${category}"`);
+  }
+
+  if (typeof s.body !== "string" || s.body.trim().length === 0) {
+    reasons.push("has no playbook body");
+    return { bindable: false, reasons };
+  }
+  if (s.body.length > MAX_IMPORTED_BODY_CHARS) {
+    reasons.push(`body is ${s.body.length.toLocaleString()} characters, above the ${MAX_IMPORTED_BODY_CHARS.toLocaleString()} bound`);
+  }
+
+  // name and description both reach the prompt ("### Skill: <name>"), so both are
+  // scanned. A stored body carrying invisible characters is refused rather than
+  // silently stripped at read time: at this point stripping would make the record
+  // and the prompt disagree, and the owner would never learn why.
+  const strip = stripInvisible(`${s.name}\n${s.description}\n${s.body}`);
+  if (strip.zeroWidth + strip.tags + strip.bidi > 0) {
+    reasons.push(
+      `carries ${strip.zeroWidth + strip.tags + strip.bidi} invisible character(s) — the stored text is not what it reads as`,
+    );
+  }
+  const scan = scanForInjection(strip.text);
+  if (scan.tier === "critical") {
+    reasons.push(`scan is critical — ${scanLine(scan, `skill "${s.name}"`)}`);
+  } else if (scan.findings.length > 0) {
+    reasons.push(scanLine(scan, `skill "${s.name}"`));
+  }
+
+  return { bindable: reasons.length === 0, reasons };
+}
+
+/**
+ * The same door, for untrusted text that reaches a prompt by some route other
+ * than an import. Used by skills.ts for the operator-supplied connector base URL,
+ * which is interpolated into a connector playbook body and therefore into the
+ * system prompt. One policy, one place: if the connector route needs a stricter
+ * rule than this, the rule is strengthened here rather than duplicated.
+ */
+export function assessUntrustedText(text: string, label: string): { ok: boolean; reason: string } {
+  const strip = stripInvisible(text);
+  const scan = scanForInjection(strip.text);
+  if (scan.tier === "critical") {
+    return { ok: false, reason: `${label} was refused: ${scanLine(scan, label)}. Nothing was bound.` };
+  }
+  return { ok: true, reason: scanLine(scan, label) };
+}
+
 /* ── storage (opt-in persistence; session fallback for SSR/probes) ───────── */
 
 const KEY = "engine.skills.imported.v1";
@@ -197,8 +426,28 @@ async function sha256Hex(text: string): Promise<string> {
   return Array.from(new Uint8Array(buf)).map((x) => x.toString(16).padStart(2, "0")).join("");
 }
 
+/**
+ * The import door. Throws `SkillImportRefusal` — stores nothing — on a critical
+ * scan, on an oversized body, or on a wildcard category; returns the installed
+ * skill otherwise. `applyRsiDraft` (rsi.ts) already treats a throw here as a
+ * refusal and reports it, so a drafted skill that names the wildcard fails
+ * loudly at the moment a human applies it rather than quietly binding everywhere
+ * later.
+ *
+ * The digest is taken over the RAW text on purpose: provenance records what the
+ * owner handed over, and the stored body is the readable form of it. When the two
+ * differ, `strippedInvisible` says so.
+ */
 export async function importSkillMd(raw: string, source: ImportedSkill["source"]): Promise<ImportedSkill> {
-  const parsed = parseSkillMd(raw, source);
+  const { text, scan, strippedInvisible } = assessImport(raw);
+  const parsed = parseSkillMd(text, source);
+  assertBindable(parsed);
+  if (parsed.body.length > MAX_IMPORTED_BODY_CHARS) {
+    throw new SkillImportRefusal(
+      `This skill's playbook body is ${parsed.body.length.toLocaleString()} characters, above the ${MAX_IMPORTED_BODY_CHARS.toLocaleString()} one import holds. ` +
+        "Nothing was truncated and nothing was installed — shorten the procedure, or split it into two skills.",
+    );
+  }
   const skill: ImportedSkill = {
     id: parsed.id,
     name: parsed.name,
@@ -214,6 +463,10 @@ export async function importSkillMd(raw: string, source: ImportedSkill["source"]
     importedAt: new Date().toISOString(),
     digest: await sha256Hex(raw),
   };
+  if (strippedInvisible > 0) {
+    skill.strippedInvisible = strippedInvisible;
+  }
+  skill.scanNote = scanLine(scan, `imported skill "${skill.name}"`);
   const all = importedSkills().filter((x) => x.name !== skill.name);
   all.push(skill);
   const s = storage();

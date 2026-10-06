@@ -32,6 +32,62 @@ export interface InvocationCaps {
 
 export const DEFAULT_CAPS: InvocationCaps = { timeoutMs: 10 * 60 * 1000, maxTurns: 40, maxCostUsd: 5 };
 
+/**
+ * THE CEILING FOR WORK A REMOTE PRINCIPAL ASKED FOR.
+ *
+ * `DEFAULT_CAPS` above is what the OWNER gets for one invocation on their own
+ * machine. This is smaller, on purpose: a delegation is somebody else's request
+ * spending this owner's provider key, this owner's wall clock and this owner's
+ * repository. It should not be able to out-spend the owner, and it must never be
+ * "whatever the ledger was constructed with", because the one construction site
+ * on the federation path used to be `new CapLedger({})` — no cost ceiling, no
+ * turn ceiling, no invocation ceiling and no clock, which `admissionError`
+ * scores as *admit, always*. Every number below is justified, not chosen.
+ *
+ *   maxTurns: 40        Identical to `DEFAULT_CAPS.maxTurns`. The rule is that a
+ *                       remote caller never gets a bigger turn budget than the
+ *                       owner gets locally for one invocation, so this is a
+ *                       ceiling rather than a negotiation. One delegation
+ *                       declares two seats (writer + read-only reviewer) at
+ *                       `seat.maxTurns` each, 8 by default — 16 — so 40 admits
+ *                       the whole run with room for a host that configures
+ *                       larger seats, and refuses past it.
+ *
+ *   maxCostUsd: 2      Strictly under the owner's own $5 default. One
+ *                       delegation is one unit of work, not a campaign: it is a
+ *                       single task text, scoped to a single teammate, already
+ *                       re-classified by the receiver's own risk policy. A
+ *                       remote caller that can spend $5 here can spend more than
+ *                       the person who owns the key.
+ *
+ *   maxInvocations: 4  The bridge builds exactly two seats, so this admits the
+ *                       run plus one retry of headroom and refuses any growth in
+ *                       dispatch count. Charged BEFORE dispatch, per seat, so the
+ *                       executor's own per-turn admission check sees a real
+ *                       number rather than a zero that never moves.
+ *
+ *   maxWallClockMs:    30 minutes — the same mission clock `missionLoop` runs
+ *     30 * 60_000     with. Two sequential seats at the 600s per-seat default is
+ *                       20 minutes, so 30 admits the whole delegation with 10 to
+ *                       spare. This is the guard that actually binds for CLIs
+ *                       that report tokens and no price (see the honesty rule
+ *                       above): `spentUsd` stays 0 for those, so turns,
+ *                       invocations and the clock are what stop a remote caller.
+ *
+ * WHAT THIS DOES NOT DO, STATED PLAINLY. It does not price a run whose CLI
+ * reports no price, because there is no honest number to charge; it does not
+ * rate-limit how many DISTINCT delegations arrive over time (that is a peer-level
+ * concern, and the crossing ledger is where it belongs); and it does not by
+ * itself stop a delegation that re-delegates — that bound is the hop limit in
+ * `selfimpulseTeams.ts`, and it is enforced there.
+ */
+export const INBOUND_DELEGATION_CAPS: Required<Pick<MissionCaps, "maxCostUsd" | "maxTurns" | "maxInvocations" | "maxWallClockMs">> = {
+  maxCostUsd: 2,
+  maxTurns: 40,
+  maxInvocations: 4,
+  maxWallClockMs: 30 * 60_000,
+};
+
 export interface ReportedUsage {
   /** Real dollars, as reported by the CLI. null means the CLI does not report cost. */
   costUsd: number | null;
@@ -94,8 +150,39 @@ export class CapLedger {
     this.state.invocationsUsed += 1;
   }
 
-  /** Can another invocation start at all? Checked BEFORE dispatch — refusing is control, charging after is bookkeeping. */
+  /**
+   * Can another invocation start at all? Checked BEFORE dispatch — refusing is control, charging after is bookkeeping.
+   *
+   * TWO FAIL-CLOSED RULES, both added because an unpopulated `MissionCaps` used
+   * to mean "no ceiling at all":
+   *
+   *  1. A DECLARED-BUT-UNREADABLE CAP IS A REFUSAL, NOT AN ABSENT CAP. Every
+   *     guard below reads `?? 0`, and `NaN > 0` is false, so `{ maxTurns: NaN }`
+   *     and `{ maxCostUsd: -1 }` each silently disable themselves. A ceiling
+   *     nobody can read is not a ceiling, so any declared value that is not a
+   *     finite non-negative number refuses the dispatch and names the field.
+   *
+   *  2. A LEDGER WITH NO ARMED GUARD ADMITS NOTHING. `new CapLedger({})` scored
+   *     zero on every guard, so it returned `null` — admit, forever — which meant
+   *     the federation path's `new CapLedger({})` was an unbounded budget for
+   *     whoever reached the port. There is no honest reading of "no ceiling was
+   *     declared" as "run without limit", so it refuses and says so.
+   *
+   * An explicit `0` is still this build's way of saying "this one dimension is
+   * unlimited" (`mayRunTurn` documents the same convention) and stays honoured.
+   * What is refused is the ABSENCE of every armed guard, not a chosen zero.
+   *
+   * `missionLoop` constructs a ledger with `maxTurns: 120` and a numeric
+   * `maxCostUsd`, so rule 2 never fires on the mission path; rule 1 only fires
+   * on a malformed value, which is the direction it is meant to fail.
+   */
   admissionError(now: number = Date.now()): string | null {
+    for (const [field, value] of Object.entries(this.caps) as Array<[string, unknown]>) {
+      if (value === undefined || value === null) continue;
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+        return `the ${field} ceiling is declared as ${JSON.stringify(value)}, which is not a usable number — refusing rather than treating a broken ceiling as no ceiling`;
+      }
+    }
     const maxCost = this.caps.maxCostUsd ?? 0;
     if (maxCost > 0 && this.state.spentUsd >= maxCost) {
       return `the mission has already spent $${this.state.spentUsd.toFixed(4)} of its $${maxCost.toFixed(4)} ceiling`;
@@ -111,6 +198,9 @@ export class CapLedger {
     const maxWall = this.caps.maxWallClockMs ?? this.caps.timeoutMs ?? 0;
     if (maxWall > 0 && now - this.state.startedAt >= maxWall) {
       return `the mission's ${Math.round(maxWall / 1000)}s wall clock has elapsed`;
+    }
+    if (maxCost <= 0 && maxTurns <= 0 && maxInvocations <= 0 && maxWall <= 0) {
+      return `no ceiling is set — cost, turns, invocations and the wall clock are all absent or zero, so this ledger would admit without limit; dispatch is refused until a real ceiling is declared`;
     }
     return null;
   }

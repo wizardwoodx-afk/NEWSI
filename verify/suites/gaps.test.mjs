@@ -222,6 +222,12 @@ function validateTrace(events) {
 
 // src/mission/caps.ts
 var DEFAULT_CAPS = { timeoutMs: 10 * 60 * 1e3, maxTurns: 40, maxCostUsd: 5 };
+var INBOUND_DELEGATION_CAPS = {
+  maxCostUsd: 2,
+  maxTurns: 40,
+  maxInvocations: 4,
+  maxWallClockMs: 30 * 6e4
+};
 var CapLedger = class {
   caps;
   state;
@@ -232,8 +238,39 @@ var CapLedger = class {
   beginInvocation() {
     this.state.invocationsUsed += 1;
   }
-  /** Can another invocation start at all? Checked BEFORE dispatch — refusing is control, charging after is bookkeeping. */
+  /**
+   * Can another invocation start at all? Checked BEFORE dispatch — refusing is control, charging after is bookkeeping.
+   *
+   * TWO FAIL-CLOSED RULES, both added because an unpopulated `MissionCaps` used
+   * to mean "no ceiling at all":
+   *
+   *  1. A DECLARED-BUT-UNREADABLE CAP IS A REFUSAL, NOT AN ABSENT CAP. Every
+   *     guard below reads `?? 0`, and `NaN > 0` is false, so `{ maxTurns: NaN }`
+   *     and `{ maxCostUsd: -1 }` each silently disable themselves. A ceiling
+   *     nobody can read is not a ceiling, so any declared value that is not a
+   *     finite non-negative number refuses the dispatch and names the field.
+   *
+   *  2. A LEDGER WITH NO ARMED GUARD ADMITS NOTHING. `new CapLedger({})` scored
+   *     zero on every guard, so it returned `null` — admit, forever — which meant
+   *     the federation path's `new CapLedger({})` was an unbounded budget for
+   *     whoever reached the port. There is no honest reading of "no ceiling was
+   *     declared" as "run without limit", so it refuses and says so.
+   *
+   * An explicit `0` is still this build's way of saying "this one dimension is
+   * unlimited" (`mayRunTurn` documents the same convention) and stays honoured.
+   * What is refused is the ABSENCE of every armed guard, not a chosen zero.
+   *
+   * `missionLoop` constructs a ledger with `maxTurns: 120` and a numeric
+   * `maxCostUsd`, so rule 2 never fires on the mission path; rule 1 only fires
+   * on a malformed value, which is the direction it is meant to fail.
+   */
   admissionError(now = Date.now()) {
+    for (const [field, value] of Object.entries(this.caps)) {
+      if (value === void 0 || value === null) continue;
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+        return `the ${field} ceiling is declared as ${JSON.stringify(value)}, which is not a usable number \u2014 refusing rather than treating a broken ceiling as no ceiling`;
+      }
+    }
     const maxCost = this.caps.maxCostUsd ?? 0;
     if (maxCost > 0 && this.state.spentUsd >= maxCost) {
       return `the mission has already spent $${this.state.spentUsd.toFixed(4)} of its $${maxCost.toFixed(4)} ceiling`;
@@ -249,6 +286,9 @@ var CapLedger = class {
     const maxWall = this.caps.maxWallClockMs ?? this.caps.timeoutMs ?? 0;
     if (maxWall > 0 && now - this.state.startedAt >= maxWall) {
       return `the mission's ${Math.round(maxWall / 1e3)}s wall clock has elapsed`;
+    }
+    if (maxCost <= 0 && maxTurns <= 0 && maxInvocations <= 0 && maxWall <= 0) {
+      return `no ceiling is set \u2014 cost, turns, invocations and the wall clock are all absent or zero, so this ledger would admit without limit; dispatch is refused until a real ceiling is declared`;
     }
     return null;
   }

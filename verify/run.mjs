@@ -98,7 +98,22 @@ async function runSuite(s) {
       const child = execFile(
         process.execPath,
         [path.join(suitesDir, s)],
-        { cwd: root, timeout: 120_000, killSignal: "SIGKILL", maxBuffer: 256 * 1024 * 1024, encoding: "utf8" },
+        {
+          cwd: root,
+          /* 300s, matching tools/run-all-probes.mjs. At 120s this cap was the
+             tightest number in the repo and it was BELOW the dev gate's own
+             limit for the identical suite: suites here run in a pool of up to
+             six, so a heavy suite that the sequential dev gate finishes in 9s
+             was SIGKILLed at 120s purely because five others were running
+             beside it. That produced a gate that failed at random — observed
+             as a2aBridge.test.mjs flipping between 46/46 and FAIL across
+             identical trees. A time limit is a budget, not a verdict; the
+             pool, not the budget, is what makes this runner fast. */
+          timeout: 300_000,
+          killSignal: "SIGKILL",
+          maxBuffer: 256 * 1024 * 1024,
+          encoding: "utf8",
+        },
         (err, so) => (err ? reject(Object.assign(err, { stdout: so })) : resolve(so)),
       );
       void child;

@@ -26,6 +26,42 @@
  *      asking for it: `searchWeb` is only called by agent code paths.
  *   4. The pure core (plan/normalize/dedupe/score/triples) has no network at
  *      all, so probe/webSearch.test.ts exercises it offline with fixtures.
+ *
+ * EGRESS (19.7.16 — how a request is actually made, and why it differs per provider)
+ *   `checkEgressUrl` is a HOSTNAME-STRING policy: a DNS name comes back
+ *   `scope:"unknown"` and is allowed. That is fine for a constant host and wrong
+ *   for a user-supplied one, because a name that is public at check time can be
+ *   169.254.169.254 at connect time (DNS rebinding, TOCTOU), and because the old
+ *   call site used the platform default redirect policy — so a hostile endpoint
+ *   could answer 302 to the metadata service and the client would follow it
+ *   without ever coming back through the check.
+ *
+ *   So the two cases are handled differently, on purpose:
+ *
+ *   · searxng — the ONLY provider whose host the user controls. Its request goes
+ *     through `safeEgressFetch` (security/egressNet): resolve once, classify every
+ *     answer, pin the address, follow redirects MANUALLY and re-resolve +
+ *     re-classify each hop under a 5-hop budget. Anything it cannot resolve is
+ *     refused, never guessed. This is the same call the product already makes for
+ *     a self-hosted Ollama endpoint (src/ipc/client.ts:760), with the same
+ *     `allowLoopback: true` — a local SearXNG is documented product surface.
+ *
+ *   · wikipedia / hn / github / brave — constant hosts written in this file. There
+ *     is no attacker-chosen DNS name to rebind, so per-hop resolution would buy
+ *     nothing; but the redirect hole is closed for free with `redirect:"manual"`,
+ *     so a compromised or spoofed upstream cannot steer the client at the metadata
+ *     endpoint. A 3xx is reported as an honest failed provider instead of being
+ *     followed.
+ *
+ *   THE BROWSER TRADE-OFF, STATED PLAINLY. `safeEgressFetch` resolves through
+ *   node:dns, which does not exist in a browser bundle, and it is built to fail
+ *   closed there ("resolved to no addresses — refused rather than guessing"). So on
+ *   the web surface a NAMED searxng root is not contacted; an IP-LITERAL root still
+ *   works, because a literal has no TOCTOU window and needs no resolver. We chose
+ *   that over letting the web surface fetch a name it cannot vet: a provider that
+ *   reports why it did not run is honest, a provider that silently skips the check
+ *   on one surface is not. The outcome note says which case happened, so it reads
+ *   as a decision rather than a mystery.
  */
 
 export type WebProviderId = "wikipedia" | "hn" | "github" | "searxng" | "brave";
@@ -34,6 +70,7 @@ export type WebProviderId = "wikipedia" | "hn" | "github" | "searxng" | "brave";
 export type SourceKind = "primary" | "secondary" | "meta";
 
 import { checkEgressUrl } from "../../security/guardrail";
+import { safeEgressFetch } from "../../security/egressNet";
 
 export interface WebProviderSpec {
   id: WebProviderId;
@@ -130,7 +167,9 @@ export const WEB_PROVIDERS: WebProviderSpec[] = [
       if (!o?.searxngRoot) return null;
       /* FINALFIX: the user-configured root is still egress-checked — an
        * SSRF-shaped root (metadata endpoint, link-local, non-http scheme)
-       * is refused here instead of fetched. */
+       * is refused here instead of fetched. This is the STRING half of the
+       * gate; the resolved-address half (rebinding, redirects) is in
+       * `guardedFetch` below, because a string check cannot see either. */
       const root = o.searxngRoot.replace(/\/$/, "");
       if (!checkEgressUrl(`${root}/search`).ok) return null;
       return `${root}/search?q=${encodeURIComponent(q)}&format=json`;
@@ -274,6 +313,60 @@ export function toTriples(hits: WebHit[]): ClaimTriple[] {
   }));
 }
 
+/* ── the guarded request (19.7.16) ────────────────────────────────────────── */
+
+/**
+ * ONE provider, TWO enforcement paths — the split is the design; see the header.
+ *
+ * `USER_CHOSEN` is the set of providers whose host a person typed. For those,
+ * `safeEgressFetch` resolves and re-classifies the address and follows redirects
+ * by hand, so a name cannot turn into a link-local address between the check and
+ * the connect, and a 302 cannot walk the client somewhere unvetted. For every
+ * other provider the host is a constant in this file, so there is no name to
+ * rebind and `redirect: "manual"` closes the only remaining hole.
+ *
+ * Nothing here can widen what is reachable: `safeEgressFetch` re-runs
+ * `checkEgressUrl` on every hop, and `allowLoopback: true` is required for the
+ * documented self-hosted SearXNG (a loopback metasearch is product surface, not
+ * an oversight).
+ */
+const USER_CHOSEN: ReadonlySet<WebProviderId> = new Set<WebProviderId>(["searxng"]);
+
+async function guardedFetch(
+  id: WebProviderId,
+  url: string,
+  init: RequestInit,
+  doFetch: typeof fetch,
+): Promise<Response> {
+  if (USER_CHOSEN.has(id)) {
+    return safeEgressFetch(url, {
+      ...init,
+      fetchImpl: doFetch,
+      allowLoopback: true,
+      maxRedirects: 5,
+    });
+  }
+  // `manual` is load-bearing: the platform default follows redirects, and a hop
+  // followed by the client never comes back through the policy.
+  return doFetch(url, { ...init, redirect: "manual" });
+}
+
+/**
+ * A `buildUrl` of null means two very different things, and rule 1 of this module
+ * is that a provider which fails says WHY. A configured SearXNG root that the
+ * egress guard refuses is not "not configured" — it is a refusal, and saying so is
+ * the difference between a fixable setting and a mystery.
+ */
+function notConfiguredNote(p: WebProviderSpec, opts: WebSearchOpts): string {
+  if (p.id === "searxng" && opts.searxngRoot) {
+    const verdict = checkEgressUrl(`${opts.searxngRoot.replace(/\/$/, "")}/search`);
+    return verdict.ok
+      ? "egress guard produced no url for this root"
+      : `egress refused: ${verdict.reason} — nothing was sent`;
+  }
+  return "not configured";
+}
+
 /* ── the orchestrator ─────────────────────────────────────────────────────── */
 
 export async function searchWeb(query: string, opts: WebSearchOpts = {}): Promise<WebEvidenceReport> {
@@ -295,13 +388,24 @@ export async function searchWeb(query: string, opts: WebSearchOpts = {}): Promis
     WEB_PROVIDERS.map(async (p) => {
       const url = p.buildUrl(query, opts);
       if (url === null) {
-        outcomes.push({ id: p.id, ok: false, hits: 0, note: p.needsConfig ? "not configured" : "no url" });
+        outcomes.push({ id: p.id, ok: false, hits: 0, note: p.needsConfig ? notConfiguredNote(p, opts) : "no url" });
         return;
       }
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), timeoutMs);
       try {
-        const res = await doFetch(url, { signal: ctl.signal, headers: p.id === "github" ? { Accept: "application/vnd.github+json" } : undefined });
+        const res = await guardedFetch(
+          p.id,
+          url,
+          { signal: ctl.signal, headers: p.id === "github" ? { Accept: "application/vnd.github+json" } : undefined },
+          doFetch,
+        );
+        // A 3xx on a constant-host provider is no longer followed, so it is named
+        // for what it is rather than reported as a bare status.
+        if (res.status >= 300 && res.status <= 399) {
+          outcomes.push({ id: p.id, ok: false, hits: 0, note: `http ${res.status} redirect not followed (egress guard)` });
+          return;
+        }
         if (!res.ok) {
           outcomes.push({ id: p.id, ok: false, hits: 0, note: `http ${res.status}` });
           return;
@@ -315,7 +419,15 @@ export async function searchWeb(query: string, opts: WebSearchOpts = {}): Promis
         hits.push(...norm);
         outcomes.push({ id: p.id, ok: true, hits: norm.length, note: "ok" });
       } catch (e) {
-        const msg = e instanceof Error && e.name === "AbortError" ? `timeout ${timeoutMs}ms` : "network/cors";
+        // An egress refusal is a DECISION, not a network flake, so it is reported
+        // in the words the guard used — "resolved to no addresses" and "egress
+        // refused" are the difference between a fixable configuration and a bug.
+        const msg =
+          e instanceof Error && e.name === "AbortError"
+            ? `timeout ${timeoutMs}ms`
+            : e instanceof Error && /egress refused/.test(e.message)
+              ? e.message.slice(0, 200)
+              : "network/cors";
         outcomes.push({ id: p.id, ok: false, hits: 0, note: msg });
       } finally {
         clearTimeout(timer);

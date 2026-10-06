@@ -90,7 +90,7 @@ ok("browser-host refusals name the environment, not just the absence",
   !/throw new Error\("[^"]*not implemented/i.test(client),
   "a refusal must say what environment lacks the capability and why");
 ok("the doc gap list no longer names the closed stubs",
-  !/Stubs: `workflow_versions`[\s\S]{0,200}`run_request_take`/.test(read("docs/PLATFORM-LIMITS.md")),
+  !/Stubs: `workflow_versions`[\s\S]{0,200}`run_request_take`/.test(read("docs/internal/PLATFORM-LIMITS.md")),
   "update docs/PLATFORM-LIMITS.md when the ledger closes");
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 // src/version.ts
-var PRODUCT_VERSION = "1.0.0";
+var PRODUCT_VERSION = "1.9.1";
 var ENGINE_VERSION = "19.7.15";
 var ENGINE_SHORT = "19.7";
 var ENGINE_CODENAME = "SelfImpulse";
@@ -88,7 +88,7 @@ ok("src/brand.ts is the one source of the product name and carries no number", /
 ok("no hardcoded release string survives in ipc/client.ts", !/version:\s*"\d+\.\d+\.\d+"/.test(ipcClient), (ipcClient.match(/version:\s*"\d+\.\d+\.\d+"/) ?? [""])[0]);
 ok("no hardcoded release string survives in Settings", !/VH \d+\.\d+|"19\.\d+\.\d+/.test(settings), (settings.match(/VH \d+\.\d+|"19\.\d+\.\d+/) ?? [""])[0]);
 section("3. the shipped documents name the current release");
-var OPERATIONAL_DOCS = ["README.md", "docs/setup/BUILD-NATIVE.md", "docs/setup/DESKTOP-NATIVE.md", "docs/setup/INSTALL-ON-LAPTOP.md", "docs/setup/DEPLOY-VERCEL.md", "docs/PLATFORM-LIMITS.md"];
+var OPERATIONAL_DOCS = ["README.md", "docs/setup/BUILD-NATIVE.md", "docs/setup/DESKTOP-NATIVE.md", "docs/setup/INSTALL-ON-LAPTOP.md", "docs/setup/DEPLOY-VERCEL.md", "docs/internal/PLATFORM-LIMITS.md"];
 var docs = [...OPERATIONAL_DOCS];
 for (const doc of docs) {
   const firstLine = read(doc).split("\n")[0] ?? "";

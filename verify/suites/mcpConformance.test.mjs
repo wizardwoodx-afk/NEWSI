@@ -7762,7 +7762,7 @@ var META = (caps = {}) => ({
 });
 var TASKS_CAPS = { extensions: { "io.modelcontextprotocol/tasks": {} } };
 before(async () => {
-  child = spawn(process.execPath, ["tools/mcp.mjs"], { cwd: ROOT, stdio: ["pipe", "pipe", "pipe"] });
+  child = spawn(process.execPath, ["tools/mcp.mjs"], { env: { ...process.env, SI_OWNER_SECRET: "probe-owner-passphrase" }, cwd: ROOT, stdio: ["pipe", "pipe", "pipe"] });
   child.stdout.on("data", (d) => {
     buf += d.toString("utf8");
     let idx;

@@ -119,7 +119,7 @@ function launchHost(args: string[]): HostProc {
   const child = spawn(process.execPath, [path.join(ROOT, "tools", "si-host.mjs"), ...args], {
     cwd: ROOT,
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env },
+    env: { ...process.env, SI_OWNER_SECRET: "probe-owner-passphrase" },
   }) as ChildProcessWithoutNullStreams;
   const hp: HostProc = {
     child, stdout: "", stderr: "", ready: null, port: 0, baseUrl: "",

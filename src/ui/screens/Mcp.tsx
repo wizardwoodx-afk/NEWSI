@@ -62,6 +62,11 @@ export function Mcp(): React.ReactElement {
   const [busy, setBusy] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [args, setArgs] = useState("{}");
+  /* Whether the CURRENT arguments text is known-bad. Set only by the one place
+     that knows: the JSON.parse refusal. Without it the field could not be marked
+     invalid, so "Arguments are not valid JSON" existed only as a line of output
+     in a panel the person editing the field was not on. */
+  const [argsBad, setArgsBad] = useState(false);
   const [result, setResult] = useState<{ tool: string; body: string } | null>(null);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<McpServerSaveInput>({ name: "", command: "", args: [], network: true });
@@ -101,9 +106,11 @@ export function Mcp(): React.ReactElement {
   const call = useCallback(async (id: string, tool: string) => {
     const parsed = parseJson(args);
     if (!parsed.ok) {
+      setArgsBad(true);
       setResult({ tool, body: `Arguments are not valid JSON: ${parsed.error}` });
       return;
     }
+    setArgsBad(false);
     setBusy(id);
     try {
       const r = await ipc.mcpCall(id, tool, parsed.value);
@@ -264,7 +271,11 @@ export function Mcp(): React.ReactElement {
                       ))}
                       <label className="field" style={{ maxWidth: "none" }}>
                         <span>Arguments (JSON)</span>
-                        <input className="input" value={args} onChange={(e) => setArgs(e.target.value)} />
+                        <input className="input" aria-invalid={argsBad || undefined} aria-describedby="mcp-args-note" value={args} onChange={(e) => setArgs(e.target.value)} />
+                        {/* The description the field needs and did not have: this is
+                            JSON, and a JSON syntax error is refused here rather than
+                            silently coerced. */}
+                        <small className="hint" id="mcp-args-note">JSON only — the object passed to the tool. Malformed JSON is refused, not guessed at.</small>
                       </label>
                     </div>
                   )}
@@ -275,22 +286,26 @@ export function Mcp(): React.ReactElement {
         })}
 
         {result && (
-          <div className="note" style={{ whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+          /* The output of a tool call was the single most important thing on this
+             screen and it was completely silent. A status region says it, politely,
+             without stealing whatever the person was doing. */
+          <div className="note" role="status" style={{ whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
             <b>{result.tool}</b>{"\n"}{result.body}
           </div>
         )}
 
-        <div className="acts">
-          <button className="btn ghost" onClick={() => setAdding(!adding)}>
+<div className="acts">
+          <button className="btn ghost" onClick={() => setAdding(!adding)} aria-expanded={adding} aria-controls="mcp-add-server">
             {adding ? "Cancel" : "+ Connect a tool server"}
           </button>
         </div>
 
         {adding && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
-            <div className="chips" role="listbox" aria-label="Ready-made servers">
+          <div id="mcp-add-server" style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+            <div className="chips" role="group" aria-label="Ready-made servers — each one fills the form below, nothing runs yet">
               {PRESETS.map((p) => (
-                <button key={p.id} type="button" className="chip" title={`${p.command} ${p.args}`}
+                <button key={p.id} type="button" className="chip" aria-pressed={draft.command === p.command && draft.name === p.label}
+                        title={`${p.command} ${p.args}`}
                         onClick={() => setDraft({ name: p.label, command: p.command, args: p.args.split(/\s+/) })}>
                   <b>{p.label}</b><span>{p.desc}</span>
                 </button>

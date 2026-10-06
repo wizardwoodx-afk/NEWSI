@@ -40,6 +40,8 @@
  * and in the receipt — honesty is the product.
  */
 import { ENGINE_VERSION } from "../../version";
+import { mintCapability, redeemCapability, verifyCapability, type ScopedCapability } from "../../security/capability";
+import { durableCheckpoint } from "./bridge";
 import { buildChainedReceipt, verifyProofReceipt, receiptToJsonl, type ProofReceipt } from "./proof";
 import { searchWeb } from "./webSearch";
 /* SELFIMPULSE MERGE (M1): the seam where the control plane reaches the
@@ -138,6 +140,12 @@ export interface SelfImpulseApproval {
   detail: string;
   status: "pending" | "approved" | "denied" | "expired";
   ts: string;
+  /** Digest of the signed scoped capability this approval minted — an
+   *  approval is portable authority now, not a boolean. */
+  capability?: string;
+  /** The durable run this approval pauses — a pending approval survives a
+   *  restart and the run resumes from its checkpoint when decided. */
+  runRef?: { runId: string; step: number };
 }
 
 export interface SelfImpulseSimulation {
@@ -775,7 +783,17 @@ export function checkPrediction(action: SelfImpulseAction, _sim: SelfImpulseSimu
 }
 
 /* ── approvals ───────────────────────────────────────────────────────────── */
-const approvalWaiters = new Map<string, (ok: boolean) => void>();
+/** What the human gate hands the execution plane: the human's decision AND
+ *  the signed capability that carries it. The capability — not the boolean —
+ *  is the authorization artifact: execution must verify and REDEEM it before
+ *  any effect. `ok` without a redeemable capability never reaches an effect. */
+export interface SelfImpulseGate {
+  ok: boolean;
+  capability: ScopedCapability | null;
+  reason?: "denied" | "expired" | "capability-unavailable";
+}
+
+const approvalWaiters = new Map<string, (gate: SelfImpulseGate) => void>();
 
 /* FINALFIX approval-gate hardening:
  *  - ids are cryptographically random (secureId — never Math.random), so a
@@ -788,9 +806,9 @@ const approvalWaiters = new Map<string, (ok: boolean) => void>();
 const APPROVAL_TTL_MS = 10 * 60 * 1000;
 const badApprovalProbeGate = new RateGate(10, 60_000);
 
-export function requestSelfImpulseApproval(action: string, detail: string): Promise<boolean> {
+export function requestSelfImpulseApproval(action: string, detail: string, runRef?: { runId: string; step: number }): Promise<SelfImpulseGate> {
   const id = secureId("a");
-  session = { ...session, approvals: [...session.approvals, { id, action, detail, status: "pending", ts: new Date().toISOString() }] };
+  session = { ...session, approvals: [...session.approvals, { id, action, detail, status: "pending", ts: new Date().toISOString(), runRef }] };
   commit();
   /* OS notification at the human gate (native Tauri host only; the web
    * edition is silent). Best-effort — a missing notification backend must
@@ -800,7 +818,7 @@ export function requestSelfImpulseApproval(action: string, detail: string): Prom
       if (isNativeHost()) void ipc.notifyApproval("SelfImpulse — human gate", `${action}: ${detail.slice(0, 140).replace(/\n/g, " ")}`);
     })
     .catch(() => undefined);
-  return new Promise<boolean>((resolve) => {
+  return new Promise<SelfImpulseGate>((resolve) => {
     approvalWaiters.set(id, resolve);
   });
 }
@@ -815,13 +833,42 @@ export function resolveSelfImpulseApproval(id: string, ok: boolean): void {
   if (approval.status !== "pending") return; /* one decision per approval — replays are no-ops */
   const expired = Date.now() - new Date(approval.ts).getTime() > APPROVAL_TTL_MS;
   const settle = approvalWaiters.get(id);
-  /* The run may already have been stopped — the card must still be dismissable,
-   * and the record must still say what the human decided. */
-  session = { ...session, approvals: session.approvals.map((a) => (a.id === id ? { ...a, status: expired ? ("expired" as const) : ok ? ("approved" as const) : ("denied" as const) } : a)) };
+  /* A human approval is not UI state — it MINTS a signed, scoped capability
+   * (audience-bound, redeem-once, expiring, depth-zero), is verified on the
+   * spot, and only then grants. FAIL-CLOSED: if the capability layer is
+   * unavailable, the approval is refused — it never resolves true on faith.
+   * The execution plane must still verify and REDEEM the capability before
+   * any effect runs. */
+  let grant: SelfImpulseGate = { ok: false, capability: null, reason: expired ? "expired" : "denied" };
+  let capabilityDigest: string | undefined;
+  if (ok && !expired) {
+    try {
+      const minted = mintCapability({
+        approvalId: id, subject: "si.captain", audience: "si.runtime",
+        action: approval.action, resource: approval.detail.slice(0, 200), budget: 0,
+      });
+      const v = verifyCapability(minted.capability, "si.runtime");
+      if (v.ok) {
+        capabilityDigest = minted.digest;
+        grant = { ok: true, capability: minted.capability };
+      } else {
+        grant = { ok: false, capability: null, reason: "capability-unavailable" };
+      }
+    } catch {
+      grant = { ok: false, capability: null, reason: "capability-unavailable" };
+    }
+  }
+  session = { ...session, approvals: session.approvals.map((a) => (a.id === id ? { ...a, status: expired ? ("expired" as const) : grant.ok ? ("approved" as const) : ("denied" as const), capability: capabilityDigest } : a)) };
   commit();
+  /* A durable pause ends on the durable chain: even if the run's process
+     died while paused, the decision lands on its checkpoints and the run
+     can be resumed from an honest point. */
+  if (approval.runRef) {
+    durableCheckpoint(approval.runRef.runId, "human-gate", approval.runRef.step + 1, expired ? "decision expired" : grant.ok ? "decision granted" : "decision denied", { approvalId: id, granted: grant.ok });
+  }
   if (settle) {
     approvalWaiters.delete(id);
-    settle(!expired && ok);
+    settle(grant);
   }
 }
 
@@ -1880,12 +1927,16 @@ export async function sendSelfImpulseMessage(input: string): Promise<void> {
         ...m,
         trace: m.trace.map((s, idx) => (idx === m.trace.length - 1 ? { ...s, awaitingApprovalId: lastApproval?.id } : s)),
       }));
-      const granted = await approvalPromise;
+      const gate = await approvalPromise;
       if (token !== runToken) return;
-      approved = granted;
-      if (!granted) {
+      approved = gate.ok;
+      if (!gate.ok) {
         ok = false;
-        output = "Denied by the human gate — nothing was executed.";
+        output = gate.reason === "expired"
+          ? "The approval expired before it could be backed by a capability — nothing was executed."
+          : gate.reason === "capability-unavailable"
+            ? "The approval could not be backed by a signed capability — refused fail-closed, nothing was executed."
+            : "Denied by the human gate — nothing was executed.";
         patchMsg((m) => ({
           ...m,
           trace: m.trace.map((s) => {
@@ -1894,6 +1945,23 @@ export async function sendSelfImpulseMessage(input: string): Promise<void> {
             return s;
           }),
         }));
+      } else {
+        /* The execution plane redeems the capability — verify, then redeem,
+           before any effect. One approval, one execution. */
+        const v = verifyCapability(gate.capability!, "si.runtime");
+        const redemption = v.ok ? redeemCapability(gate.capability!, "si.runtime") : v;
+        if (!redemption.ok) {
+          ok = false;
+          output = `The signed capability behind the approval did not redeem (${redemption.reason}) — nothing was executed.`;
+          patchMsg((m) => ({
+            ...m,
+            trace: m.trace.map((s) => {
+              if (s.kind === "dispatch") return { ...s, denied: true, awaitingApprovalId: undefined };
+              if (s.kind === "tool") return { ...s, denied: true, awaitingApprovalId: undefined };
+              return s;
+            }),
+          }));
+        }
       }
     }
 
@@ -2356,28 +2424,46 @@ export async function runSelfImpulseToolCall(
   const detail = isDispatch
     ? `Dispatch mission to a composed crew via the Mission Loop: "${objective.slice(0, 140)}"\nSIMULATION: ${sim.prediction}`
     : `Write file "${String(args.name ?? "untitled.txt")}" to the local workspace\nSIMULATION: ${sim.prediction}${sim.warnings.length > 0 ? `\nWARNINGS: ${sim.warnings.join("; ")}` : ""}`;
-  const approvalPromise = requestSelfImpulseApproval(tool, detail);
+  const approvalPromise = requestSelfImpulseApproval(tool, detail, { runId: `run:${callId}`, step: 1 });
   approvalIdRef = selfimpulseSession().approvals[selfimpulseSession().approvals.length - 1]?.id ?? null;
+  /* The gate is a DURABLE pause: the run checkpoints "awaiting-human" so a
+     crash or redeploy while paused loses nothing — the pending approval and
+     the run state reload together. */
+  durableCheckpoint(`run:${callId}`, isDispatch ? "dispatch" : "tool", 1, "awaiting-human", { tool, approvalId: approvalIdRef });
 
-  const settle = async (granted: boolean): Promise<SelfImpulseToolCallResult> => {
-    if (!granted) {
-      return finalize({ ok: false, output: "Denied by the human gate — nothing was executed.", approved: false, simulated: true, mission: null });
+  const settle = async (gate: SelfImpulseGate): Promise<SelfImpulseToolCallResult> => {
+    if (!gate.ok) {
+      durableCheckpoint(`run:${callId}`, isDispatch ? "dispatch" : "tool", 2, "denied at the gate", { reason: gate.reason ?? "denied" });
+      const why = gate.reason === "expired"
+        ? "The approval expired before it could be backed by a capability — nothing was executed."
+        : gate.reason === "capability-unavailable"
+          ? "The approval could not be backed by a signed capability — refused fail-closed, nothing was executed."
+          : "Denied by the human gate — nothing was executed.";
+      return finalize({ ok: false, output: why, approved: false, simulated: true, mission: null });
     }
+    /* The execution plane redeems the capability before any effect. */
+    const v = verifyCapability(gate.capability!, "si.runtime");
+    const redemption = v.ok ? redeemCapability(gate.capability!, "si.runtime") : v;
+    if (!redemption.ok) {
+      durableCheckpoint(`run:${callId}`, isDispatch ? "dispatch" : "tool", 2, "redemption refused", { reason: redemption.reason });
+      return finalize({ ok: false, output: `The signed capability behind the approval did not redeem (${redemption.reason}) — nothing was executed.`, approved: true, simulated: true, mission: null });
+    }
+    durableCheckpoint(`run:${callId}`, isDispatch ? "dispatch" : "tool", 2, "capability redeemed", { tool });
     toolCallTracks.get(callId)!.state = "running";
     const a = await runAction();
     return finalize({ ok: a.ok, output: a.output, approved: true, simulated: true, mission: a.mission });
   };
 
   if (opts.blockOnGate) {
-    const granted = await approvalPromise;
-    return settle(granted);
+    const gate = await approvalPromise;
+    return settle(gate);
   }
 
   /* 4. NON-BLOCKING gate — the caller gets the handle now; the call
    * continues when the human decides (UI or approve_action / deny_action). */
   toolCallTracks.set(callId, { state: "gated", result: null, missionId: null, tool });
   void approvalPromise
-    .then((granted) => settle(granted))
+    .then((gate) => settle(gate))
     .then((result) => {
       const track = toolCallTracks.get(callId);
       if (track) {

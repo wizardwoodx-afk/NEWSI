@@ -152,10 +152,10 @@ export function Docs(): React.ReactElement {
             <span className="ds">{READS} — or click to choose. Nothing is installed until you approve a proposal.</span>
           </button>
           <div className="field"><label className="lbl" htmlFor="doc-name">Source name</label>
-            <input id="doc-name" className="input" placeholder="e.g. Incident review handbook — chapter 3" value={name} onChange={(e) => setName(e.target.value)} />
+            <input id="doc-name" className="input" aria-describedby={note ? "doc-note" : undefined} placeholder="e.g. Incident review handbook — chapter 3" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <div className="field"><label className="lbl" htmlFor="doc-body">Document</label>
-            <textarea id="doc-body" className="input" rows={9} placeholder="Paste the document. Headings, numbered procedure and rules distill well; a wall of prose without structure is refused — truthfully, in words."
+            <textarea id="doc-body" className="input" rows={9} aria-describedby={note ? "doc-chars doc-note" : "doc-chars"} placeholder="Paste the document. Headings, numbered procedure and rules distill well; a wall of prose without structure is refused — truthfully, in words."
               value={text} onChange={(e) => setText(e.target.value)} />
           </div>
           <div className="row">
@@ -163,12 +163,18 @@ export function Docs(): React.ReactElement {
               {busy ? "Distilling…" : "Propose knowledge"}
             </button>
             <button className="btn sm" onClick={() => file.current?.click()}>Load a file</button>
-            <input ref={file} type="file" multiple accept={ACCEPT} style={{ display: "none" }}
+            <input ref={file} type="file" multiple aria-label="Choose documents to read" accept={ACCEPT} style={{ display: "none" }}
               onChange={(e) => { void takeFiles(e.target.files ?? []); e.target.value = ""; }} />
-            <span className="hint">{busy ? "Reading…" : text.trim().length < 60 ? `${text.trim().length}/60 characters minimum` : `${text.trim().length.toLocaleString()} characters ready`}</span>
+            <span className="hint" id="doc-chars">{busy ? "Reading…" : text.trim().length < 60 ? `${text.trim().length}/60 characters minimum` : `${text.trim().length.toLocaleString()} characters ready`}</span>
           </div>
           <div className="row"><span className="grow hint">An encrypted, oversized or nested archive is refused in words, and the refusal is kept as a receipt.</span></div>
-          {note && <div className={`note ${note.kind === "warn" ? "warn" : ""}`}>{note.text}</div>}
+          {/* The one sentence that reports what the door did with what you gave it.
+              It was rendered and never spoken, and nothing associated it with the
+              two fields it is about — so a refusal was visible and unreachable. It
+              is now BOTH: a polite status region (the outcome is announced without
+              anyone having to be on the field) and the description of the name and
+              document fields (the person editing them is told directly). */}
+          {note && <div id="doc-note" className={`note ${note.kind === "warn" ? "warn" : ""}`} role="status">{note.text}</div>}
           {filesRefused.length > 0 && (
             <div className="row"><span className="grow"><span className="t">Last refusal</span>
               <span className="d">{filesRefused[filesRefused.length - 1].file} — {filesRefused[filesRefused.length - 1].words}</span></span>

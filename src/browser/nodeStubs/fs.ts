@@ -61,6 +61,9 @@ export function rmSync(..._args: unknown[]): never {
 export function renameSync(..._args: unknown[]): never {
   return unavailable("renameSync");
 }
+export function realpathSync(..._args: unknown[]): never {
+  return unavailable("realpathSync");
+}
 
 export default {
   readFileSync,
@@ -72,4 +75,5 @@ export default {
   existsSync,
   rmSync,
   renameSync,
+  realpathSync,
 };

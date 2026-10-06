@@ -41,7 +41,7 @@ import {
 } from "../src/selfimpulse/engine/agui";
 
 describe("hardening1713 — PolicyGateway, tool schemas, AG-UI emitter", () => {
-  it("policyGateway: risky tools STEER with a named rule; safe tools ALLOW under default-allow", () => {
+  it("policyGateway: risky tools STEER with a named rule; safe tools ALLOW under the sovereign safe-class rule", () => {
     _resetPolicyRulesForProbe();
     const r1 = propose({ tool: "workspace_write", detail: "write file.txt", args: { name: "file.txt", content: "hi" } });
     assert.strictEqual(r1.decision, "steer", "workspace_write must steer to approval");
@@ -54,7 +54,12 @@ describe("hardening1713 — PolicyGateway, tool schemas, AG-UI emitter", () => {
     assert.ok(riskyTools.has("shell_exec"), "shell_exec is in the risky set");
     const r4 = propose({ tool: "system_info", detail: "system info" });
     assert.strictEqual(r4.decision, "allow", "system_info is not risky");
-    assert.strictEqual(r4.rule, "default-allow");
+    /* 1.2.0 — RE-ANCHORED: the anonymous default-allow is retired. The same
+       safe read now passes under a NAMED rule — the sovereign envelope's
+       safe-class allow — because "no rule noticed" is no longer a reason an
+       action was allowed. Same outcome for the same action; the audit line
+       now names its authority. */
+    assert.strictEqual(r4.rule, "sovereign-safe-class");
   });
 
   it("policyGateway: custom rules can deny and are evaluated in registration order", () => {

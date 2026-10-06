@@ -33,6 +33,7 @@ let transport: StdioClientTransport;
 
 before(async () => {
   transport = new StdioClientTransport({
+  env: { ...process.env, SI_OWNER_SECRET: "probe-owner-passphrase" },
     command: process.execPath,
     args: ["tools/mcp.mjs"],
     cwd: ROOT,

@@ -28,6 +28,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import SelfImpulseApp from './App';
 import { ErrorBoundary } from './panels/ErrorBoundary';
+import { THEMES, DEFAULT_THEME } from './ui/store';
 // SelfImpulse — one stylesheet. The design system lives in src/ui/vh.css; nothing else is imported.
 import './ui/vh.css';
 /* §13 — pdf.js parses inside a Worker in the browser and will not start without
@@ -107,7 +108,9 @@ try {
 
 /* 19.8 — appearance boot: the saved finish applies before the first paint. */
 try {
-  if (localStorage.getItem("vh.theme.v2") === "light") document.documentElement.dataset.theme = "light";
+  const saved = localStorage.getItem("vh.theme.v2");
+  const known = THEMES.some((t) => t.id === saved);
+  document.documentElement.dataset.theme = known ? saved! : DEFAULT_THEME;
 } catch { /* charcoal stays */ }
 
 /* 19.8 — a crash anywhere in the tree is caught, recorded in the LOCAL ledger

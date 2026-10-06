@@ -102,7 +102,7 @@ test("docIdentity \u2014 current-facing documents name only the current release 
 == doc identity scan (VH ${PRODUCT_VERSION}) ==
 `);
   const files = mdFiles();
-  ok("the scan covers the current docs surface", files.length >= 10, `only ${files.length} files`);
+  ok("the scan covers the current docs surface", files.length >= 8, `only ${files.length} files`);
   ok(
     `VERSION_RE is derived from the release identity (major ${MAJOR}), not hardcoded to a past major`,
     VERSION_RE.source.includes(`${MAJOR}\\.\\d`) && !VERSION_RE.source.includes("16\\.\\d")
@@ -118,7 +118,7 @@ test("docIdentity \u2014 current-facing documents name only the current release 
   );
   ok(
     "historical-by-role documents are excluded by NAME, not by accident",
-    !files.some((f) => HISTORICAL_BY_ROLE.test(f)) && files.length >= 10
+    !files.some((f) => HISTORICAL_BY_ROLE.test(f)) && files.length >= 8
   );
   const offenders = [];
   let scanned = 0;

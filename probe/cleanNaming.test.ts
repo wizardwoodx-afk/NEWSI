@@ -63,7 +63,7 @@ const SKIP_PATHS = new Set([
   // Scanning it for those names is the scan failing at its own purpose, so it is
   // exempt here and policed instead by probe/legacyCompat.test.ts, which checks
   // that every name in it is allowlisted and still in use.
-  path.join("docs", "LEGACY-COMPAT.md"),
+  path.join("docs", "internal", "LEGACY-COMPAT.md"),
   path.join("protocol") + path.sep,
 ]);
 

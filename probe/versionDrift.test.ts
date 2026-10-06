@@ -119,7 +119,7 @@ ok("no hardcoded release string survives in ipc/client.ts", !/version:\s*"\d+\.\
 ok("no hardcoded release string survives in Settings", !/VH \d+\.\d+|"19\.\d+\.\d+/.test(settings), (settings.match(/VH \d+\.\d+|"19\.\d+\.\d+/) ?? [""])[0]);
 
 section("3. the shipped documents name the current release");
-const OPERATIONAL_DOCS = ["README.md", "docs/setup/BUILD-NATIVE.md", "docs/setup/DESKTOP-NATIVE.md", "docs/setup/INSTALL-ON-LAPTOP.md", "docs/setup/DEPLOY-VERCEL.md", "docs/PLATFORM-LIMITS.md"];
+const OPERATIONAL_DOCS = ["README.md", "docs/setup/BUILD-NATIVE.md", "docs/setup/DESKTOP-NATIVE.md", "docs/setup/INSTALL-ON-LAPTOP.md", "docs/setup/DEPLOY-VERCEL.md", "docs/internal/PLATFORM-LIMITS.md"];
 const docs = [...OPERATIONAL_DOCS];
 for (const doc of docs) {
   const firstLine = read(doc).split("\n")[0] ?? "";

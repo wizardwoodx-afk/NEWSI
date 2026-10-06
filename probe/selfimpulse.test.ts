@@ -90,6 +90,8 @@ import {
   verifyProofReceipt,
   type ProofReceipt,
 } from "../src/selfimpulse/engine/proof";
+import { bindOwnerRoot } from "../src/security/ownerRoot";
+bindOwnerRoot("probe-owner-passphrase");
 
 /* node-safe storage for the VH engine side: its guarded localStorage reads
  * need a backing map so crews persist within the probe process. (The SelfImpulse

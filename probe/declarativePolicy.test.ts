@@ -24,6 +24,8 @@ import {
   DEFAULT_POLICY, DEFAULT_POLICY_SOURCE,
   type ActionFacts, type Policy,
 } from "../src/security/policy";
+import { bindOwnerRoot } from "../src/security/ownerRoot";
+bindOwnerRoot("probe-owner-passphrase");
 
 const ROOT: string = process.env.SI_ROOT ?? process.cwd();
 

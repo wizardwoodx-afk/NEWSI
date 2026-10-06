@@ -96,20 +96,18 @@ describe("the shell is wired", () => {
       // tuning decision), the display face is still there, and Tailwind is
       // still not pulled in at runtime.
       const accentHex = css.match(/--accent:\s*(#[0-9a-f]{6})/i)?.[1] ?? "";
-      const rgb = [0, 2, 4].map((i) => parseInt(accentHex.slice(1 + i, 3 + i), 16)) as [number, number, number];
-      const mx = Math.max(...rgb); const mn = Math.min(...rgb); const d = mx - mn;
-      let hdeg = 0;
-      if (d !== 0) {
-        hdeg = mx === rgb[0] ? 60 * (((rgb[1] - rgb[2]) / d) % 6)
-          : mx === rgb[1] ? 60 * ((rgb[2] - rgb[0]) / d + 2)
-            : 60 * ((rgb[0] - rgb[1]) / d + 4);
-        if (hdeg < 0) hdeg += 360;
-      }
-      // 29deg +/- 12 is the house ember: warm amber, unmistakably not the old
-      // cyan-leaning teal and not a primary blue.
-      assert.ok(/--bg:\s*#[0-9a-f]{3,8}/i.test(css) && hdeg > 17 && hdeg < 41, `accent ${accentHex} is ${hdeg.toFixed(0)}deg`);
-      assert.ok(/Space Grotesk/.test(css));
-      assert.ok(!/blue/i.test(css.replace(/hair.*blue/, "")));
+      // ONE accent per finish, declared as a token in the ONE stylesheet. Hue
+      // is deliberately NOT constrained: the eight supplied finishes span sage,
+      // slate, azure, gunmetal, brass, sand, oxblood and violet, and a warm-only
+      // law would reject the owner's own palette. What matters is that the token
+      // exists, is a real colour, and the banned agent-tool values stay banned —
+      // probe/theme.test.ts carries the full per-finish contrast law.
+      assert.ok(/--bg:\s*#[0-9a-f]{3,8}/i.test(css) && /^#[0-9a-f]{6}$/i.test(accentHex), `accent ${accentHex} is not a declared colour`);
+      assert.ok(/Gambetta/.test(css));
+      // Banned as a VALUE, not as a word: two supplied finishes are legitimately
+      // blue-leaning (obsidian "blue slate", azure) and the palette comments say
+      // so, so grepping the word would fail on honest prose.
+      assert.ok(!/#007AFF|#3B82F6|#2563EB|#60A5FA/i.test(css) && !/:\s*(blue|indigo)\b/i.test(css));
     assert.ok(!/@import "tailwindcss"/.test(css));
   });
 

@@ -30,6 +30,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { createHash } from "node:crypto";
 import { checkEgressUrl, detectInjection, sanitizeText } from "../security/guardrail";
 import { secureId } from "../security/guardrail";
+import { stableStringify } from "../security/actionGraph";
 import {
   A2A_ERRORS,
   WELL_KNOWN_CARD_PATH,
@@ -46,6 +47,8 @@ import {
 export { WELL_KNOWN_CARD_PATH };
 const MAX_BODY_BYTES = 1024 * 1024;
 const REPLAY_WINDOW_MS = 30_000;
+/** Ceiling on remembered fingerprints — a hostile peer must not grow this forever. */
+const REPLAY_SEEN_CAP = 4096;
 const AUDIT_CAP = 500;
 const TASK_CAP = 200;
 
@@ -192,13 +195,53 @@ export function createA2AServer(opts: A2AServerOptions): A2AServerHandle {
     if (first !== undefined) { tasks.delete(first); history.delete(first); pushConfigs.delete(first); }
   };
 
-  const fingerprintOf = (req: A2ARequest): string =>
-    createHash("sha256").update(`${req.method}|${JSON.stringify(req.params ?? {})}`).digest("hex");
+  /**
+   * The replay window's fingerprint, and what it deliberately leaves out.
+   *
+   * It used to be `sha256(method + "|" + JSON.stringify(params))`, which is wrong
+   * twice over. `JSON.stringify` is key-order dependent, so `{a,b}` and `{b,a}` —
+   * the same request — hashed differently. And `message/send` params carry a
+   * FRESH random `messageId` on every attempt, so two semantically identical
+   * delegations never collided at all and the 30s window only ever stopped
+   * byte-identical retries. That is the definition of a dedupe window that does
+   * not dedupe.
+   *
+   * So the fingerprint is canonical (`stableStringify`, the same helper the
+   * checkpoint chain digests with — key order cannot change a hash) and it
+   * EXCLUDES the per-attempt randomness: the JSON-RPC `id` and the message's
+   * `messageId`. Both are transport nonces, not content; a client that retries a
+   * dropped request legitimately mints a new one, and the receiver must still
+   * recognise it as the same delegation.
+   *
+   * The authoritative at-most-once control is the delegation receiver's own
+   * packet-id registry, not this window. This window is a cheap transport-level
+   * brake; excluding the nonces makes it bite on semantic duplicates, which is
+   * the only reason to have one.
+   */
+  const fingerprintOf = (req: A2ARequest): string => {
+    const params = req.params as Record<string, unknown> | undefined;
+    const message = params?.message as Record<string, unknown> | undefined;
+    const canonical = stableStringify({
+      method: req.method,
+      // Only for message methods; a non-message method has no messageId to drop.
+      ...(message && typeof message === "object" ? { params: { ...params, message: { ...message, messageId: "<per-attempt>" } } } : { params }),
+    });
+    return createHash("sha256").update(`${req.method}|${canonical}`).digest("hex");
+  };
 
   const replayed = (fp: string): boolean => {
     const now = Date.now();
     for (const [k, ts] of [...seen]) if (now - ts > REPLAY_WINDOW_MS) seen.delete(k);
     if (seen.has(fp)) return true;
+    // The map is the memory a hostile peer can grow, so it is bounded. Evicting
+    // the oldest entry is the right direction here: the window is a transport
+    // brake on near-identical retries, and forgetting the oldest costs less than
+    // growing without limit. (The delegation receiver's registry does the
+    // opposite, because there the entry IS the at-most-once decision.)
+    if (seen.size >= REPLAY_SEEN_CAP) {
+      const oldest = seen.keys().next().value as string | undefined;
+      if (oldest !== undefined) seen.delete(oldest);
+    }
     seen.set(fp, now);
     return false;
   };

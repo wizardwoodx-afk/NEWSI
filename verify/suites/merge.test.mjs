@@ -4,9 +4,9 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
+var __export = (target, all2) => {
+  for (var name in all2)
+    __defProp(target, name, { get: all2[name], enumerable: true });
 };
 
 // src/app/id.ts
@@ -424,7 +424,7 @@ var PRODUCT_VERSION, ENGINE_VERSION, ENGINE_SHORT, ENGINE_CODENAME, PRODUCT_TITL
 var init_version = __esm({
   "src/version.ts"() {
     "use strict";
-    PRODUCT_VERSION = "1.0.0";
+    PRODUCT_VERSION = "1.9.1";
     ENGINE_VERSION = "19.7.15";
     ENGINE_SHORT = "19.7";
     ENGINE_CODENAME = "SelfImpulse";
@@ -670,8 +670,8 @@ var init_localDb = __esm({
         save(db);
       },
       skillsList(nodeKey) {
-        const all = load().skills.filter((s) => s.nodeKey === nodeKey);
-        return { skills: all.filter((s) => s.active), all };
+        const all2 = load().skills.filter((s) => s.nodeKey === nodeKey);
+        return { skills: all2.filter((s) => s.active), all: all2 };
       },
       skillUpsert(args) {
         const db = load();
@@ -4214,6 +4214,12 @@ function gitApi(runner) {
 
 // src/mission/caps.ts
 var DEFAULT_CAPS = { timeoutMs: 10 * 60 * 1e3, maxTurns: 40, maxCostUsd: 5 };
+var INBOUND_DELEGATION_CAPS = {
+  maxCostUsd: 2,
+  maxTurns: 40,
+  maxInvocations: 4,
+  maxWallClockMs: 30 * 6e4
+};
 var CapLedger = class {
   caps;
   state;
@@ -4224,8 +4230,39 @@ var CapLedger = class {
   beginInvocation() {
     this.state.invocationsUsed += 1;
   }
-  /** Can another invocation start at all? Checked BEFORE dispatch — refusing is control, charging after is bookkeeping. */
+  /**
+   * Can another invocation start at all? Checked BEFORE dispatch — refusing is control, charging after is bookkeeping.
+   *
+   * TWO FAIL-CLOSED RULES, both added because an unpopulated `MissionCaps` used
+   * to mean "no ceiling at all":
+   *
+   *  1. A DECLARED-BUT-UNREADABLE CAP IS A REFUSAL, NOT AN ABSENT CAP. Every
+   *     guard below reads `?? 0`, and `NaN > 0` is false, so `{ maxTurns: NaN }`
+   *     and `{ maxCostUsd: -1 }` each silently disable themselves. A ceiling
+   *     nobody can read is not a ceiling, so any declared value that is not a
+   *     finite non-negative number refuses the dispatch and names the field.
+   *
+   *  2. A LEDGER WITH NO ARMED GUARD ADMITS NOTHING. `new CapLedger({})` scored
+   *     zero on every guard, so it returned `null` — admit, forever — which meant
+   *     the federation path's `new CapLedger({})` was an unbounded budget for
+   *     whoever reached the port. There is no honest reading of "no ceiling was
+   *     declared" as "run without limit", so it refuses and says so.
+   *
+   * An explicit `0` is still this build's way of saying "this one dimension is
+   * unlimited" (`mayRunTurn` documents the same convention) and stays honoured.
+   * What is refused is the ABSENCE of every armed guard, not a chosen zero.
+   *
+   * `missionLoop` constructs a ledger with `maxTurns: 120` and a numeric
+   * `maxCostUsd`, so rule 2 never fires on the mission path; rule 1 only fires
+   * on a malformed value, which is the direction it is meant to fail.
+   */
   admissionError(now = Date.now()) {
+    for (const [field, value] of Object.entries(this.caps)) {
+      if (value === void 0 || value === null) continue;
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+        return `the ${field} ceiling is declared as ${JSON.stringify(value)}, which is not a usable number \u2014 refusing rather than treating a broken ceiling as no ceiling`;
+      }
+    }
     const maxCost = this.caps.maxCostUsd ?? 0;
     if (maxCost > 0 && this.state.spentUsd >= maxCost) {
       return `the mission has already spent $${this.state.spentUsd.toFixed(4)} of its $${maxCost.toFixed(4)} ceiling`;
@@ -4241,6 +4278,9 @@ var CapLedger = class {
     const maxWall = this.caps.maxWallClockMs ?? this.caps.timeoutMs ?? 0;
     if (maxWall > 0 && now - this.state.startedAt >= maxWall) {
       return `the mission's ${Math.round(maxWall / 1e3)}s wall clock has elapsed`;
+    }
+    if (maxCost <= 0 && maxTurns <= 0 && maxInvocations <= 0 && maxWall <= 0) {
+      return `no ceiling is set \u2014 cost, turns, invocations and the wall clock are all absent or zero, so this ledger would admit without limit; dispatch is refused until a real ceiling is declared`;
     }
     return null;
   }
@@ -4951,6 +4991,96 @@ function packetAllowsExecution(p) {
   return { ok: true, reason: `packet ${p.id} permits execution (${p.permission}${p.reversible ? ", reversible" : ", irreversible+allowed"})` };
 }
 
+// src/security/actionGraph.ts
+function stableStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const entries = Object.entries(value).filter(([, v]) => v !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(",")}}`;
+}
+var RISK_ORDER = { low: 0, medium: 1, high: 2, critical: 3 };
+function riskAtLeast(actual, ceiling) {
+  return RISK_ORDER[actual] >= RISK_ORDER[ceiling];
+}
+function riskOfAction(action) {
+  const a = action.toLowerCase();
+  if (/(rm|delete|drop\s+table|truncate|revoke|force.push|reset --hard|chmod 777|sudo)/.test(a)) return "critical";
+  if (/(write|edit|patch|apply|commit|install|exec|run|shell|http|fetch|curl|npm|pip)/.test(a)) return "high";
+  if (/(test|read|stat|ls|grep|search)/.test(a)) return "low";
+  return "medium";
+}
+function authorize(env, action) {
+  const a = action.toLowerCase();
+  const risk = riskOfAction(action);
+  if (!env || typeof env.root !== "string" || env.root.length === 0) {
+    return { allowed: false, reason: "no authority envelope: a decision that cannot name its envelope is not made", action, risk, escalated: true };
+  }
+  if (risk === "critical") {
+    return {
+      allowed: false,
+      reason: "critical-risk actions are never taken on the seat's own authority; they require a named human",
+      action,
+      risk,
+      escalated: true
+    };
+  }
+  if (/(write|edit|patch|apply|commit)/.test(a) && !env.allowWrite) {
+    return { allowed: false, reason: "this seat is read-only: it may not change the workspace", action, risk, escalated: true };
+  }
+  if (/(exec|run|shell|npm|pip)/.test(a) && !env.allowShell) {
+    return { allowed: false, reason: "shell execution is outside this seat's authority", action, risk, escalated: true };
+  }
+  if (/(http|fetch|curl|network)/.test(a) && !env.allowNetwork) {
+    return { allowed: false, reason: "network egress is outside this seat's authority", action, risk, escalated: true };
+  }
+  if (riskAtLeast(risk, "high") && !riskAtLeast(env.maxRisk, "high")) {
+    return {
+      allowed: false,
+      reason: `action is ${risk} risk but this seat's approved ceiling is ${env.maxRisk}`,
+      action,
+      risk,
+      escalated: true
+    };
+  }
+  return { allowed: true, reason: `within the approved envelope (ceiling ${env.maxRisk}, write=${env.allowWrite}, shell=${env.allowShell})`, action, risk };
+}
+
+// src/engine/finops.ts
+var MAX_ENTRIES = 2e3;
+var all = [];
+function recordSeatRun(e) {
+  all.push(e);
+  if (all.length > MAX_ENTRIES) all = all.slice(-MAX_ENTRIES);
+}
+
+// src/mission/runCheckpoints.ts
+import { createHash } from "node:crypto";
+var chainOf = /* @__PURE__ */ new Map();
+var states = /* @__PURE__ */ new Map();
+var digestOf = (s) => createHash("sha256").update(stableStringify(s ?? null)).digest("hex");
+function checkpoint(runId, missionId, step, label, state) {
+  const chain = chainOf.get(runId) ?? [];
+  const prev = chain[chain.length - 1];
+  const at = Date.now();
+  const stateDigest = digestOf(state);
+  const prevDigest = prev ? prev.entryDigest : "";
+  const entryDigest = createHash("sha256").update(`${missionId}|${step}|${label}|${stateDigest}|${prevDigest}|${at}`).digest("hex");
+  const cp = {
+    runId,
+    missionId,
+    step,
+    label,
+    stateDigest,
+    prevDigest,
+    entryDigest,
+    at
+  };
+  chain.push(cp);
+  chainOf.set(runId, chain);
+  states.set(cp.stateDigest, stableStringify(state ?? null));
+  return cp;
+}
+
 // src/mission/consensusEngine.ts
 var AgentReputationLedger = class {
   ledger = /* @__PURE__ */ new Map();
@@ -5333,6 +5463,8 @@ ${lessonLines.map((l) => `- ${l}`).join("\n")}
   let budgetStop = null;
   let snapshot = emptySnapshot;
   const committedBranches = [];
+  let waveNo = 0;
+  const durableRunId = `run:${req.missionSlug}`;
   for (const wave of waves) {
     if (waveFailed) {
       const skipReason = budgetStop ? `Spend authority ran out \u2014 ${budgetStop}` : "An earlier wave did not complete, so this seat was skipped rather than asked to review work that does not exist.";
@@ -5415,7 +5547,24 @@ ${lessonLines.map((l) => `- ${l}`).join("\n")}
       const tk = tickets.get(r.seatId);
       if (budgetGate && tk) budgetAccounting.overrun += budgetGate.settle(tk, r.chargedUsd ?? 0).overrunUsd;
       if ((r.usage?.costUsd === null || r.usage?.costUsd === void 0) && (r.usage?.tokens ?? 0) > 0) budgetAccounting.tokensOnly.add(r.seatId);
+      recordSeatRun({
+        at: Date.now(),
+        seatId: r.seatId,
+        missionId: req.missionSlug,
+        usd: r.usage?.costUsd ?? null,
+        tokens: r.usage?.tokens ?? null,
+        turns: r.usage?.turns ?? null,
+        verdict: r.verified ? "verified" : r.outcome === "completed" ? "completed" : r.outcome,
+        source: r.usage?.source ?? "unknown"
+      });
     }
+    checkpoint(durableRunId, req.missionSlug, waveNo, "wave settled", {
+      settled: results.length,
+      verified: results.filter((x) => x.verified).length,
+      budgetStop,
+      failed: waveFailed
+    });
+    waveNo += 1;
     if (req.rootEnvelope && req.rootEnvelope.budgetUsd !== null && !budgetStop) {
       const spentSoFar = seats.reduce((sum, r) => sum + (r.chargedUsd ?? 0), 0);
       const bc = budgetCheck(req.rootEnvelope, spentSoFar);
@@ -6523,6 +6672,436 @@ function loopHostDeps(opts) {
 // src/selfimpulse/engine/selfimpulse.ts
 init_version();
 
+// src/security/capability.ts
+import { createHash as createHash3 } from "node:crypto";
+
+// src/security/sovereign.ts
+import { createHash as createHash2, generateKeyPairSync, sign as edSign, verify as edVerify } from "node:crypto";
+function workingRoot() {
+  try {
+    if (typeof process !== "undefined" && typeof process.cwd === "function") {
+      const cwd = process.cwd();
+      if (typeof cwd === "string" && cwd.length > 0) return cwd;
+    }
+  } catch {
+  }
+  return "/";
+}
+function requestProfileOf(node2) {
+  const cfg = node2.config ?? {};
+  const bool = (k, dflt) => typeof cfg[k] === "boolean" ? cfg[k] : dflt;
+  const riskRaw = String(cfg.maxRisk ?? "low").toLowerCase();
+  const maxRisk = riskRaw === "critical" || riskRaw === "high" || riskRaw === "medium" ? riskRaw : "low";
+  return {
+    agentId: String(node2.id ?? node2.title ?? "seat"),
+    owner: String(cfg.owner ?? "owner"),
+    allowWrite: bool("allowWrite", false),
+    allowShell: bool("allowShell", false),
+    allowNetwork: bool("allowNetwork", false),
+    root: String(cfg.workspaceRoot ?? workingRoot()),
+    budgetCeiling: Number(cfg.budgetCeiling ?? 0),
+    maxRisk
+  };
+}
+function profileDigest(p) {
+  return createHash2("sha256").update(`si.profile.v1
+${stableStringify(p)}`).digest("hex");
+}
+function profileIsEffectful(p) {
+  return p.allowWrite || p.allowShell || p.allowNetwork || p.maxRisk !== "low";
+}
+var MANDATE_FORMAT = "si.mandate.v1";
+function mandateCanonical2(m) {
+  return stableStringify({
+    v: m.v,
+    agentId: m.agentId,
+    owner: m.owner,
+    profile: m.profile,
+    env: m.env,
+    issuedAt: m.issuedAt,
+    expiresAt: m.expiresAt
+  });
+}
+function sessionSigner() {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const pubDer = publicKey.export({ type: "spki", format: "der" });
+  const id = createHash2("sha256").update(pubDer).digest("hex").slice(0, 16);
+  return {
+    id,
+    sign: (data) => edSign(null, Buffer.from(data, "utf8"), privateKey).toString("base64"),
+    verify: (data, sig) => {
+      try {
+        return edVerify(null, Buffer.from(data, "utf8"), publicKey, Buffer.from(sig, "base64"));
+      } catch {
+        return false;
+      }
+    }
+  };
+}
+function issueMandate(profile, signer, ttlMs = 60 * 6e4) {
+  const issuedAt = Date.now();
+  const m = {
+    v: MANDATE_FORMAT,
+    agentId: profile.agentId,
+    owner: profile.owner,
+    profile: profileDigest(profile),
+    env: {
+      allowWrite: profile.allowWrite,
+      allowShell: profile.allowShell,
+      allowNetwork: profile.allowNetwork,
+      root: profile.root,
+      budgetCeiling: profile.budgetCeiling,
+      maxRisk: profile.maxRisk
+    },
+    issuedAt,
+    expiresAt: issuedAt + Math.max(1, ttlMs)
+  };
+  return { ...m, signature: signer.sign(mandateCanonical2(m)) };
+}
+function verifyMandate(m, signer) {
+  if (!m || typeof m !== "object" || !m.signature) {
+    return { ok: false, reason: "missing", detail: "no mandate: a profile without a signature issues no authority" };
+  }
+  if (!m.owner || typeof m.owner !== "string") {
+    return { ok: false, reason: "no-owner", detail: "the mandate names no human principal; an anonymous authority is not an authority" };
+  }
+  if (!signer.verify(mandateCanonical2(m), m.signature)) {
+    return { ok: false, reason: "bad-signature", detail: `the mandate's signature does not verify against the owner key ${signer.id}` };
+  }
+  if (Date.now() > m.expiresAt) {
+    return { ok: false, reason: "expired", detail: `the mandate expired at ${new Date(m.expiresAt).toISOString()}` };
+  }
+  return { ok: true, mandate: m };
+}
+function envelopeFromMandate(m, signer) {
+  if (!verifyMandate(m, signer).ok) return null;
+  return {
+    allowWrite: m.env.allowWrite === true,
+    allowShell: m.env.allowShell === true,
+    allowNetwork: m.env.allowNetwork === true,
+    root: String(m.env.root),
+    budgetCeiling: Number(m.env.budgetCeiling) || 0,
+    maxRisk: m.env.maxRisk
+  };
+}
+var FRONT_DOOR_AGENT = "si.front-door.captain";
+var FRONT_DOOR_TTL_MS = 60 * 6e4;
+var DENY_ALL_ENVELOPE = {
+  allowWrite: false,
+  allowShell: false,
+  allowNetwork: false,
+  root: workingRoot(),
+  budgetCeiling: 0,
+  maxRisk: "low"
+};
+var SovereignAuthority = class {
+  bootstrap;
+  ownerSigner = null;
+  issued = /* @__PURE__ */ new Map();
+  revoked = /* @__PURE__ */ new Set();
+  constructor(signer) {
+    this.bootstrap = signer ?? null;
+  }
+  /** ONE authority root. The session key bootstraps (labelled honestly as
+   *  "bootstrap"); binding the OWNER's key re-roots every issuance. */
+  get root() {
+    return this.ownerSigner ? "owner" : "bootstrap";
+  }
+  /** Bind the owner's signer — the human's key becomes THE root. Idempotent
+   *  for the same key; the bootstrap key keeps verifying nothing new. */
+  bindOwnerSigner(s) {
+    this.ownerSigner = s;
+  }
+  /** DROP the owner binding — the vault-lock act. The root reverts to the
+   *  labelled bootstrap, and every owner-signed artifact (mandates AND
+   *  capabilities) stops verifying from this moment: a key that is gone
+   *  cannot vouch. Re-binding with the same passphrase restores the same
+   *  key, and with it the same mandates. */
+  unbindOwnerSigner() {
+    this.ownerSigner = null;
+  }
+  get rootSigner() {
+    this.bootstrap ??= sessionSigner();
+    return this.ownerSigner ?? this.bootstrap;
+  }
+  get signerId() {
+    const bound = this.ownerSigner ?? this.bootstrap;
+    if (bound) return bound.id;
+    return "unbound";
+  }
+  /** The signing root every other authority artifact MUST share —
+   *  capabilities sign with exactly this key. One root, no side keys. */
+  currentRootSigner() {
+    return this.rootSigner;
+  }
+  /** The OWNER act — an explicit re-grant. The ONLY path that lifts a
+   *  revocation; mandateFor refuses revoked seats and never un-revokes. */
+  regrant(node2, ttlMs = 60 * 6e4) {
+    if (this.root !== "owner") {
+      return { ok: false, reason: "owner-required", detail: "only the bound owner root may re-grant a revoked seat" };
+    }
+    const profile = requestProfileOf(node2);
+    this.revoked.delete(profile.agentId);
+    return this.mandateFor(node2, ttlMs);
+  }
+  /** Revoke a seat — the roster's revocation flows through here, so the
+   *  very next governed read fail-closes. Only an owner act (a fresh
+   *  mandate) re-arms the seat. */
+  revoke(agentId) {
+    this.revoked.add(agentId);
+  }
+  isRevoked(agentId) {
+    return this.revoked.has(agentId);
+  }
+  /** The seats under mandate — the IAM roster's source of truth. */
+  enrolledAgents() {
+    return [...this.issued.keys()];
+  }
+  enrolledMandateOf(agentId) {
+    return this.issued.get(agentId)?.mandate ?? null;
+  }
+  /** The mandate for a node's CURRENT profile — issuing one if the profile
+   *  is new or changed, re-verifying the cached one if it is not. Issuance
+   *  here is the owner's standing act (the app owner IS the human principal
+   *  for local seats); every issuance is returned with its signing key id so
+   *  the caller can journal it. */
+  mandateFor(node2, ttlMs = 60 * 6e4) {
+    const profile = requestProfileOf(node2);
+    const digest = profileDigest(profile);
+    if (this.root === "bootstrap" && profileIsEffectful(profile)) {
+      return { ok: false, reason: "bootstrap-effectful-mandate", detail: "bootstrap authority is read-only until the owner root is bound" };
+    }
+    if (this.revoked.has(profile.agentId)) {
+      return { ok: false, reason: "revoked", detail: "this seat is revoked \u2014 authority stays off until the owner re-grants it" };
+    }
+    const cached4 = this.issued.get(profile.agentId);
+    if (cached4 && cached4.digest === digest) {
+      const check2 = verifyMandate(cached4.mandate, this.rootSigner);
+      if (check2.ok) return { ok: true, mandate: check2.mandate, issued: false, signerId: this.rootSigner.id };
+      if (check2.reason === "expired") {
+        const fresh2 = issueMandate(profile, this.rootSigner, ttlMs);
+        this.issued.set(profile.agentId, { mandate: fresh2, digest });
+        return { ok: true, mandate: fresh2, issued: true, signerId: this.rootSigner.id };
+      }
+      return { ok: false, reason: check2.reason, detail: check2.detail };
+    }
+    const fresh = issueMandate(profile, this.rootSigner, ttlMs);
+    this.issued.set(profile.agentId, { mandate: fresh, digest });
+    return { ok: true, mandate: fresh, issued: true, signerId: this.rootSigner.id };
+  }
+  /** The LIVE authority read — called before every governed step.
+   *
+   *  Returns the envelope ONLY if a mandate exists for this node, verifies
+   *  against the owner key, is unexpired, AND was issued over the profile
+   *  the node's configuration carries RIGHT NOW. Anything else returns null
+   *  and the governed loop fail-closes; that null is what makes drift
+   *  detection real instead of decorative. */
+  read(node2) {
+    const profile = requestProfileOf(node2);
+    const cached4 = this.issued.get(profile.agentId);
+    if (!cached4) return null;
+    if (this.revoked.has(profile.agentId)) return null;
+    if (cached4.digest !== profileDigest(profile)) return null;
+    const check2 = verifyMandate(cached4.mandate, this.rootSigner);
+    if (!check2.ok) return null;
+    return envelopeFromMandate(check2.mandate, this.rootSigner);
+  }
+  /** The verified mandate for a node, if one is live. */
+  mandateOf(node2) {
+    const profile = requestProfileOf(node2);
+    const cached4 = this.issued.get(profile.agentId);
+    if (!cached4 || this.revoked.has(profile.agentId) || cached4.digest !== profileDigest(profile)) return null;
+    const check2 = verifyMandate(cached4.mandate, this.rootSigner);
+    return check2.ok ? check2.mandate : null;
+  }
+  /** The front-door envelope — the Captain's own seat, judged by the same
+   *  authority as every other seat. Conservative by construction: the front
+   *  door steers anything risky and refuses anything critical on its own
+   *  authority, exactly like the governed loop. */
+  frontDoorEnvelope() {
+    const claim2 = this.mandateFor({ id: FRONT_DOOR_AGENT, config: { owner: "owner" } }, FRONT_DOOR_TTL_MS);
+    if (!claim2.ok) return DENY_ALL_ENVELOPE;
+    return envelopeFromMandate(claim2.mandate, this.rootSigner) ?? DENY_ALL_ENVELOPE;
+  }
+};
+var sovereign = new SovereignAuthority();
+
+// src/security/capability.ts
+var CAPABILITY_FORMAT = "si.capability.v1";
+var DEFAULT_CAPABILITY_TTL_MS = 10 * 6e4;
+var registry2 = /* @__PURE__ */ new Map();
+var byApproval = /* @__PURE__ */ new Map();
+function theSigner() {
+  return sovereign.currentRootSigner();
+}
+var capabilityDigest = (base) => createHash3("sha256").update(stableStringify(base)).digest("hex");
+var baseOf = (c) => ({
+  v: c.v,
+  subject: c.subject,
+  audience: c.audience,
+  action: c.action,
+  resource: c.resource,
+  missionId: c.missionId,
+  budget: c.budget,
+  issuedAt: c.issuedAt,
+  expiresAt: c.expiresAt,
+  delegationDepth: c.delegationDepth,
+  approvalId: c.approvalId
+});
+function mintCapability(input2) {
+  const ttl = input2.ttlMs ?? DEFAULT_CAPABILITY_TTL_MS;
+  if (!Number.isFinite(ttl) || ttl <= 0) throw new Error(`capability ttl must be a positive number of ms \u2014 got ${input2.ttlMs}`);
+  const issuedAt = Date.now();
+  const base = {
+    v: CAPABILITY_FORMAT,
+    subject: input2.subject,
+    audience: input2.audience,
+    action: input2.action,
+    resource: input2.resource,
+    missionId: input2.missionId ?? null,
+    budget: input2.budget ?? 0,
+    issuedAt,
+    expiresAt: issuedAt + ttl,
+    delegationDepth: 0,
+    approvalId: input2.approvalId
+  };
+  if (sovereign.root !== "owner" && actionIsEffectful(input2.action)) {
+    throw new Error(`refused: the authority root is still bootstrap \u2014 before the owner's key is bound, no effectful capability may be minted (${input2.action})`);
+  }
+  const capability = { ...base, signature: theSigner().sign(stableStringify(base)) };
+  const digest = capabilityDigest(base);
+  registry2.set(digest, { base, mintedRootKeyId: theSigner().id, redeemed: null, invalidated: false });
+  const seen = byApproval.get(input2.approvalId) ?? [];
+  seen.push(digest);
+  byApproval.set(input2.approvalId, seen);
+  return { capability, digest };
+}
+function verifyCapability(c, audience) {
+  if (!c || typeof c !== "object" || !c.signature || c.v !== CAPABILITY_FORMAT) {
+    return { ok: false, reason: "missing", detail: "not a capability" };
+  }
+  if (c.delegationDepth !== 0) {
+    return { ok: false, reason: "depth", detail: `delegation depth ${c.delegationDepth} \u2014 capabilities never re-delegate` };
+  }
+  const base = baseOf(c);
+  if (!theSigner().verify(stableStringify(base), c.signature)) {
+    return { ok: false, reason: "bad-signature", detail: "the capability does not verify against the issuing key \u2014 forged or edited" };
+  }
+  const minted = registry2.get(capabilityDigest(base));
+  if (minted?.invalidated) {
+    return { ok: false, reason: "invalidated", detail: "the root that minted this capability was locked out or replaced \u2014 a lock kills outstanding capabilities" };
+  }
+  if (Date.now() > c.expiresAt) {
+    return { ok: false, reason: "expired", detail: `expired ${new Date(c.expiresAt).toISOString()} \u2014 an approval is not a standing power` };
+  }
+  if (c.audience !== audience) {
+    return { ok: false, reason: "wrong-audience", detail: `minted for ${c.audience}, presented to ${audience}` };
+  }
+  return { ok: true, capability: c };
+}
+function redeemCapability(c, audience) {
+  const v = verifyCapability(c, audience);
+  if (!v.ok) return v;
+  const digest = capabilityDigest(baseOf(c));
+  const entry = registry2.get(digest);
+  if (entry?.redeemed) {
+    return { ok: false, reason: "already-redeemed", detail: `redeemed by ${entry.redeemed.by} at ${new Date(entry.redeemed.at).toISOString()} \u2014 one approval, one use` };
+  }
+  if (entry) entry.redeemed = { by: audience, at: Date.now() };
+  return v;
+}
+function invalidateCapabilitiesForRoot(rootKeyId) {
+  let killed = 0;
+  for (const entry of registry2.values()) {
+    if (entry.mintedRootKeyId === rootKeyId && !entry.invalidated) {
+      entry.invalidated = true;
+      killed += 1;
+    }
+  }
+  return killed;
+}
+var READ_ONLY_OPERATIONS = /* @__PURE__ */ new Set([
+  "read",
+  "list",
+  "get",
+  "status",
+  "search",
+  "describe",
+  "poll",
+  "simulate",
+  "call_status",
+  "export",
+  "help"
+]);
+function actionIsEffectful(action) {
+  return !READ_ONLY_OPERATIONS.has(String(action).trim().toLowerCase());
+}
+
+// src/selfimpulse/engine/bridge.ts
+init_version();
+var MissionNotConfiguredError = class extends Error {
+};
+function mintMissionId() {
+  return `mission_${Math.random().toString(36).slice(2, 6)}`;
+}
+function selfimpulseCrews() {
+  return loadCrews().map((t) => ({ id: t.id, name: t.name }));
+}
+var bridgeDeps = null;
+function setBridgeDeps(deps) {
+  bridgeDeps = deps;
+}
+async function runSelfImpulseMission(objective, missionId, opts = {}) {
+  const crews = loadCrews();
+  const team = opts.team ?? crews[crews.length - 1];
+  if (!team) {
+    throw new MissionNotConfiguredError(
+      "No crew is configured, so there is no one to execute with \u2014 create a crew in the Loop door and I will run the real mission loop on it. This refusal is honest and the receipt records it."
+    );
+  }
+  const t0 = Date.now();
+  const trace = [];
+  const res = await runMissionLoopCycle({
+    team,
+    objective,
+    repoRoot: opts.repoRoot ?? ".",
+    baseBranch: "main",
+    budgetCapUsd: 5,
+    deps: opts.deps ?? bridgeDeps ?? loopHostDeps({}),
+    emit: (ev) => {
+      trace.push({
+        ts: Date.now(),
+        phase: ev.phase,
+        note: ev.note,
+        message: ev.message ? {
+          kind: ev.message.kind,
+          from: ev.message.from,
+          to: ev.message.to,
+          subject: ev.message.subject
+        } : void 0
+      });
+    }
+  });
+  const notes = trace.filter((t) => typeof t.note === "string" && t.note.length > 0).map((t) => t.note).slice(0, 20);
+  return {
+    missionId,
+    objective,
+    status: res.record.status,
+    cycleNo: res.record.cycleNo,
+    verifiedSeats: res.record.verifiedSeats,
+    seatCount: res.record.seatCount,
+    gateStatus: res.record.gate?.status ?? null,
+    receiptOk: res.record.receipt?.ok ?? false,
+    engine: `MJ execution core ${ENGINE_VERSION}`,
+    controlPlane: `SelfImpulse control plane ${ENGINE_VERSION}`,
+    teamId: team.id,
+    teamName: team.name,
+    notes,
+    trace,
+    runMs: Date.now() - t0
+  };
+}
+
 // src/selfimpulse/engine/signing.ts
 var STORAGE_KEY3 = "selfimpulse.issuerkey.v1";
 var KEYCHAIN_REF2 = "selfimpulse.issuerkey.v1";
@@ -6780,6 +7359,7 @@ function receiptFromJsonl(text) {
 
 // src/selfimpulse/engine/webSearch.ts
 init_guardrail();
+init_egressNet();
 var WEB_PROVIDERS2 = [
   {
     id: "wikipedia",
@@ -6907,6 +7487,25 @@ function dedupeHits2(hits) {
   }
   return out.sort((a, b) => b.score - a.score);
 }
+var USER_CHOSEN = /* @__PURE__ */ new Set(["searxng"]);
+async function guardedFetch(id, url2, init, doFetch) {
+  if (USER_CHOSEN.has(id)) {
+    return safeEgressFetch(url2, {
+      ...init,
+      fetchImpl: doFetch,
+      allowLoopback: true,
+      maxRedirects: 5
+    });
+  }
+  return doFetch(url2, { ...init, redirect: "manual" });
+}
+function notConfiguredNote(p, opts) {
+  if (p.id === "searxng" && opts.searxngRoot) {
+    const verdict = checkEgressUrl(`${opts.searxngRoot.replace(/\/$/, "")}/search`);
+    return verdict.ok ? "egress guard produced no url for this root" : `egress refused: ${verdict.reason} \u2014 nothing was sent`;
+  }
+  return "not configured";
+}
 async function searchWeb2(query, opts = {}) {
   const doFetch = opts.fetchImpl ?? (opts.useGlobalFetch === false ? void 0 : typeof fetch === "function" ? fetch : void 0);
   const timeoutMs = opts.timeoutMs ?? 6e3;
@@ -6924,13 +7523,22 @@ async function searchWeb2(query, opts = {}) {
     WEB_PROVIDERS2.map(async (p) => {
       const url2 = p.buildUrl(query, opts);
       if (url2 === null) {
-        outcomes.push({ id: p.id, ok: false, hits: 0, note: p.needsConfig ? "not configured" : "no url" });
+        outcomes.push({ id: p.id, ok: false, hits: 0, note: p.needsConfig ? notConfiguredNote(p, opts) : "no url" });
         return;
       }
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), timeoutMs);
       try {
-        const res = await doFetch(url2, { signal: ctl.signal, headers: p.id === "github" ? { Accept: "application/vnd.github+json" } : void 0 });
+        const res = await guardedFetch(
+          p.id,
+          url2,
+          { signal: ctl.signal, headers: p.id === "github" ? { Accept: "application/vnd.github+json" } : void 0 },
+          doFetch
+        );
+        if (res.status >= 300 && res.status <= 399) {
+          outcomes.push({ id: p.id, ok: false, hits: 0, note: `http ${res.status} redirect not followed (egress guard)` });
+          return;
+        }
         if (!res.ok) {
           outcomes.push({ id: p.id, ok: false, hits: 0, note: `http ${res.status}` });
           return;
@@ -6940,7 +7548,7 @@ async function searchWeb2(query, opts = {}) {
         hits.push(...norm2);
         outcomes.push({ id: p.id, ok: true, hits: norm2.length, note: "ok" });
       } catch (e) {
-        const msg = e instanceof Error && e.name === "AbortError" ? `timeout ${timeoutMs}ms` : "network/cors";
+        const msg = e instanceof Error && e.name === "AbortError" ? `timeout ${timeoutMs}ms` : e instanceof Error && /egress refused/.test(e.message) ? e.message.slice(0, 200) : "network/cors";
         outcomes.push({ id: p.id, ok: false, hits: 0, note: msg });
       } finally {
         clearTimeout(timer);
@@ -6948,71 +7556,6 @@ async function searchWeb2(query, opts = {}) {
     })
   );
   return { query, hits: dedupeHits2(hits), providers: outcomes, fetchedAt: (/* @__PURE__ */ new Date()).toISOString() };
-}
-
-// src/selfimpulse/engine/bridge.ts
-init_version();
-var MissionNotConfiguredError = class extends Error {
-};
-function mintMissionId() {
-  return `mission_${Math.random().toString(36).slice(2, 6)}`;
-}
-function selfimpulseCrews() {
-  return loadCrews().map((t) => ({ id: t.id, name: t.name }));
-}
-var bridgeDeps = null;
-function setBridgeDeps(deps) {
-  bridgeDeps = deps;
-}
-async function runSelfImpulseMission(objective, missionId, opts = {}) {
-  const crews = loadCrews();
-  const team = opts.team ?? crews[crews.length - 1];
-  if (!team) {
-    throw new MissionNotConfiguredError(
-      "No crew is configured, so there is no one to execute with \u2014 create a crew in the Loop door and I will run the real mission loop on it. This refusal is honest and the receipt records it."
-    );
-  }
-  const t0 = Date.now();
-  const trace = [];
-  const res = await runMissionLoopCycle({
-    team,
-    objective,
-    repoRoot: opts.repoRoot ?? ".",
-    baseBranch: "main",
-    budgetCapUsd: 5,
-    deps: opts.deps ?? bridgeDeps ?? loopHostDeps({}),
-    emit: (ev) => {
-      trace.push({
-        ts: Date.now(),
-        phase: ev.phase,
-        note: ev.note,
-        message: ev.message ? {
-          kind: ev.message.kind,
-          from: ev.message.from,
-          to: ev.message.to,
-          subject: ev.message.subject
-        } : void 0
-      });
-    }
-  });
-  const notes = trace.filter((t) => typeof t.note === "string" && t.note.length > 0).map((t) => t.note).slice(0, 20);
-  return {
-    missionId,
-    objective,
-    status: res.record.status,
-    cycleNo: res.record.cycleNo,
-    verifiedSeats: res.record.verifiedSeats,
-    seatCount: res.record.seatCount,
-    gateStatus: res.record.gate?.status ?? null,
-    receiptOk: res.record.receipt?.ok ?? false,
-    engine: `MJ execution core ${ENGINE_VERSION}`,
-    controlPlane: `SelfImpulse control plane ${ENGINE_VERSION}`,
-    teamId: team.id,
-    teamName: team.name,
-    notes,
-    trace,
-    runMs: Date.now() - t0
-  };
 }
 
 // src/selfimpulse/engine/brainSeam.ts
@@ -7300,13 +7843,30 @@ var riskyToolRule = (input2) => {
     reason: `"${input2.tool}" is a governed action \u2014 human approval required before execution.`
   };
 };
+var sovereignRule = (input2) => {
+  const env = sovereign.frontDoorEnvelope();
+  const verdict = authorize(env, input2.tool);
+  if (verdict.allowed) return null;
+  if (verdict.risk === "critical") {
+    return {
+      decision: "deny",
+      rule: "sovereign-critical-refuses",
+      reason: verdict.reason
+    };
+  }
+  return {
+    decision: "steer",
+    rule: "sovereign-envelope",
+    reason: `${verdict.reason} \u2014 the human decides.`
+  };
+};
 var budgetRule = (_input) => null;
 var workspaceRootRule = (_input) => null;
-var RULES = [riskyToolRule, workspaceRootRule, budgetRule];
-var DEFAULT_ALLOW = {
+var RULES = [riskyToolRule, sovereignRule, workspaceRootRule, budgetRule];
+var SOVEREIGN_ALLOW = {
   decision: "allow",
-  rule: "default-allow",
-  reason: "no governing rule matched; action allowed"
+  rule: "sovereign-safe-class",
+  reason: "within the front-door envelope \u2014 low-risk action on the owner's own authority"
 };
 function propose(input2) {
   for (const rule of RULES) {
@@ -7315,7 +7875,7 @@ function propose(input2) {
       return { ...r, audit: { kind: "policy", decision: r.decision, rule: r.rule, reason: r.reason, tool: input2.tool, ts: (/* @__PURE__ */ new Date()).toISOString() } };
     }
   }
-  return { ...DEFAULT_ALLOW, audit: { kind: "policy", decision: "allow", rule: DEFAULT_ALLOW.rule, reason: DEFAULT_ALLOW.reason, tool: input2.tool, ts: (/* @__PURE__ */ new Date()).toISOString() } };
+  return { ...SOVEREIGN_ALLOW, audit: { kind: "policy", decision: "allow", rule: SOVEREIGN_ALLOW.rule, reason: SOVEREIGN_ALLOW.reason, tool: input2.tool, ts: (/* @__PURE__ */ new Date()).toISOString() } };
 }
 
 // node_modules/zod/v4/classic/external.js
@@ -7532,7 +8092,7 @@ __export(external_exports, {
   refine: () => refine,
   regex: () => _regex,
   regexes: () => regexes_exports,
-  registry: () => registry2,
+  registry: () => registry3,
   safeDecode: () => safeDecode2,
   safeDecodeAsync: () => safeDecodeAsync2,
   safeEncode: () => safeEncode2,
@@ -7875,7 +8435,7 @@ __export(core_exports3, {
   process: () => processSchema,
   processSchema: () => processSchema,
   regexes: () => regexes_exports,
-  registry: () => registry2,
+  registry: () => registry3,
   safeDecode: () => safeDecode,
   safeDecodeAsync: () => safeDecodeAsync,
   safeEncode: () => safeEncode,
@@ -20161,10 +20721,10 @@ var $ZodRegistry = class {
     return this._map.has(schema);
   }
 };
-function registry2() {
+function registry3() {
   return new $ZodRegistry();
 }
-(_a2 = globalThis).__zod_globalRegistry ?? (_a2.__zod_globalRegistry = registry2());
+(_a2 = globalThis).__zod_globalRegistry ?? (_a2.__zod_globalRegistry = registry3());
 var globalRegistry = globalThis.__zod_globalRegistry;
 
 // node_modules/zod/v4/core/compile.js
@@ -24115,21 +24675,21 @@ var allProcessors = {
 };
 function toJSONSchema(input2, params) {
   if ("_idmap" in input2) {
-    const registry3 = input2;
+    const registry4 = input2;
     const ctx2 = initializeContext({ ...params, processors: allProcessors });
     const defs = {};
-    for (const entry of registry3._idmap.entries()) {
+    for (const entry of registry4._idmap.entries()) {
       const [_, schema] = entry;
       processSchema(schema, ctx2);
     }
     const schemas = {};
     const external = {
-      registry: registry3,
+      registry: registry4,
       uri: params?.uri,
       defs
     };
     ctx2.external = external;
-    for (const entry of registry3._idmap.entries()) {
+    for (const entry of registry4._idmap.entries()) {
       const [key, schema] = entry;
       extractDefs(ctx2, schema);
       assignProp(schemas, key, finalize(ctx2, schema));
@@ -25038,8 +25598,8 @@ function hex2(_params) {
   return _stringFormat(ZodCustomStringFormat, "hex", regexes_exports.hex, _params);
 }
 function hash(alg, params) {
-  const enc3 = params?.enc ?? "hex";
-  const format = `${alg}_${enc3}`;
+  const enc4 = params?.enc ?? "hex";
+  const format = `${alg}_${enc4}`;
   const regex = regexes_exports[format];
   if (!regex)
     throw new Error(`Unrecognized hash format: ${format}`);
@@ -27657,9 +28217,9 @@ function checkPrediction(action, _sim, ok, output2) {
 var approvalWaiters = /* @__PURE__ */ new Map();
 var APPROVAL_TTL_MS = 10 * 60 * 1e3;
 var badApprovalProbeGate = new RateGate(10, 6e4);
-function requestSelfImpulseApproval(action, detail) {
+function requestSelfImpulseApproval(action, detail, runRef) {
   const id = secureId("a");
-  session = { ...session, approvals: [...session.approvals, { id, action, detail, status: "pending", ts: (/* @__PURE__ */ new Date()).toISOString() }] };
+  session = { ...session, approvals: [...session.approvals, { id, action, detail, status: "pending", ts: (/* @__PURE__ */ new Date()).toISOString(), runRef }] };
   commit();
   void Promise.resolve().then(() => (init_client2(), client_exports2)).then(({ isNativeHost: isNativeHost2, ipc: ipc3 }) => {
     if (isNativeHost2()) void ipc3.notifyApproval("SelfImpulse \u2014 human gate", `${action}: ${detail.slice(0, 140).replace(/\n/g, " ")}`);
@@ -27677,11 +28237,37 @@ function resolveSelfImpulseApproval(id, ok) {
   if (approval.status !== "pending") return;
   const expired = Date.now() - new Date(approval.ts).getTime() > APPROVAL_TTL_MS;
   const settle2 = approvalWaiters.get(id);
-  session = { ...session, approvals: session.approvals.map((a) => a.id === id ? { ...a, status: expired ? "expired" : ok ? "approved" : "denied" } : a) };
+  let grant = { ok: false, capability: null, reason: expired ? "expired" : "denied" };
+  let capabilityDigest2;
+  if (ok && !expired) {
+    try {
+      const minted = mintCapability({
+        approvalId: id,
+        subject: "si.captain",
+        audience: "si.runtime",
+        action: approval.action,
+        resource: approval.detail.slice(0, 200),
+        budget: 0
+      });
+      const v = verifyCapability(minted.capability, "si.runtime");
+      if (v.ok) {
+        capabilityDigest2 = minted.digest;
+        grant = { ok: true, capability: minted.capability };
+      } else {
+        grant = { ok: false, capability: null, reason: "capability-unavailable" };
+      }
+    } catch {
+      grant = { ok: false, capability: null, reason: "capability-unavailable" };
+    }
+  }
+  session = { ...session, approvals: session.approvals.map((a) => a.id === id ? { ...a, status: expired ? "expired" : grant.ok ? "approved" : "denied", capability: capabilityDigest2 } : a) };
   commit();
+  if (approval.runRef) {
+    checkpoint(approval.runRef.runId, "human-gate", approval.runRef.step + 1, expired ? "decision expired" : grant.ok ? "decision granted" : "decision denied", { approvalId: id, granted: grant.ok });
+  }
   if (settle2) {
     approvalWaiters.delete(id);
-    settle2(!expired && ok);
+    settle2(grant);
   }
 }
 var brain;
@@ -28472,12 +29058,12 @@ WARNINGS: ${simNow.warnings.join("; ")}` : ""}`;
           ...m,
           trace: m.trace.map((s, idx) => idx === m.trace.length - 1 ? { ...s, awaitingApprovalId: lastApproval?.id } : s)
         }));
-        const granted = await approvalPromise;
+        const gate = await approvalPromise;
         if (token !== runToken) return;
-        approved = granted;
-        if (!granted) {
+        approved = gate.ok;
+        if (!gate.ok) {
           ok = false;
-          output2 = "Denied by the human gate \u2014 nothing was executed.";
+          output2 = gate.reason === "expired" ? "The approval expired before it could be backed by a capability \u2014 nothing was executed." : gate.reason === "capability-unavailable" ? "The approval could not be backed by a signed capability \u2014 refused fail-closed, nothing was executed." : "Denied by the human gate \u2014 nothing was executed.";
           patchMsg((m) => ({
             ...m,
             trace: m.trace.map((s) => {
@@ -28486,6 +29072,21 @@ WARNINGS: ${simNow.warnings.join("; ")}` : ""}`;
               return s;
             })
           }));
+        } else {
+          const v2 = verifyCapability(gate.capability, "si.runtime");
+          const redemption = v2.ok ? redeemCapability(gate.capability, "si.runtime") : v2;
+          if (!redemption.ok) {
+            ok = false;
+            output2 = `The signed capability behind the approval did not redeem (${redemption.reason}) \u2014 nothing was executed.`;
+            patchMsg((m) => ({
+              ...m,
+              trace: m.trace.map((s) => {
+                if (s.kind === "dispatch") return { ...s, denied: true, awaitingApprovalId: void 0 };
+                if (s.kind === "tool") return { ...s, denied: true, awaitingApprovalId: void 0 };
+                return s;
+              })
+            }));
+          }
         }
       }
       if (ok) {
@@ -28667,6 +29268,80 @@ function selfimpulseReceiptJsonl(id) {
 
 // probe/merge.test.ts
 init_version();
+
+// src/security/ownerRoot.ts
+import { createHash as createHash4, createPrivateKey, createPublicKey, hkdfSync, pbkdf2Sync, sign as edSign2, verify as edVerify2 } from "node:crypto";
+
+// src/engine/vault.ts
+var VAULT_META_KEY = "vh.vault.meta.v1";
+var enc3 = new TextEncoder();
+var dec = new TextDecoder();
+function storage() {
+  try {
+    return globalThis.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+function readMeta() {
+  const s = storage();
+  if (!s) return null;
+  try {
+    const raw = JSON.parse(s.getItem(VAULT_META_KEY) ?? "null");
+    return raw && raw.v === "si-vault-meta/1" ? raw : null;
+  } catch {
+    return null;
+  }
+}
+function vaultKdfParams() {
+  const meta3 = readMeta();
+  return meta3 ? { saltB64: meta3.saltB64, iterations: meta3.iterations } : null;
+}
+
+// src/security/ownerRoot.ts
+var OWNER_ROOT_SALT = "si.owner-root.v1";
+var OWNER_ROOT_INFO = "ed25519 root seed";
+function ed25519Pkcs8Prefix() {
+  return Buffer.from("302e020100300506032b657004220420", "hex");
+}
+function deriveOwnerSigner(passphrase) {
+  let material;
+  const kdf = vaultKdfParams();
+  if (kdf) {
+    material = pbkdf2Sync(passphrase, Buffer.from(kdf.saltB64, "base64"), kdf.iterations, 32, "sha256");
+  } else {
+    material = Buffer.from(passphrase, "utf8");
+  }
+  const seed = Buffer.from(hkdfSync("sha256", material, OWNER_ROOT_SALT, OWNER_ROOT_INFO, 32));
+  const privateKey = createPrivateKey({ key: Buffer.concat([ed25519Pkcs8Prefix(), seed]), format: "der", type: "pkcs8" });
+  const publicKey = createPublicKey(privateKey);
+  const pubDer = publicKey.export({ type: "spki", format: "der" });
+  const id = createHash4("sha256").update(pubDer).digest("hex").slice(0, 16);
+  return {
+    id,
+    sign: (data) => edSign2(null, Buffer.from(data, "utf8"), privateKey).toString("base64"),
+    verify: (data, sig) => {
+      try {
+        return edVerify2(null, Buffer.from(data, "utf8"), publicKey, Buffer.from(sig, "base64"));
+      } catch {
+        return false;
+      }
+    }
+  };
+}
+function bindOwnerRoot(passphrase) {
+  try {
+    const previous = sovereign.signerId;
+    const signer = deriveOwnerSigner(passphrase);
+    sovereign.bindOwnerSigner(signer);
+    if (previous !== signer.id) invalidateCapabilitiesForRoot(previous);
+    return { ok: true, signerId: signer.id };
+  } catch (e) {
+    return { ok: false, error: `the owner root could not be bound: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+// probe/merge.test.ts
 var ROOT = ".".length > 0 ? "." : process.cwd();
 var read = (rel) => fs2.readFileSync(path2.join(ROOT, rel), "utf8");
 var probeLS = /* @__PURE__ */ new Map();
@@ -28682,6 +29357,7 @@ if (typeof globalThis.localStorage === "undefined") {
     }
   };
 }
+bindOwnerRoot("probe-owner-passphrase");
 var sleep2 = (ms) => new Promise((r) => setTimeout(r, ms));
 function probeCrew() {
   return {

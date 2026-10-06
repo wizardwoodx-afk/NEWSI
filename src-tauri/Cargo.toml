@@ -1,6 +1,6 @@
 [package]
 name = "selfimpulse"
-version = "1.0.0"
+version = "1.9.1"
 description = "SelfImpulse — your agents, with receipts (MJ engine)"
 authors = ["the SelfImpulse team"]
 edition = "2021"

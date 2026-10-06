@@ -55,6 +55,19 @@ import {
   selfimpulseMissions,
   verifySelfImpulseReceipt,
 } from "./selfimpulse";
+import { redeemCapability, verifyCapability } from "../../security/capability";
+/* Headless boot: the operator who launched this engine vouches through the
+   environment (SI_OWNER_SECRET). Without it the engine stays the labelled
+   bootstrap — reads answer, but the gate refuses every effectful approval. */
+import { bindOwnerRootFromEnv } from "../../security/ownerRoot";
+bindOwnerRootFromEnv();
+/* Trusted startup ends here: the read-only registry seals, so code loaded
+   later — a worker, a plugin, an integration — can never redefine what
+   "read-only" means. */
+import { sealReadOnlyRegistry } from "../../security/capability";
+sealReadOnlyRegistry();
+import { sealPolicyRegistry } from "./policyGateway";
+sealPolicyRegistry();
 import {
   proposeMetaChange,
   revertMetaChange,
@@ -308,8 +321,15 @@ async function governedTool(name: string, args: Json): Promise<GovernedOutcome> 
        pauses at the same human gate as every risky action (approve_action /
        deny_action), then issues only for the explicit scope the owner named. */
     const gate = async (ask: { action: string; riskTier: string }) => {
-      const approved = await requestSelfImpulseApproval(ask.action, `${ask.action} — ${ask.riskTier} authority-plane call; approve only if you are the owner granting this scope`);
-      return { approved, reason: approved ? "owner approved at the gate" : "owner declined at the gate" };
+      const g = await requestSelfImpulseApproval(ask.action, `${ask.action} — ${ask.riskTier} authority-plane call; approve only if you are the owner granting this scope`);
+      if (!g.ok) {
+        const why = g.reason === "expired" ? "the approval expired" : g.reason === "capability-unavailable" ? "the gate could not back the approval with a signed capability" : "owner declined at the gate";
+        return { approved: false, reason: why };
+      }
+      /* The capability is redeemed for THIS call — one approval, one issue. */
+      const v = verifyCapability(g.capability!, "si.runtime");
+      const r = v.ok ? redeemCapability(g.capability!, "si.runtime") : v;
+      return { approved: r.ok, reason: r.ok ? "owner approved at the gate; the capability was redeemed for this call" : `the approval's capability did not redeem (${r.reason})` };
     };
     /* Review fix — every stdio Reach call rides a UNIQUE mission id, so
        concurrent external operations never share a browser session. */

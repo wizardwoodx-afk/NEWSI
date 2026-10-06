@@ -561,6 +561,28 @@ export interface GovernedSession {
   trips: GuardTrip[];
   /** The last human decision, for the post-execution audit view. */
   hitl: HitlRecord[];
+  /** The LIVE authority source — read fresh before every governed step.
+   *
+   * v1.1.0's review caught the honest defect: with no source, governStep
+   * compared `session.issued` to itself, so the drift detector could never
+   * fire in a running agent — it proved the detector works, not that the
+   * runtime detects drift. The sovereign authority (security/sovereign.ts)
+   * supplies this reader: it re-verifies the seat's signed mandate against
+   * its profile on every call and returns null when authority is no longer
+   * valid (tampered, expired, or the config changed under the mandate).
+   * A session without a source behaves exactly as before: issued is
+   * authoritative for the whole run. */
+  source?: () => AuthorityEnvelope | null;
+}
+
+/** A REVOKED envelope: what a seat runs under when its live authority is
+ *  gone. Fail-closed by construction — nothing is writable, runnable or
+ *  reachable, and the ceiling is the floor. */
+function revokedEnvelope(issued: AuthorityEnvelope): AuthorityEnvelope {
+  return {
+    allowWrite: false, allowShell: false, allowNetwork: false,
+    root: issued.root, budgetCeiling: 0, maxRisk: "low",
+  };
 }
 
 /**
@@ -573,14 +595,32 @@ export function governStep(
   seq: { n: number },
   args: { action: string; repeatCount: number; stdout?: string; failed?: boolean; failureStreak?: number },
 ): { verdict: AuthorizationVerdict; proceed: boolean; tripped: GuardTrip[] } {
-  const verdict = authorize(session.issued, args.action);
-  const drift = detectDrift(session.issued, session.issued);
-  const before = guardBefore({ action: args.action, env: session.issued, verdict, repeatCount: args.repeatCount });
+  /* THE LIVE READ. Authority is refreshed from the session's source before
+   * the step is judged — the mandate is re-verified and its profile digest
+   * re-measured against the seat's actual configuration. A null read means
+   * the sovereign no longer vouches for this seat, and the step runs under
+   * the revoked envelope: fail-closed, with the reason named in the journal. */
+  const refreshed = session.source ? session.source() : session.issued;
+  const live = refreshed ?? revokedEnvelope(session.issued);
+  /* An unavailable source is its OWN drift cause — it is not an attenuation.
+   * Name the root cause: the mandate is gone, so the envelope was revoked,
+   * and the attenuation the revoked envelope produces is a symptom. */
+  const drift = refreshed
+    ? detectDrift(session.issued, live)
+    : "the live authority is unavailable (mandate invalid, expired, or its profile changed) — authority revoked for this step";
+  const verdict = authorize(live, args.action);
+  const before = guardBefore({ action: args.action, env: live, verdict, repeatCount: args.repeatCount });
 
   if (drift) {
     session.journal.append({
       stage: "drift", decision: `authority drift: ${drift}`, outcome: "refused",
-      evidence: { action: args.action },
+      evidence: { action: args.action, liveRefreshed: refreshed !== null },
+    });
+  }
+  if (refreshed === null && session.source) {
+    session.journal.append({
+      stage: "authorize", decision: "live authority read returned null — proceeding under the revoked envelope",
+      outcome: "refused", evidence: { action: args.action, liveRefreshed: false },
     });
   }
 
@@ -598,9 +638,16 @@ export function governStep(
     evidence: { action: args.action, risk: verdict.risk, escalated: verdict.escalated === true },
   });
 
-  if (!verdict.allowed) {
-    addNode(session.graph, seq, "outcome", { action: args.action, result: "refused", reason: verdict.reason }, [authNode.id]);
-    return { verdict, proceed: false, tripped: before };
+  if (!verdict.allowed || drift) {
+    addNode(session.graph, seq, "outcome", { action: args.action, result: "refused", reason: drift ?? verdict.reason }, [authNode.id]);
+    /* A DRIFTED AUTHORITY IS A STOP, not a note. AGENTSAFE's contract is
+     * escalate-instead-of-proceed: a step whose envelope moved mid-run does
+     * not continue under the new one. The synthetic trip names the rule so
+     * the caller's stop message says WHY without re-deriving it. */
+    const driftTrip = drift
+      ? [{ when: "before" as const, rule: "authority-drift", detail: drift }]
+      : [];
+    return { verdict, proceed: false, tripped: [...before, ...driftTrip] };
   }
 
   const after = guardAfter({
@@ -620,7 +667,11 @@ export function governStep(
   return { verdict, proceed: true, tripped: [] };
 }
 
-export function startSession(env: AuthorityEnvelope, prompt: string): GovernedSession {
+export function startSession(
+  env: AuthorityEnvelope,
+  prompt: string,
+  opts?: { source?: () => AuthorityEnvelope | null },
+): GovernedSession {
   const { graph, seq } = emptyGraph();
   addNode(graph, seq, "prompt", { prompt }, [], { bytes: prompt.length });
   const journal = new DecisionJournal();
@@ -631,7 +682,7 @@ export function startSession(env: AuthorityEnvelope, prompt: string): GovernedSe
     nodeId: graph.rootId,
     evidence: { maxRisk: env.maxRisk, allowWrite: env.allowWrite, allowShell: env.allowShell, root: env.root },
   });
-  return { graph, journal, issued: env, trips: [], hitl: [] };
+  return { graph, journal, issued: env, trips: [], hitl: [], source: opts?.source };
 }
 
 /** Compare two digests without leaking their contents through timing. */

@@ -8,7 +8,9 @@ import { askSelfImpulse19 } from "../engine/generalist";
 import type { GeneralistDeps } from "../engine/types";
 import type { GeneralistResponse, GateAsk, GateDecision, ProviderConfig } from "../engine/types";
 import { recordHandoff, listHandoffs, type HandoffRecord } from "../engine/handoffs";
-import { vaultStatus, vaultSeal, vaultDecrypt, vaultRemove, lockVault, setVaultPassphrase, purgePlain, type VaultStatusInfo } from "../engine/vault";
+import { vaultStatus, vaultSeal, vaultDecrypt, vaultRemove, lockVault, setVaultPassphrase, purgePlain, upgradeVaultCost, type VaultStatusInfo } from "../engine/vault";
+import { bindOwnerRoot, lockOwnerRoot } from "../security/ownerRoot";
+import { dueTriggers, fireTrigger } from "../engine/intakeTriggers";
 import { ingestSession, listSessions, getSession, graphView, graphStats, recall, rehydrate, memoryEnabled, setMemoryEnabled, clearGraph, deleteSession, graphSecurityStatus, type MgSession, type MgMessage } from "../engine/memoryGraph";
 import { wireEventSeq, optimDelta, type OptimDelta } from "../engine/tokenOptim";
 import { loadInitiative, setLevel, reportFailure, scheduleFollowUp, evaluateWake, applyWake, executeWakeActs, HEARTBEAT_DEFAULT_MS, type InitiativeState, type AutonomyLevel } from "../engine/initiative";
@@ -73,7 +75,25 @@ const PROVIDER_STORAGE_KEY = "vh.provider.remembered.v1";
 const THEME_KEY = "vh.theme.v2";
 
 export type Screen = "steward" | "work" | "specialists" | "federation" | "receipts" | "docs" | "memory" | "settings" | "chat";
-export type Theme = "dark" | "light";
+/** Eight finishes in two families: six dark, two light. The attribute name is
+ *  the persisted value, and it must stay in lockstep with the `[data-theme=…]`
+ *  blocks in vh.css and si.css plus THEMES below. */
+export type Theme = "holst" | "obsidian" | "azure" | "platinum" | "titanium" | "akaroa" | "caesar" | "stratos";
+
+/** The one list every surface reads. Settings renders it, the store validates
+ *  against it, the boot block mirrors it, and the contrast tool walks it — so a
+ *  finish can never exist in the picker but not in the stylesheet. */
+export const THEMES: ReadonlyArray<{ id: Theme; name: string; kind: "dark" | "light" }> = [
+  { id: "holst", name: "Holst", kind: "dark" },
+  { id: "obsidian", name: "Obsidian", kind: "dark" },
+  { id: "azure", name: "Azure", kind: "dark" },
+  { id: "platinum", name: "Platinum", kind: "light" },
+  { id: "titanium", name: "Titanium", kind: "dark" },
+  { id: "akaroa", name: "Akaroa", kind: "light" },
+  { id: "caesar", name: "Caesar", kind: "dark" },
+  { id: "stratos", name: "Stratos", kind: "dark" },
+];
+export const DEFAULT_THEME: Theme = "holst";
 
 export interface Msg { id: number; role: "user" | "vh"; text: string; at: string; resp?: GeneralistResponse; tok?: OptimDelta; rehydratedFrom?: string }
 export interface PendingGate { ask: GateAsk; resolve: (d: GateDecision) => void; askedAt: string }
@@ -226,10 +246,30 @@ let heartbeat: ReturnType<typeof setInterval> | null = null;
 function armHeartbeat(get: GetFn): void {
   if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
   if (get().initiative.level === 0 || typeof setInterval !== "function") return;
-  heartbeat = setInterval(() => { void get().wakeNow(); }, HEARTBEAT_DEFAULT_MS);
+  heartbeat = setInterval(() => {
+    void get().wakeNow();
+    /* The proactive crew: due schedule triggers fire through the SAME
+       governed call as a human request — a trigger is a doorbell, not a
+       key; risky targets simply park at the human gate. */
+    try {
+      for (const t of dueTriggers()) void fireTrigger(t.id).catch(() => undefined);
+    } catch { /* a trigger problem never breaks the heartbeat */ }
+  }, HEARTBEAT_DEFAULT_MS);
 }
 const nowIso = () => new Date().toISOString();
-const readTheme = (): Theme => { try { const t = localStorage.getItem(THEME_KEY); return t === "light" ? "light" : "dark"; } catch { return "dark"; } };
+/** Validate a persisted theme id against THEMES. A value from the retired
+ *  four-finish era ("dark", "light", "petrol", "fog") is NOT migrated to a
+ *  named successor — those names described palettes that no longer exist, and
+ *  guessing which of eight a reader meant would silently repaint their UI.
+ *  An unknown or retired value falls to the default, which is correct because
+ *  an unset attribute is also unstyled. */
+const readTheme = (): Theme => {
+  try {
+    const t = localStorage.getItem(THEME_KEY);
+    const hit = THEMES.find((x) => x.id === t);
+    return hit ? hit.id : DEFAULT_THEME;
+  } catch { return DEFAULT_THEME; }
+};
 /** 19.8 — the owner handle now comes from the identity seam, so the name in the
  *  corner and the subject on every receipt cannot drift apart. The old read was a
  *  separate `vh.owner.handle` key that the identity layer knew nothing about. */
@@ -356,20 +396,53 @@ export const useVh = create<UiState>((set, get) => ({
   createVault: async (pass) => {
     const r = await setVaultPassphrase(pass);
     if (!r.ok) return { ok: false, note: r.error };
+    /* The owner's presence proof becomes the authority root: the passphrase
+       derives the owner key and binds it as THE sovereign root — in the
+       same task as the unlock, synchronously. The only possible window
+       (vault open, root still bootstrap) fails toward LESS power.
+
+       The bind refuses rather than throws, and a refusal leaves the root at
+       bootstrap — which does fail toward less power, as above. It is still
+       worth saying out loud: "vault unlocked" over a bootstrap root reads as
+       success and is not one. */
+    const bound = bindOwnerRoot(pass);
     set({ vault: vaultStatus() });
     const p = get().provider; if (p) await vaultSeal(PROVIDER_STORAGE_KEY, JSON.stringify(p));
-    return { ok: true, note: r.created ? "vault created — keys and memory are now sealed at rest" : "vault unlocked" };
+    return bound.ok
+      ? { ok: true, note: r.created ? "vault created — keys and memory are now sealed at rest" : "vault unlocked" }
+      : { ok: false, note: `vault ${r.created ? "created" : "unlocked"}, but the owner root did NOT bind (${bound.error}) — authority stays read-only until you unlock again` };
   },
   unlockVault: async (pass) => {
     const r = await setVaultPassphrase(pass);
     if (!r.ok) return { ok: false, note: r.error };
+    /* Same owner act on unlock, same task: the passphrase re-derives the
+       SAME owner key and re-binds it — the root is the owner's, every
+       session. Afterwards, in the background, the vault's cost is measured
+       against this machine and raised if the machine has outgrown it
+       (performance hardening — never authority, never blocking).
+
+       The bind's answer is reported, as in createVault: a refusal leaves the
+       root at bootstrap, which is less power rather than more, but "vault
+       unlocked" would still be a claim the user cannot act on. */
+    const bound = bindOwnerRoot(pass);
     const opened = await vaultDecrypt(PROVIDER_STORAGE_KEY);
     if (opened.found && !opened.locked) { try { set({ provider: JSON.parse(opened.text) as ProviderConfig }); } catch { /* leave */ } }
     set({ vault: vaultStatus(), sessions: listSessions() });
     armHeartbeat(get);
-    return { ok: true, note: "vault unlocked" };
+    void upgradeVaultCost(pass).catch(() => undefined);
+    return bound.ok
+      ? { ok: true, note: "vault unlocked" }
+      : { ok: false, note: `vault unlocked, but the owner root did NOT bind (${bound.error}) — authority stays read-only until you unlock again` };
+  },  lock: () => {
+    /* Lock LOCKS — ONE atomic transition, fail-safe ordered: the owner's
+       authority leaves memory FIRST (root unbound, its capabilities
+       invalidated), and only then does the vault seal. Nothing can ever
+       observe "locked" with the owner root still bound, and nothing can
+       run between the halves of one synchronous task. */
+    lockOwnerRoot();
+    lockVault();
+    set({ vault: vaultStatus() });
   },
-  lock: () => { lockVault(); set({ vault: vaultStatus() }); },
 
   setMemory: (on) => { setMemoryEnabled(on); set({ memOn: on }); },
 

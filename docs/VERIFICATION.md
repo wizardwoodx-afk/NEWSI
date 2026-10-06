@@ -39,8 +39,11 @@ Requires Node 22.12 or newer. The gate is green when the summary line reads
   human gate, handoff recorder, RSI intake and heartbeat.
 - **Guardrails** — `guardrailAlign`, `differentiatorAlign`, `securityReview`,
   `productionStack`, `twoNodeAlign` pin each line of the manifest to code.
-- **Identity** — `versionDrift`, `docIdentity`, `vhClean` pin that manifests
-  agree and that no retired surface survives.
+- **Identity** — `versionDrift`, `docIdentity` and `cleanNaming` pin that
+  manifests agree and that no retired surface survives. `cleanNaming` is the
+  suite that scans the shipped tree for retired predecessor spellings and
+  outside-product names, so it is the one that fails when a retired module
+  reappears.
 - **Authority and decisions** — `a2aHostLifecycle` starts the real bundled A2A
   host as a real child and pins that it is **still serving 22 seconds after it
   says it is ready** — the exact window the old 20-second timeout killed it in —

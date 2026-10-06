@@ -28,6 +28,12 @@ import type { CliAgentTeam, TeamSeat, TeamRole } from "../../mission/agentTeam";
 import { ENGINE_VERSION } from "../../version";
 import { scoreAssurance, type AssuranceFactor, type AssuranceInput, type AssuranceScore } from "../../mission/assuranceScore";
 
+/* The durable pause: the human gate is a checkpoint on the run chain.
+   SelfImpulse reaches the mission layer ONLY through this file — the
+   architecture scan pins that door — so the seam re-exports the one
+   call the gate needs. */
+export { checkpoint as durableCheckpoint } from "../../mission/runCheckpoints";
+
 /** One event projected from the execution core's stream into the unified chain. */
 export interface MissionTraceEvent {
   ts: number;

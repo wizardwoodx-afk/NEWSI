@@ -282,6 +282,12 @@ var TEAM_BY_ID = new Map(PREBUILT_TEAMS.map((t) => [t.id, t]));
 
 // src/mission/caps.ts
 var DEFAULT_CAPS = { timeoutMs: 10 * 60 * 1e3, maxTurns: 40, maxCostUsd: 5 };
+var INBOUND_DELEGATION_CAPS = {
+  maxCostUsd: 2,
+  maxTurns: 40,
+  maxInvocations: 4,
+  maxWallClockMs: 30 * 6e4
+};
 
 // src/mission/interAgentChannel.ts
 var InterAgentMessageBus = class {
@@ -561,6 +567,25 @@ var enc3 = new TextEncoder();
 
 // src/mission/selfimpulseTeams.ts
 var PACKET_TTL_MS = 10 * 60 * 1e3;
+var REPLAY_REGISTRY_CAP = 4096;
+var ReplayRegistry = class {
+  constructor(cap) {
+    this.cap = cap;
+  }
+  settled = /* @__PURE__ */ new Map();
+  /** Claim an id for exactly one decision. Null when claimed; a reason when not. */
+  claim(id, now = Date.now()) {
+    for (const [k, at] of [...this.settled]) if (now - at > PACKET_TTL_MS) this.settled.delete(k);
+    if (this.settled.has(id)) return `already decided (${this.settled.size} settled within the packet TTL) \u2014 replay refused`;
+    if (this.settled.size >= this.cap) {
+      return `the replay registry is full (${this.cap} unsettled decisions inside the packet TTL) \u2014 refusing rather than forgetting a live one, because forgetting one is what lets a captured packet replay`;
+    }
+    this.settled.set(id, now);
+    return null;
+  }
+};
+var decidedDelegations = new ReplayRegistry(REPLAY_REGISTRY_CAP);
+var decidedInbound = new ReplayRegistry(REPLAY_REGISTRY_CAP);
 
 // src/mission/a2aServer.ts
 init_guardrail();

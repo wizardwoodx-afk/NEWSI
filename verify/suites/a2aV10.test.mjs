@@ -4,9 +4,9 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
+var __export = (target, all2) => {
+  for (var name in all2)
+    __defProp(target, name, { get: all2[name], enumerable: true });
 };
 
 // src/security/ipClassify.ts
@@ -669,8 +669,8 @@ var init_localDb = __esm({
         save(db);
       },
       skillsList(nodeKey) {
-        const all = load().skills.filter((s) => s.nodeKey === nodeKey);
-        return { skills: all.filter((s) => s.active), all };
+        const all2 = load().skills.filter((s) => s.nodeKey === nodeKey);
+        return { skills: all2.filter((s) => s.active), all: all2 };
       },
       skillUpsert(args) {
         const db = load();
@@ -1859,8 +1859,19 @@ init_guardrail();
 init_guardrail();
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
+
+// src/security/actionGraph.ts
+function stableStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const entries = Object.entries(value).filter(([, v]) => v !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(",")}}`;
+}
+
+// src/mission/a2aServer.ts
 var MAX_BODY_BYTES = 1024 * 1024;
 var REPLAY_WINDOW_MS = 3e4;
+var REPLAY_SEEN_CAP = 4096;
 var AUDIT_CAP = 500;
 var TASK_CAP = 200;
 var STOP_HEADER = "x-si-stop-nonce";
@@ -1907,11 +1918,24 @@ function createA2AServer(opts) {
       pushConfigs.delete(first);
     }
   };
-  const fingerprintOf = (req) => createHash("sha256").update(`${req.method}|${JSON.stringify(req.params ?? {})}`).digest("hex");
+  const fingerprintOf = (req) => {
+    const params = req.params;
+    const message = params?.message;
+    const canonical = stableStringify({
+      method: req.method,
+      // Only for message methods; a non-message method has no messageId to drop.
+      ...message && typeof message === "object" ? { params: { ...params, message: { ...message, messageId: "<per-attempt>" } } } : { params }
+    });
+    return createHash("sha256").update(`${req.method}|${canonical}`).digest("hex");
+  };
   const replayed = (fp) => {
     const now = Date.now();
     for (const [k, ts] of [...seen]) if (now - ts > REPLAY_WINDOW_MS) seen.delete(k);
     if (seen.has(fp)) return true;
+    if (seen.size >= REPLAY_SEEN_CAP) {
+      const oldest = seen.keys().next().value;
+      if (oldest !== void 0) seen.delete(oldest);
+    }
     seen.set(fp, now);
     return false;
   };
@@ -4347,6 +4371,12 @@ function gitApi(runner) {
 
 // src/mission/caps.ts
 var DEFAULT_CAPS = { timeoutMs: 10 * 60 * 1e3, maxTurns: 40, maxCostUsd: 5 };
+var INBOUND_DELEGATION_CAPS = {
+  maxCostUsd: 2,
+  maxTurns: 40,
+  maxInvocations: 4,
+  maxWallClockMs: 30 * 6e4
+};
 var CapLedger = class {
   caps;
   state;
@@ -4357,8 +4387,39 @@ var CapLedger = class {
   beginInvocation() {
     this.state.invocationsUsed += 1;
   }
-  /** Can another invocation start at all? Checked BEFORE dispatch — refusing is control, charging after is bookkeeping. */
+  /**
+   * Can another invocation start at all? Checked BEFORE dispatch — refusing is control, charging after is bookkeeping.
+   *
+   * TWO FAIL-CLOSED RULES, both added because an unpopulated `MissionCaps` used
+   * to mean "no ceiling at all":
+   *
+   *  1. A DECLARED-BUT-UNREADABLE CAP IS A REFUSAL, NOT AN ABSENT CAP. Every
+   *     guard below reads `?? 0`, and `NaN > 0` is false, so `{ maxTurns: NaN }`
+   *     and `{ maxCostUsd: -1 }` each silently disable themselves. A ceiling
+   *     nobody can read is not a ceiling, so any declared value that is not a
+   *     finite non-negative number refuses the dispatch and names the field.
+   *
+   *  2. A LEDGER WITH NO ARMED GUARD ADMITS NOTHING. `new CapLedger({})` scored
+   *     zero on every guard, so it returned `null` — admit, forever — which meant
+   *     the federation path's `new CapLedger({})` was an unbounded budget for
+   *     whoever reached the port. There is no honest reading of "no ceiling was
+   *     declared" as "run without limit", so it refuses and says so.
+   *
+   * An explicit `0` is still this build's way of saying "this one dimension is
+   * unlimited" (`mayRunTurn` documents the same convention) and stays honoured.
+   * What is refused is the ABSENCE of every armed guard, not a chosen zero.
+   *
+   * `missionLoop` constructs a ledger with `maxTurns: 120` and a numeric
+   * `maxCostUsd`, so rule 2 never fires on the mission path; rule 1 only fires
+   * on a malformed value, which is the direction it is meant to fail.
+   */
   admissionError(now = Date.now()) {
+    for (const [field, value] of Object.entries(this.caps)) {
+      if (value === void 0 || value === null) continue;
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+        return `the ${field} ceiling is declared as ${JSON.stringify(value)}, which is not a usable number \u2014 refusing rather than treating a broken ceiling as no ceiling`;
+      }
+    }
     const maxCost = this.caps.maxCostUsd ?? 0;
     if (maxCost > 0 && this.state.spentUsd >= maxCost) {
       return `the mission has already spent $${this.state.spentUsd.toFixed(4)} of its $${maxCost.toFixed(4)} ceiling`;
@@ -4374,6 +4435,9 @@ var CapLedger = class {
     const maxWall = this.caps.maxWallClockMs ?? this.caps.timeoutMs ?? 0;
     if (maxWall > 0 && now - this.state.startedAt >= maxWall) {
       return `the mission's ${Math.round(maxWall / 1e3)}s wall clock has elapsed`;
+    }
+    if (maxCost <= 0 && maxTurns <= 0 && maxInvocations <= 0 && maxWall <= 0) {
+      return `no ceiling is set \u2014 cost, turns, invocations and the wall clock are all absent or zero, so this ledger would admit without limit; dispatch is refused until a real ceiling is declared`;
     }
     return null;
   }
@@ -5084,6 +5148,42 @@ function packetAllowsExecution(p) {
   return { ok: true, reason: `packet ${p.id} permits execution (${p.permission}${p.reversible ? ", reversible" : ", irreversible+allowed"})` };
 }
 
+// src/engine/finops.ts
+var MAX_ENTRIES = 2e3;
+var all = [];
+function recordSeatRun(e) {
+  all.push(e);
+  if (all.length > MAX_ENTRIES) all = all.slice(-MAX_ENTRIES);
+}
+
+// src/mission/runCheckpoints.ts
+import { createHash as createHash2 } from "node:crypto";
+var chainOf = /* @__PURE__ */ new Map();
+var states = /* @__PURE__ */ new Map();
+var digestOf = (s) => createHash2("sha256").update(stableStringify(s ?? null)).digest("hex");
+function checkpoint(runId, missionId, step, label, state) {
+  const chain = chainOf.get(runId) ?? [];
+  const prev = chain[chain.length - 1];
+  const at = Date.now();
+  const stateDigest = digestOf(state);
+  const prevDigest = prev ? prev.entryDigest : "";
+  const entryDigest = createHash2("sha256").update(`${missionId}|${step}|${label}|${stateDigest}|${prevDigest}|${at}`).digest("hex");
+  const cp = {
+    runId,
+    missionId,
+    step,
+    label,
+    stateDigest,
+    prevDigest,
+    entryDigest,
+    at
+  };
+  chain.push(cp);
+  chainOf.set(runId, chain);
+  states.set(cp.stateDigest, stableStringify(state ?? null));
+  return cp;
+}
+
 // src/mission/consensusEngine.ts
 var AgentReputationLedger = class {
   ledger = /* @__PURE__ */ new Map();
@@ -5466,6 +5566,8 @@ ${lessonLines.map((l) => `- ${l}`).join("\n")}
   let budgetStop = null;
   let snapshot = emptySnapshot;
   const committedBranches = [];
+  let waveNo = 0;
+  const durableRunId = `run:${req.missionSlug}`;
   for (const wave of waves) {
     if (waveFailed) {
       const skipReason = budgetStop ? `Spend authority ran out \u2014 ${budgetStop}` : "An earlier wave did not complete, so this seat was skipped rather than asked to review work that does not exist.";
@@ -5548,7 +5650,24 @@ ${lessonLines.map((l) => `- ${l}`).join("\n")}
       const tk = tickets.get(r.seatId);
       if (budgetGate && tk) budgetAccounting.overrun += budgetGate.settle(tk, r.chargedUsd ?? 0).overrunUsd;
       if ((r.usage?.costUsd === null || r.usage?.costUsd === void 0) && (r.usage?.tokens ?? 0) > 0) budgetAccounting.tokensOnly.add(r.seatId);
+      recordSeatRun({
+        at: Date.now(),
+        seatId: r.seatId,
+        missionId: req.missionSlug,
+        usd: r.usage?.costUsd ?? null,
+        tokens: r.usage?.tokens ?? null,
+        turns: r.usage?.turns ?? null,
+        verdict: r.verified ? "verified" : r.outcome === "completed" ? "completed" : r.outcome,
+        source: r.usage?.source ?? "unknown"
+      });
     }
+    checkpoint(durableRunId, req.missionSlug, waveNo, "wave settled", {
+      settled: results.length,
+      verified: results.filter((x) => x.verified).length,
+      budgetStop,
+      failed: waveFailed
+    });
+    waveNo += 1;
     if (req.rootEnvelope && req.rootEnvelope.budgetUsd !== null && !budgetStop) {
       const spentSoFar = seats.reduce((sum, r) => sum + (r.chargedUsd ?? 0), 0);
       const bc = budgetCheck(req.rootEnvelope, spentSoFar);
@@ -6201,6 +6320,20 @@ async function verifyProofReceipt(rc) {
 // src/mission/a2aBridge.ts
 init_version();
 init_id();
+function inboundCapsFor(requested) {
+  const narrowed = { ...INBOUND_DELEGATION_CAPS };
+  if (!requested || typeof requested !== "object") return narrowed;
+  const fields = ["maxCostUsd", "maxTurns", "maxInvocations", "maxWallClockMs"];
+  for (const field of fields) {
+    const asked = requested[field];
+    if (typeof asked !== "number" || !Number.isFinite(asked) || asked <= 0) continue;
+    narrowed[field] = Math.min(asked, INBOUND_DELEGATION_CAPS[field]);
+  }
+  return narrowed;
+}
+function capsSummary(caps) {
+  return `$${(caps.maxCostUsd ?? 0).toFixed(2)}/${caps.maxTurns ?? 0}turns/${caps.maxInvocations ?? 0}inv/${Math.round((caps.maxWallClockMs ?? 0) / 1e3)}s`;
+}
 function seatFor(teammate, cfg) {
   return {
     id: `a2a-${teammate.id.slice(0, 8)}-${uid("seat").slice(0, 6)}`,
@@ -6327,6 +6460,22 @@ async function runInboundDelegation(teammate, task, fromUser, cfg = {}) {
     assignments.push({ seat: reviewer, prompt: `Review the change for: ${task}`, wave: 1, readOnly: true, dependsOn: [seat2.id] });
   }
   const team = bridgeTeam(teammate, fromUser, seats);
+  const caps = inboundCapsFor(cfg.inboundCaps);
+  const seatTurns = (s) => typeof s.maxTurns === "number" && s.maxTurns > 0 ? s.maxTurns : 0;
+  const declaredTurns = seats.reduce((n, s) => n + seatTurns(s), 0);
+  const turnCeiling = caps.maxTurns ?? 0;
+  if (turnCeiling > 0 && declaredTurns > turnCeiling) {
+    return refuse(
+      `this host's inbound plan declares ${declaredTurns} turns across ${seats.length} seats, which does not fit the ${turnCeiling}-turn ceiling a remote delegation gets \u2014 narrow the seat budget on this host, or send the work as smaller delegations. Nothing ran.`
+    );
+  }
+  const ledger = new CapLedger(caps, cfg.now?.() ?? Date.now());
+  for (const s of seats) {
+    ledger.beginInvocation();
+    ledger.addTurns(seatTurns(s));
+  }
+  const preflight = ledger.admissionError(cfg.now?.() ?? Date.now());
+  if (preflight) return refuse(`the delegation was refused before dispatch \u2014 ${preflight}`);
   const startedAt = new Date(cfg.now?.() ?? Date.now()).toISOString();
   let report;
   try {
@@ -6339,7 +6488,7 @@ async function runInboundDelegation(teammate, task, fromUser, cfg = {}) {
       objective: task,
       constraints: [`Inbound A2A delegation from ${fromUser} \u2014 stay inside the delegated task.`],
       testCommand: cfg.testCommand,
-      ledger: new CapLedger({}),
+      ledger,
       minimumRunnableSeats: 1
     }, cfg.deps);
   } catch (err) {
@@ -6383,6 +6532,7 @@ async function runInboundDelegation(teammate, task, fromUser, cfg = {}) {
     `gate=${report.gate.status}/${report.gate.tier}`,
     `seats=${execution.seatsRun}/${execution.seatsVerified} verified`,
     execution.spentUsd > 0 ? `spent=$${execution.spentUsd.toFixed(4)}` : "spent=unmeasured",
+    `caps=${capsSummary(caps)}`,
     `receipt=${chainHead.slice(0, 16)}`
   ].join(" \xB7 ");
   return {
@@ -6475,8 +6625,122 @@ function routeDelegation(team, task) {
   return { ok: true, value: best };
 }
 var PACKET_TTL_MS = 10 * 60 * 1e3;
-var decidedDelegations = /* @__PURE__ */ new Set();
-var decidedInbound = /* @__PURE__ */ new Set();
+var MAX_CLOCK_SKEW_MS = 6e4;
+var REPLAY_REGISTRY_CAP = 4096;
+var ReplayRegistry = class {
+  constructor(cap) {
+    this.cap = cap;
+  }
+  settled = /* @__PURE__ */ new Map();
+  /** Claim an id for exactly one decision. Null when claimed; a reason when not. */
+  claim(id, now = Date.now()) {
+    for (const [k, at] of [...this.settled]) if (now - at > PACKET_TTL_MS) this.settled.delete(k);
+    if (this.settled.has(id)) return `already decided (${this.settled.size} settled within the packet TTL) \u2014 replay refused`;
+    if (this.settled.size >= this.cap) {
+      return `the replay registry is full (${this.cap} unsettled decisions inside the packet TTL) \u2014 refusing rather than forgetting a live one, because forgetting one is what lets a captured packet replay`;
+    }
+    this.settled.set(id, now);
+    return null;
+  }
+};
+var decidedDelegations = new ReplayRegistry(REPLAY_REGISTRY_CAP);
+var decidedInbound = new ReplayRegistry(REPLAY_REGISTRY_CAP);
+var MAX_FEDERATION_HOPS = 2;
+var MAX_CHAIN_ID_LEN = 96;
+var MAX_PATH_LEN = 8;
+function readChainClaim(packet) {
+  const raw = packet.chain;
+  if (raw === void 0 || raw === null) return { ok: true, claim: { chainId: packet.id, hop: 1, path: [] } };
+  if (typeof raw !== "object" || Array.isArray(raw)) return { ok: false, reason: "the delegation chain claim is not an object" };
+  const c = raw;
+  const chainId = c.chainId;
+  if (typeof chainId !== "string" || chainId.length === 0 || chainId.length > MAX_CHAIN_ID_LEN) {
+    return { ok: false, reason: `the delegation chain claim has no usable chainId (1..${MAX_CHAIN_ID_LEN} characters required)` };
+  }
+  const hop = c.hop;
+  if (typeof hop !== "number" || !Number.isInteger(hop) || hop < 1 || hop > MAX_FEDERATION_HOPS) {
+    return { ok: false, reason: `the delegation chain claim declares hop=${JSON.stringify(hop)}, which is not a whole number in 1..${MAX_FEDERATION_HOPS}` };
+  }
+  const pathRaw = c.path;
+  if (!Array.isArray(pathRaw)) return { ok: false, reason: "the delegation chain claim carries no visited-path array" };
+  if (pathRaw.length > MAX_PATH_LEN) return { ok: false, reason: `the delegation chain claims a ${pathRaw.length}-host path, longer than the ${MAX_PATH_LEN} this build accepts` };
+  const path2 = [];
+  for (const entry of pathRaw) {
+    if (typeof entry !== "string" || entry.length === 0 || entry.length > 80) {
+      return { ok: false, reason: "the delegation chain's visited path holds an entry that is not a selfimpulse identity" };
+    }
+    path2.push(entry);
+  }
+  return { ok: true, claim: { chainId, hop, path: path2 } };
+}
+var observedChains = /* @__PURE__ */ new Map();
+function observeInboundChain(selfUser, packetId, claim, now = Date.now()) {
+  for (const [id, e] of [...observedChains]) if (now - e.lastSeenAt > PACKET_TTL_MS) observedChains.delete(id);
+  if (claim.path.includes(selfUser)) {
+    return {
+      ok: false,
+      reason: `this delegation chain has already been through "${selfUser}" (it names this host in its path), so accepting it again would close a loop \u2014 refused`
+    };
+  }
+  const entry = observedChains.get(claim.chainId);
+  if (entry && entry.packetIds.includes(packetId)) {
+    return { ok: false, reason: `packet ${packetId} was already executed for chain ${claim.chainId} \u2014 replay refused` };
+  }
+  const observedHop = (entry ? entry.observed : 0) + 1;
+  if (observedHop > MAX_FEDERATION_HOPS) {
+    return {
+      ok: false,
+      reason: `chain ${claim.chainId} has already been executed ${entry?.observed ?? 0} time(s) on "${selfUser}"; the federation depth limit is ${MAX_FEDERATION_HOPS} hops, so hop ${observedHop} is refused`
+    };
+  }
+  if (!entry && observedChains.size >= REPLAY_REGISTRY_CAP) {
+    return {
+      ok: false,
+      reason: `the federation chain registry is full (${REPLAY_REGISTRY_CAP} chains inside the packet TTL) \u2014 refusing rather than forgetting a live chain, because forgetting one is what lets a loop come back round`
+    };
+  }
+  if (entry) {
+    entry.observed = observedHop;
+    entry.lastSeenAt = now;
+    entry.packetIds.push(packetId);
+  } else {
+    observedChains.set(claim.chainId, { observed: observedHop, lastSeenAt: now, packetIds: [packetId] });
+  }
+  return { ok: true, settled: { chainId: claim.chainId, hop: claim.hop, path: [...claim.path, selfUser], observedHop } };
+}
+var MAX_INBOUND_PER_WINDOW = 32;
+var inboundWindow = { count: 0, startedAt: 0 };
+function inboundWindowRefused(now) {
+  if (inboundWindow.count === 0 || now - inboundWindow.startedAt > PACKET_TTL_MS) inboundWindow = { count: 0, startedAt: now };
+  if (inboundWindow.count >= MAX_INBOUND_PER_WINDOW) {
+    const waitS = Math.max(1, Math.ceil((PACKET_TTL_MS - (now - inboundWindow.startedAt)) / 1e3));
+    return `this receiver has executed ${inboundWindow.count} inbound delegations in the last ${Math.round(PACKET_TTL_MS / 1e3)}s and will not start another for ${waitS}s \u2014 the ceiling is what stops a peer from resetting its chain by inventing a new id`;
+  }
+  return null;
+}
+function declareOutboundChain(selfUser, packetId, parent) {
+  const claimed = typeof parent?.hop === "number" && Number.isInteger(parent.hop) && parent.hop > 0 ? parent.hop : 0;
+  const observed = typeof parent?.observedHop === "number" && Number.isInteger(parent.observedHop) && parent.observedHop > 0 ? parent.observedHop : 0;
+  const hop = Math.max(claimed, observed) + 1;
+  if (hop > MAX_FEDERATION_HOPS) {
+    return {
+      ok: false,
+      reason: `delegating onward would be hop ${hop}, past the federation depth limit of ${MAX_FEDERATION_HOPS} \u2014 this delegation ends here rather than becoming a chain nobody bounded`
+    };
+  }
+  const inherited = Array.isArray(parent?.path) ? parent.path.filter((p) => typeof p === "string" && p.length > 0 && p.length <= 80) : [];
+  if (inherited.slice(0, -1).includes(selfUser)) {
+    return {
+      ok: false,
+      reason: `this chain has already been through "${selfUser}" (the path it was handed names this host before its immediate parent), so re-delegating from here would close a loop \u2014 refused`
+    };
+  }
+  if (inherited.length >= MAX_PATH_LEN) {
+    return { ok: false, reason: `the delegation path already names ${inherited.length} hosts, which is the ${MAX_PATH_LEN} this build accepts \u2014 this delegation ends here` };
+  }
+  const chainId = typeof parent?.chainId === "string" && parent.chainId.length > 0 && parent.chainId.length <= MAX_CHAIN_ID_LEN ? parent.chainId : packetId;
+  return { ok: true, chain: { chainId, hop, path: inherited.length === 0 ? [selfUser] : inherited } };
+}
 async function sha256Hex2(text) {
   const subtle2 = globalThis.crypto?.subtle;
   if (!subtle2) throw new Error("delegation digests require WebCrypto");
@@ -6484,7 +6748,10 @@ async function sha256Hex2(text) {
   return [...h].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 function packetExpired(ts, nowMs = Date.now()) {
-  return nowMs - new Date(ts).getTime() > PACKET_TTL_MS;
+  const at = new Date(ts).getTime();
+  if (!Number.isFinite(at)) return true;
+  if (at - nowMs > MAX_CLOCK_SKEW_MS) return true;
+  return nowMs - at > PACKET_TTL_MS;
 }
 function selfimpulseCardForTeamV10(team, interfaceUrl) {
   return {
@@ -6557,9 +6824,15 @@ async function handleInboundDelegation(remoteTeam, packet, inboundGate, bridge, 
     }
   });
   if (packet.toUser !== remoteTeam.user) return refused(`packet is addressed to "${packet.toUser}" but this selfimpulse is "${remoteTeam.user}"`);
-  if (packetExpired(packet.ts)) return refused("packet expired (TTL 10 min) \u2014 stale delegations are refused");
+  if (packetExpired(packet.ts)) {
+    return refused(`packet expired \u2014 older than the ${Math.round(PACKET_TTL_MS / 6e4)}min TTL, carrying a timestamp this host cannot read, or dated further than ${Math.round(MAX_CLOCK_SKEW_MS / 1e3)}s in the future`);
+  }
   const digest = await sha256Hex2(JSON.stringify({ ...packet, packetDigest: "" }));
   if (digest !== packet.packetDigest) return refused("packet digest mismatch \u2014 the packet was modified in transit");
+  const chainRead = readChainClaim(packet);
+  if (!chainRead.ok) return refused(`delegation-chain refusal: ${chainRead.reason}`);
+  const observed = observeInboundChain(remoteTeam.user, packet.id, chainRead.claim);
+  if (!observed.ok) return refused(`delegation-chain refusal: ${observed.reason}`);
   const findings = detectInjection(packet.task);
   if (findings.length > 0) return refused(`receiver-side GuardRail refused the inbound packet: ${findings.map((f) => f.code).join(", ")}`);
   const route = routeDelegation(remoteTeam, packet.task);
@@ -6592,12 +6865,16 @@ async function handleInboundDelegation(remoteTeam, packet, inboundGate, bridge, 
         ts,
         receiverPolicy: riskVerdict,
         execution: null,
-        receipt: null
+        receipt: null,
+        chain: observed.settled
       }
     };
   }
-  if (decidedInbound.has(packet.id)) return refused("delegation already decided \u2014 replay refused");
-  decidedInbound.add(packet.id);
+  const replayed = decidedInbound.claim(packet.id);
+  if (replayed) return refused(`delegation already decided \u2014 ${replayed}`);
+  const windowRefusal = inboundWindowRefused(Date.now());
+  if (windowRefusal) return refused(windowRefusal);
+  inboundWindow.count += 1;
   const claimed = sanitizeDeclaredAuthority(packet.declaredAuthority);
   const declared = claimed.capabilities.length > 0 ? claimed : null;
   const run = await runInboundDelegation(toTeammate, packet.task, packet.fromUser, {
@@ -6625,7 +6902,8 @@ async function handleInboundDelegation(remoteTeam, packet, inboundGate, bridge, 
         ts,
         execution: null,
         receipt: null,
-        receiverPolicy: riskVerdict
+        receiverPolicy: riskVerdict,
+        chain: observed.settled
       }
     };
   }
@@ -6657,7 +6935,8 @@ async function handleInboundDelegation(remoteTeam, packet, inboundGate, bridge, 
       ts,
       execution: run.execution,
       receipt: run.receipt,
-      receiverPolicy: riskVerdict
+      receiverPolicy: riskVerdict,
+      chain: observed.settled
     }
   };
 }
@@ -6749,6 +7028,8 @@ async function delegateViaA2A(opts) {
       }
     };
   }
+  const declaredChain = declareOutboundChain(fromTeam.user, id, opts.chain);
+  if (!declaredChain.ok) return refused(declaredChain.reason, { fromTeammate, toUser });
   const body = {
     vh: "delegation/1.0",
     id,
@@ -6758,13 +7039,14 @@ async function delegateViaA2A(opts) {
     task: cleanTask,
     tier,
     ts,
+    chain: declaredChain.chain,
     declaredAuthority: sanitizeDeclaredAuthority(authority)
   };
   const packetDigest = await sha256Hex2(JSON.stringify({ ...body, packetDigest: "" }));
   const packet = { ...body, packetDigest };
-  if (decidedDelegations.has(id)) return refused("delegation already decided \u2014 replay refused", { fromTeammate, toUser, packetDigest });
-  decidedDelegations.add(id);
-  busNote("operator", `delegation ${id} crossing to ${toUser} over A2A v1.0 (${tier})`, fromTeam.user);
+  const alreadyDecided = decidedDelegations.claim(id);
+  if (alreadyDecided) return refused(`delegation already decided \u2014 ${alreadyDecided}`, { fromTeammate, toUser, packetDigest });
+  busNote("operator", `delegation ${id} crossing to ${toUser} over A2A v1.0 (${tier}, chain hop ${declaredChain.chain.hop}/${MAX_FEDERATION_HOPS})`, fromTeam.user);
   let remote;
   try {
     remote = await sendMessage(opts.remoteRoot, {

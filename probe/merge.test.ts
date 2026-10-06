@@ -67,6 +67,8 @@ import {
   PRODUCT_TITLE,
   ENGINE_CODENAME,
 } from "../src/version";
+import { bindOwnerRoot } from "../src/security/ownerRoot";
+bindOwnerRoot("probe-owner-passphrase");
 
 const sleep = (ms: number): Promise<void> => new Promise<void>((r) => setTimeout(r, ms));
 

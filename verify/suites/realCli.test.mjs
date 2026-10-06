@@ -333,6 +333,12 @@ function composeSeatArgv(teamSeat, ctx) {
 
 // src/mission/caps.ts
 var DEFAULT_CAPS = { timeoutMs: 10 * 60 * 1e3, maxTurns: 40, maxCostUsd: 5 };
+var INBOUND_DELEGATION_CAPS = {
+  maxCostUsd: 2,
+  maxTurns: 40,
+  maxInvocations: 4,
+  maxWallClockMs: 30 * 6e4
+};
 function parseReportedUsage(harness, raw) {
   const empty = { costUsd: null, tokens: null, turns: null, source: harness };
   if (!raw.trim()) return empty;

@@ -4,9 +4,9 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
+var __export = (target, all2) => {
+  for (var name in all2)
+    __defProp(target, name, { get: all2[name], enumerable: true });
 };
 
 // src/version.ts
@@ -21,38 +21,44 @@ var init_version = __esm({
   }
 });
 
-// src/selfimpulse/ipc/client.ts
-var client_exports = {};
-__export(client_exports, {
-  ipc: () => ipc,
-  isNativeHost: () => isNativeHost
-});
-function isNativeHost() {
-  return typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
+// src/app/id.ts
+function cryptoToken() {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  if (c && typeof c.getRandomValues === "function") {
+    const bytes = new Uint8Array(16);
+    c.getRandomValues(bytes);
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  degradedSeq += 1;
+  return `nocrypto-fallback-${degradedSeq.toString(36)}`;
 }
-var invoke, ipc;
-var init_client = __esm({
-  "src/selfimpulse/ipc/client.ts"() {
+function uid(prefix) {
+  return `${prefix}-${cryptoToken()}`;
+}
+function nowIso() {
+  return (/* @__PURE__ */ new Date()).toISOString();
+}
+var degradedSeq;
+var init_id = __esm({
+  "src/app/id.ts"() {
     "use strict";
-    invoke = (cmd, args) => {
-      const internals = window.__TAURI_INTERNALS__;
-      if (!internals) throw new Error("not in the native host \u2014 no __TAURI_INTERNALS__");
-      return internals.invoke(cmd, args);
-    };
-    ipc = {
-      async secretGet(secretRef) {
-        return await invoke("secret_get", { secretRef });
-      },
-      async secretSet(secretRef, value) {
-        return await invoke("secret_set", { secretRef, value });
-      },
-      async notifyApproval(title, body) {
-        await invoke("notify_approval", { title, body });
-      },
-      async appInfo() {
-        return await invoke("app_info");
-      }
-    };
+    degradedSeq = 0;
+  }
+});
+
+// src/app/desktop.ts
+function detectHost() {
+  if (typeof window === "undefined") return "web";
+  const w = window;
+  if (w.__TAURI_INTERNALS__) return "tauri";
+  if (w.__TAURI__) return "tauri";
+  if (typeof navigator !== "undefined" && /tauri/i.test(navigator.userAgent)) return "tauri";
+  return "web";
+}
+var init_desktop = __esm({
+  "src/app/desktop.ts"() {
+    "use strict";
   }
 });
 
@@ -407,47 +413,6 @@ var init_guardrail = __esm({
   }
 });
 
-// src/app/id.ts
-function cryptoToken() {
-  const c = globalThis.crypto;
-  if (c && typeof c.randomUUID === "function") return c.randomUUID();
-  if (c && typeof c.getRandomValues === "function") {
-    const bytes = new Uint8Array(16);
-    c.getRandomValues(bytes);
-    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-  }
-  degradedSeq += 1;
-  return `nocrypto-fallback-${degradedSeq.toString(36)}`;
-}
-function uid(prefix) {
-  return `${prefix}-${cryptoToken()}`;
-}
-function nowIso() {
-  return (/* @__PURE__ */ new Date()).toISOString();
-}
-var degradedSeq;
-var init_id = __esm({
-  "src/app/id.ts"() {
-    "use strict";
-    degradedSeq = 0;
-  }
-});
-
-// src/app/desktop.ts
-function detectHost() {
-  if (typeof window === "undefined") return "web";
-  const w = window;
-  if (w.__TAURI_INTERNALS__) return "tauri";
-  if (w.__TAURI__) return "tauri";
-  if (typeof navigator !== "undefined" && /tauri/i.test(navigator.userAgent)) return "tauri";
-  return "web";
-}
-var init_desktop = __esm({
-  "src/app/desktop.ts"() {
-    "use strict";
-  }
-});
-
 // src/security/egressNet.ts
 async function resolveEgress(raw, opts = {}) {
   const allowLoopback = opts.allowLoopback ?? false;
@@ -772,8 +737,8 @@ var init_localDb = __esm({
         save(db);
       },
       skillsList(nodeKey) {
-        const all = load().skills.filter((s) => s.nodeKey === nodeKey);
-        return { skills: all.filter((s) => s.active), all };
+        const all2 = load().skills.filter((s) => s.nodeKey === nodeKey);
+        return { skills: all2.filter((s) => s.active), all: all2 };
       },
       skillUpsert(args) {
         const db = load();
@@ -1013,7 +978,7 @@ __export(core_exports, {
   addPluginListener: () => addPluginListener,
   checkPermissions: () => checkPermissions,
   convertFileSrc: () => convertFileSrc,
-  invoke: () => invoke2,
+  invoke: () => invoke,
   isTauri: () => isTauri,
   requestPermissions: () => requestPermissions,
   transformCallback: () => transformCallback
@@ -1024,23 +989,23 @@ function transformCallback(callback, once = false) {
 async function addPluginListener(plugin, event, cb) {
   const handler = new Channel(cb);
   try {
-    await invoke2(`plugin:${plugin}|register_listener`, {
+    await invoke(`plugin:${plugin}|register_listener`, {
       event,
       handler
     });
     return new PluginListener(plugin, event, handler.id);
   } catch {
-    await invoke2(`plugin:${plugin}|registerListener`, { event, handler });
+    await invoke(`plugin:${plugin}|registerListener`, { event, handler });
     return new PluginListener(plugin, event, handler.id);
   }
 }
 async function checkPermissions(plugin) {
-  return invoke2(`plugin:${plugin}|check_permissions`);
+  return invoke(`plugin:${plugin}|check_permissions`);
 }
 async function requestPermissions(plugin) {
-  return invoke2(`plugin:${plugin}|request_permissions`);
+  return invoke(`plugin:${plugin}|request_permissions`);
 }
-async function invoke2(cmd, args = {}, options) {
+async function invoke(cmd, args = {}, options) {
   return window.__TAURI_INTERNALS__.invoke(cmd, args, options);
 }
 function convertFileSrc(filePath, protocol = "asset") {
@@ -1113,7 +1078,7 @@ var init_core = __esm({
         this.channelId = channelId;
       }
       async unregister() {
-        return invoke2(`plugin:${this.plugin}|remove_listener`, {
+        return invoke(`plugin:${this.plugin}|remove_listener`, {
           event: this.event,
           channelId: this.channelId
         });
@@ -1132,7 +1097,7 @@ var init_core = __esm({
        * **You should not call any method on this object anymore and should drop any reference to it.**
        */
       async close() {
-        return invoke2("plugin:resources|close", {
+        return invoke("plugin:resources|close", {
           rid: this.rid
         });
       }
@@ -1142,9 +1107,9 @@ var init_core = __esm({
 });
 
 // src/ipc/client.ts
-var client_exports2 = {};
-__export(client_exports2, {
-  ipc: () => ipc2,
+var client_exports = {};
+__export(client_exports, {
+  ipc: () => ipc,
   nodeKeyOf: () => nodeKeyOf,
   useTauri: () => useTauri
 });
@@ -1162,7 +1127,7 @@ function dropExecGrant(token) {
   execGrants = execGrants.filter((g) => g.token !== token);
 }
 async function requestExecGrant(workspace, network, programs = [], minutes) {
-  const ws = workspace ?? String((await ipc2.appInfo()).workspaceRoot ?? "");
+  const ws = workspace ?? String((await ipc.appInfo()).workspaceRoot ?? "");
   const r = await tauriInvoke("exec_grant_request", { programs, workspace: ws, network, minutes });
   const g = { token: r.grant, workspace: r.workspace, network: r.network, programs: r.programs, expiresAt: r.expiresAt };
   execGrants.push(g);
@@ -1171,8 +1136,8 @@ async function requestExecGrant(workspace, network, programs = [], minutes) {
 function nodeKeyOf(workflowId, nodeId) {
   return `${workflowId}:${nodeId}`;
 }
-var useTauri, browserReason, execGrants, bareProgram, norm, within, ipc2;
-var init_client2 = __esm({
+var useTauri, browserReason, execGrants, bareProgram, norm, within, ipc;
+var init_client = __esm({
   "src/ipc/client.ts"() {
     "use strict";
     init_desktop();
@@ -1186,7 +1151,7 @@ var init_client2 = __esm({
     bareProgram = (p) => (p.split(/[\\/]/).pop() ?? p).replace(/\.exe$/i, "");
     norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
     within = (child, root) => norm(child) === norm(root) || norm(child).startsWith(norm(root) + "/");
-    ipc2 = {
+    ipc = {
       appInfo: async () => {
         if (useTauri()) return tauriInvoke("app_info");
         return {
@@ -1300,7 +1265,7 @@ var init_client2 = __esm({
       },
       federationMount: async (opts) => {
         if (!useTauri()) return { ok: false, detail: "Federation is a desktop capability." };
-        const st = await ipc2.federationStatus();
+        const st = await ipc.federationStatus();
         if (!st.bundled || !st.hostPath) {
           return { ok: false, detail: "No A2A host is bundled with this build; nothing was started." };
         }
@@ -1811,6 +1776,41 @@ var init_client2 = __esm({
   }
 });
 
+// src/selfimpulse/ipc/client.ts
+var client_exports2 = {};
+__export(client_exports2, {
+  ipc: () => ipc2,
+  isNativeHost: () => isNativeHost
+});
+function isNativeHost() {
+  return typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
+}
+var invoke2, ipc2;
+var init_client2 = __esm({
+  "src/selfimpulse/ipc/client.ts"() {
+    "use strict";
+    invoke2 = (cmd, args) => {
+      const internals = window.__TAURI_INTERNALS__;
+      if (!internals) throw new Error("not in the native host \u2014 no __TAURI_INTERNALS__");
+      return internals.invoke(cmd, args);
+    };
+    ipc2 = {
+      async secretGet(secretRef) {
+        return await invoke2("secret_get", { secretRef });
+      },
+      async secretSet(secretRef, value) {
+        return await invoke2("secret_set", { secretRef, value });
+      },
+      async notifyApproval(title, body) {
+        await invoke2("notify_approval", { title, body });
+      },
+      async appInfo() {
+        return await invoke2("app_info");
+      }
+    };
+  }
+});
+
 // probe/drill.test.ts
 import assert2 from "node:assert";
 import { spawn } from "node:child_process";
@@ -1825,407 +1825,428 @@ import { execFileSync } from "node:child_process";
 import * as fs2 from "node:fs";
 import * as os from "node:os";
 import * as path2 from "node:path";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash as createHash4, randomBytes } from "node:crypto";
 
 // src/selfimpulse/engine/selfimpulse.ts
 init_version();
 
-// src/selfimpulse/engine/signing.ts
-var STORAGE_KEY = "selfimpulse.issuerkey.v1";
-var KEYCHAIN_REF = "selfimpulse.issuerkey.v1";
-async function keychainBridge() {
-  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return null;
-  try {
-    const { ipc: ipc3 } = await Promise.resolve().then(() => (init_client(), client_exports));
+// src/security/capability.ts
+import { createHash as createHash2 } from "node:crypto";
+
+// src/security/actionGraph.ts
+function stableStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const entries = Object.entries(value).filter(([, v]) => v !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(",")}}`;
+}
+var RISK_ORDER = { low: 0, medium: 1, high: 2, critical: 3 };
+function riskAtLeast(actual, ceiling) {
+  return RISK_ORDER[actual] >= RISK_ORDER[ceiling];
+}
+function riskOfAction(action) {
+  const a = action.toLowerCase();
+  if (/(rm|delete|drop\s+table|truncate|revoke|force.push|reset --hard|chmod 777|sudo)/.test(a)) return "critical";
+  if (/(write|edit|patch|apply|commit|install|exec|run|shell|http|fetch|curl|npm|pip)/.test(a)) return "high";
+  if (/(test|read|stat|ls|grep|search)/.test(a)) return "low";
+  return "medium";
+}
+function authorize(env, action) {
+  const a = action.toLowerCase();
+  const risk = riskOfAction(action);
+  if (!env || typeof env.root !== "string" || env.root.length === 0) {
+    return { allowed: false, reason: "no authority envelope: a decision that cannot name its envelope is not made", action, risk, escalated: true };
+  }
+  if (risk === "critical") {
     return {
-      get: async () => {
-        try {
-          const r = await ipc3.secretGet(KEYCHAIN_REF);
-          return r.present && r.value ? r.value : null;
-        } catch {
-          return null;
-        }
-      },
-      set: async (json2) => {
-        try {
-          const r = await ipc3.secretSet(KEYCHAIN_REF, json2);
-          return Boolean(r.stored);
-        } catch {
-          return false;
-        }
-      }
+      allowed: false,
+      reason: "critical-risk actions are never taken on the seat's own authority; they require a named human",
+      action,
+      risk,
+      escalated: true
     };
-  } catch {
-    return null;
   }
-}
-var cached = null;
-function toHex(bytes) {
-  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-function fromHex(hex3) {
-  const out = new Uint8Array(new ArrayBuffer(hex3.length / 2));
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex3.slice(i * 2, i * 2 + 2), 16);
-  return out;
-}
-function ed25519Available() {
-  try {
-    return typeof crypto !== "undefined" && Boolean(crypto.subtle) && typeof crypto.subtle.generateKey === "function";
-  } catch {
-    return false;
+  if (/(write|edit|patch|apply|commit)/.test(a) && !env.allowWrite) {
+    return { allowed: false, reason: "this seat is read-only: it may not change the workspace", action, risk, escalated: true };
   }
-}
-async function ensureIssuerIdentity() {
-  if (cached) return cached;
-  if (!ed25519Available()) return null;
-  const bridge = await keychainBridge();
-  try {
-    const raw = bridge ? await bridge.get() : globalThis.localStorage?.getItem(STORAGE_KEY);
-    if (raw) {
-      const stored = JSON.parse(raw);
-      if (stored?.publicKeyHex && stored?.privateJwk) {
-        const privateKey = await crypto.subtle.importKey("jwk", stored.privateJwk, { name: "Ed25519" }, true, ["sign"]);
-        const identity = {
-          keyId: `selfimpulse-issuer-${stored.publicKeyHex.slice(0, 12)}`,
-          publicKeyHex: stored.publicKeyHex,
-          createdAt: stored.createdAt ?? (/* @__PURE__ */ new Date(0)).toISOString()
-        };
-        cached = { identity, privateKey };
-        return cached;
-      }
-    }
-  } catch {
+  if (/(exec|run|shell|npm|pip)/.test(a) && !env.allowShell) {
+    return { allowed: false, reason: "shell execution is outside this seat's authority", action, risk, escalated: true };
   }
-  try {
-    const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
-    const rawPub = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
-    const publicKeyHex = toHex(rawPub);
-    const identity = {
-      keyId: `selfimpulse-issuer-${publicKeyHex.slice(0, 12)}`,
-      publicKeyHex,
-      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+  if (/(http|fetch|curl|network)/.test(a) && !env.allowNetwork) {
+    return { allowed: false, reason: "network egress is outside this seat's authority", action, risk, escalated: true };
+  }
+  if (riskAtLeast(risk, "high") && !riskAtLeast(env.maxRisk, "high")) {
+    return {
+      allowed: false,
+      reason: `action is ${risk} risk but this seat's approved ceiling is ${env.maxRisk}`,
+      action,
+      risk,
+      escalated: true
     };
-    const privateJwk = await crypto.subtle.exportKey("jwk", pair.privateKey);
-    const persisted = JSON.stringify({ publicKeyHex, privateJwk, createdAt: identity.createdAt });
-    try {
-      if (bridge) await bridge.set(persisted);
-    } catch {
-    }
-    try {
-      globalThis.localStorage?.setItem(STORAGE_KEY, persisted);
-    } catch {
-    }
-    cached = { identity, privateKey: pair.privateKey };
-    return cached;
-  } catch {
-    return null;
   }
-}
-async function signHexDigest(hexDigest) {
-  const holder = await ensureIssuerIdentity();
-  if (!holder) return null;
-  try {
-    const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, holder.privateKey, fromHex(hexDigest)));
-    return { alg: "EdDSA", keyId: holder.identity.keyId, publicKeyHex: holder.identity.publicKeyHex, sigHex: toHex(sig) };
-  } catch {
-    return null;
-  }
-}
-async function signChainHash(chainHashHex) {
-  return signHexDigest(chainHashHex);
-}
-async function verifyIssuerSignature(chainHashHex, sigHex, publicKeyHex) {
-  if (!ed25519Available()) return false;
-  try {
-    const publicKey = await crypto.subtle.importKey("raw", fromHex(publicKeyHex), { name: "Ed25519" }, false, ["verify"]);
-    return await crypto.subtle.verify({ name: "Ed25519" }, publicKey, fromHex(sigHex), fromHex(chainHashHex));
-  } catch {
-    return false;
-  }
+  return { allowed: true, reason: `within the approved envelope (ceiling ${env.maxRisk}, write=${env.allowWrite}, shell=${env.allowShell})`, action, risk };
 }
 
-// src/selfimpulse/engine/proof.ts
-var VERIFY_SECRET = "si-commercial-v1-offline";
-var LEGACY_SEAL_SECRET = "mj-commercial-v1-offline";
-var SEAL_SECRET_BY_FORMAT = {
-  "si-proof-receipt/2": VERIFY_SECRET,
-  "mj-proof-receipt/2": LEGACY_SEAL_SECRET,
-  "mj-proof-receipt/1": LEGACY_SEAL_SECRET
-};
-var enc = new TextEncoder();
-function sortDeep(v) {
-  if (Array.isArray(v)) return v.map(sortDeep);
-  if (v && typeof v === "object") {
-    const out = {};
-    for (const k of Object.keys(v).sort()) out[k] = sortDeep(v[k]);
-    return out;
+// src/security/sovereign.ts
+import { createHash, generateKeyPairSync, sign as edSign, verify as edVerify } from "node:crypto";
+function workingRoot() {
+  try {
+    if (typeof process !== "undefined" && typeof process.cwd === "function") {
+      const cwd = process.cwd();
+      if (typeof cwd === "string" && cwd.length > 0) return cwd;
+    }
+  } catch {
   }
+  return "/";
+}
+function requestProfileOf(node2) {
+  const cfg = node2.config ?? {};
+  const bool = (k, dflt) => typeof cfg[k] === "boolean" ? cfg[k] : dflt;
+  const riskRaw = String(cfg.maxRisk ?? "low").toLowerCase();
+  const maxRisk = riskRaw === "critical" || riskRaw === "high" || riskRaw === "medium" ? riskRaw : "low";
+  return {
+    agentId: String(node2.id ?? node2.title ?? "seat"),
+    owner: String(cfg.owner ?? "owner"),
+    allowWrite: bool("allowWrite", false),
+    allowShell: bool("allowShell", false),
+    allowNetwork: bool("allowNetwork", false),
+    root: String(cfg.workspaceRoot ?? workingRoot()),
+    budgetCeiling: Number(cfg.budgetCeiling ?? 0),
+    maxRisk
+  };
+}
+function profileDigest(p) {
+  return createHash("sha256").update(`si.profile.v1
+${stableStringify(p)}`).digest("hex");
+}
+function profileIsEffectful(p) {
+  return p.allowWrite || p.allowShell || p.allowNetwork || p.maxRisk !== "low";
+}
+var MANDATE_FORMAT = "si.mandate.v1";
+function mandateCanonical2(m) {
+  return stableStringify({
+    v: m.v,
+    agentId: m.agentId,
+    owner: m.owner,
+    profile: m.profile,
+    env: m.env,
+    issuedAt: m.issuedAt,
+    expiresAt: m.expiresAt
+  });
+}
+function sessionSigner() {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const pubDer = publicKey.export({ type: "spki", format: "der" });
+  const id = createHash("sha256").update(pubDer).digest("hex").slice(0, 16);
+  return {
+    id,
+    sign: (data) => edSign(null, Buffer.from(data, "utf8"), privateKey).toString("base64"),
+    verify: (data, sig) => {
+      try {
+        return edVerify(null, Buffer.from(data, "utf8"), publicKey, Buffer.from(sig, "base64"));
+      } catch {
+        return false;
+      }
+    }
+  };
+}
+function issueMandate(profile, signer, ttlMs = 60 * 6e4) {
+  const issuedAt = Date.now();
+  const m = {
+    v: MANDATE_FORMAT,
+    agentId: profile.agentId,
+    owner: profile.owner,
+    profile: profileDigest(profile),
+    env: {
+      allowWrite: profile.allowWrite,
+      allowShell: profile.allowShell,
+      allowNetwork: profile.allowNetwork,
+      root: profile.root,
+      budgetCeiling: profile.budgetCeiling,
+      maxRisk: profile.maxRisk
+    },
+    issuedAt,
+    expiresAt: issuedAt + Math.max(1, ttlMs)
+  };
+  return { ...m, signature: signer.sign(mandateCanonical2(m)) };
+}
+function verifyMandate(m, signer) {
+  if (!m || typeof m !== "object" || !m.signature) {
+    return { ok: false, reason: "missing", detail: "no mandate: a profile without a signature issues no authority" };
+  }
+  if (!m.owner || typeof m.owner !== "string") {
+    return { ok: false, reason: "no-owner", detail: "the mandate names no human principal; an anonymous authority is not an authority" };
+  }
+  if (!signer.verify(mandateCanonical2(m), m.signature)) {
+    return { ok: false, reason: "bad-signature", detail: `the mandate's signature does not verify against the owner key ${signer.id}` };
+  }
+  if (Date.now() > m.expiresAt) {
+    return { ok: false, reason: "expired", detail: `the mandate expired at ${new Date(m.expiresAt).toISOString()}` };
+  }
+  return { ok: true, mandate: m };
+}
+function envelopeFromMandate(m, signer) {
+  if (!verifyMandate(m, signer).ok) return null;
+  return {
+    allowWrite: m.env.allowWrite === true,
+    allowShell: m.env.allowShell === true,
+    allowNetwork: m.env.allowNetwork === true,
+    root: String(m.env.root),
+    budgetCeiling: Number(m.env.budgetCeiling) || 0,
+    maxRisk: m.env.maxRisk
+  };
+}
+var FRONT_DOOR_AGENT = "si.front-door.captain";
+var FRONT_DOOR_TTL_MS = 60 * 6e4;
+var DENY_ALL_ENVELOPE = {
+  allowWrite: false,
+  allowShell: false,
+  allowNetwork: false,
+  root: workingRoot(),
+  budgetCeiling: 0,
+  maxRisk: "low"
+};
+var SovereignAuthority = class {
+  bootstrap;
+  ownerSigner = null;
+  issued = /* @__PURE__ */ new Map();
+  revoked = /* @__PURE__ */ new Set();
+  constructor(signer) {
+    this.bootstrap = signer ?? null;
+  }
+  /** ONE authority root. The session key bootstraps (labelled honestly as
+   *  "bootstrap"); binding the OWNER's key re-roots every issuance. */
+  get root() {
+    return this.ownerSigner ? "owner" : "bootstrap";
+  }
+  /** Bind the owner's signer — the human's key becomes THE root. Idempotent
+   *  for the same key; the bootstrap key keeps verifying nothing new. */
+  bindOwnerSigner(s) {
+    this.ownerSigner = s;
+  }
+  /** DROP the owner binding — the vault-lock act. The root reverts to the
+   *  labelled bootstrap, and every owner-signed artifact (mandates AND
+   *  capabilities) stops verifying from this moment: a key that is gone
+   *  cannot vouch. Re-binding with the same passphrase restores the same
+   *  key, and with it the same mandates. */
+  unbindOwnerSigner() {
+    this.ownerSigner = null;
+  }
+  get rootSigner() {
+    this.bootstrap ??= sessionSigner();
+    return this.ownerSigner ?? this.bootstrap;
+  }
+  get signerId() {
+    const bound = this.ownerSigner ?? this.bootstrap;
+    if (bound) return bound.id;
+    return "unbound";
+  }
+  /** The signing root every other authority artifact MUST share —
+   *  capabilities sign with exactly this key. One root, no side keys. */
+  currentRootSigner() {
+    return this.rootSigner;
+  }
+  /** The OWNER act — an explicit re-grant. The ONLY path that lifts a
+   *  revocation; mandateFor refuses revoked seats and never un-revokes. */
+  regrant(node2, ttlMs = 60 * 6e4) {
+    if (this.root !== "owner") {
+      return { ok: false, reason: "owner-required", detail: "only the bound owner root may re-grant a revoked seat" };
+    }
+    const profile = requestProfileOf(node2);
+    this.revoked.delete(profile.agentId);
+    return this.mandateFor(node2, ttlMs);
+  }
+  /** Revoke a seat — the roster's revocation flows through here, so the
+   *  very next governed read fail-closes. Only an owner act (a fresh
+   *  mandate) re-arms the seat. */
+  revoke(agentId) {
+    this.revoked.add(agentId);
+  }
+  isRevoked(agentId) {
+    return this.revoked.has(agentId);
+  }
+  /** The seats under mandate — the IAM roster's source of truth. */
+  enrolledAgents() {
+    return [...this.issued.keys()];
+  }
+  enrolledMandateOf(agentId) {
+    return this.issued.get(agentId)?.mandate ?? null;
+  }
+  /** The mandate for a node's CURRENT profile — issuing one if the profile
+   *  is new or changed, re-verifying the cached one if it is not. Issuance
+   *  here is the owner's standing act (the app owner IS the human principal
+   *  for local seats); every issuance is returned with its signing key id so
+   *  the caller can journal it. */
+  mandateFor(node2, ttlMs = 60 * 6e4) {
+    const profile = requestProfileOf(node2);
+    const digest = profileDigest(profile);
+    if (this.root === "bootstrap" && profileIsEffectful(profile)) {
+      return { ok: false, reason: "bootstrap-effectful-mandate", detail: "bootstrap authority is read-only until the owner root is bound" };
+    }
+    if (this.revoked.has(profile.agentId)) {
+      return { ok: false, reason: "revoked", detail: "this seat is revoked \u2014 authority stays off until the owner re-grants it" };
+    }
+    const cached4 = this.issued.get(profile.agentId);
+    if (cached4 && cached4.digest === digest) {
+      const check2 = verifyMandate(cached4.mandate, this.rootSigner);
+      if (check2.ok) return { ok: true, mandate: check2.mandate, issued: false, signerId: this.rootSigner.id };
+      if (check2.reason === "expired") {
+        const fresh2 = issueMandate(profile, this.rootSigner, ttlMs);
+        this.issued.set(profile.agentId, { mandate: fresh2, digest });
+        return { ok: true, mandate: fresh2, issued: true, signerId: this.rootSigner.id };
+      }
+      return { ok: false, reason: check2.reason, detail: check2.detail };
+    }
+    const fresh = issueMandate(profile, this.rootSigner, ttlMs);
+    this.issued.set(profile.agentId, { mandate: fresh, digest });
+    return { ok: true, mandate: fresh, issued: true, signerId: this.rootSigner.id };
+  }
+  /** The LIVE authority read — called before every governed step.
+   *
+   *  Returns the envelope ONLY if a mandate exists for this node, verifies
+   *  against the owner key, is unexpired, AND was issued over the profile
+   *  the node's configuration carries RIGHT NOW. Anything else returns null
+   *  and the governed loop fail-closes; that null is what makes drift
+   *  detection real instead of decorative. */
+  read(node2) {
+    const profile = requestProfileOf(node2);
+    const cached4 = this.issued.get(profile.agentId);
+    if (!cached4) return null;
+    if (this.revoked.has(profile.agentId)) return null;
+    if (cached4.digest !== profileDigest(profile)) return null;
+    const check2 = verifyMandate(cached4.mandate, this.rootSigner);
+    if (!check2.ok) return null;
+    return envelopeFromMandate(check2.mandate, this.rootSigner);
+  }
+  /** The verified mandate for a node, if one is live. */
+  mandateOf(node2) {
+    const profile = requestProfileOf(node2);
+    const cached4 = this.issued.get(profile.agentId);
+    if (!cached4 || this.revoked.has(profile.agentId) || cached4.digest !== profileDigest(profile)) return null;
+    const check2 = verifyMandate(cached4.mandate, this.rootSigner);
+    return check2.ok ? check2.mandate : null;
+  }
+  /** The front-door envelope — the Captain's own seat, judged by the same
+   *  authority as every other seat. Conservative by construction: the front
+   *  door steers anything risky and refuses anything critical on its own
+   *  authority, exactly like the governed loop. */
+  frontDoorEnvelope() {
+    const claim2 = this.mandateFor({ id: FRONT_DOOR_AGENT, config: { owner: "owner" } }, FRONT_DOOR_TTL_MS);
+    if (!claim2.ok) return DENY_ALL_ENVELOPE;
+    return envelopeFromMandate(claim2.mandate, this.rootSigner) ?? DENY_ALL_ENVELOPE;
+  }
+};
+var sovereign = new SovereignAuthority();
+
+// src/security/capability.ts
+var CAPABILITY_FORMAT = "si.capability.v1";
+var DEFAULT_CAPABILITY_TTL_MS = 10 * 6e4;
+var registry = /* @__PURE__ */ new Map();
+var byApproval = /* @__PURE__ */ new Map();
+function theSigner() {
+  return sovereign.currentRootSigner();
+}
+var capabilityDigest = (base) => createHash2("sha256").update(stableStringify(base)).digest("hex");
+var baseOf = (c) => ({
+  v: c.v,
+  subject: c.subject,
+  audience: c.audience,
+  action: c.action,
+  resource: c.resource,
+  missionId: c.missionId,
+  budget: c.budget,
+  issuedAt: c.issuedAt,
+  expiresAt: c.expiresAt,
+  delegationDepth: c.delegationDepth,
+  approvalId: c.approvalId
+});
+function mintCapability(input2) {
+  const ttl = input2.ttlMs ?? DEFAULT_CAPABILITY_TTL_MS;
+  if (!Number.isFinite(ttl) || ttl <= 0) throw new Error(`capability ttl must be a positive number of ms \u2014 got ${input2.ttlMs}`);
+  const issuedAt = Date.now();
+  const base = {
+    v: CAPABILITY_FORMAT,
+    subject: input2.subject,
+    audience: input2.audience,
+    action: input2.action,
+    resource: input2.resource,
+    missionId: input2.missionId ?? null,
+    budget: input2.budget ?? 0,
+    issuedAt,
+    expiresAt: issuedAt + ttl,
+    delegationDepth: 0,
+    approvalId: input2.approvalId
+  };
+  if (sovereign.root !== "owner" && actionIsEffectful(input2.action)) {
+    throw new Error(`refused: the authority root is still bootstrap \u2014 before the owner's key is bound, no effectful capability may be minted (${input2.action})`);
+  }
+  const capability = { ...base, signature: theSigner().sign(stableStringify(base)) };
+  const digest = capabilityDigest(base);
+  registry.set(digest, { base, mintedRootKeyId: theSigner().id, redeemed: null, invalidated: false });
+  const seen = byApproval.get(input2.approvalId) ?? [];
+  seen.push(digest);
+  byApproval.set(input2.approvalId, seen);
+  return { capability, digest };
+}
+function verifyCapability(c, audience) {
+  if (!c || typeof c !== "object" || !c.signature || c.v !== CAPABILITY_FORMAT) {
+    return { ok: false, reason: "missing", detail: "not a capability" };
+  }
+  if (c.delegationDepth !== 0) {
+    return { ok: false, reason: "depth", detail: `delegation depth ${c.delegationDepth} \u2014 capabilities never re-delegate` };
+  }
+  const base = baseOf(c);
+  if (!theSigner().verify(stableStringify(base), c.signature)) {
+    return { ok: false, reason: "bad-signature", detail: "the capability does not verify against the issuing key \u2014 forged or edited" };
+  }
+  const minted = registry.get(capabilityDigest(base));
+  if (minted?.invalidated) {
+    return { ok: false, reason: "invalidated", detail: "the root that minted this capability was locked out or replaced \u2014 a lock kills outstanding capabilities" };
+  }
+  if (Date.now() > c.expiresAt) {
+    return { ok: false, reason: "expired", detail: `expired ${new Date(c.expiresAt).toISOString()} \u2014 an approval is not a standing power` };
+  }
+  if (c.audience !== audience) {
+    return { ok: false, reason: "wrong-audience", detail: `minted for ${c.audience}, presented to ${audience}` };
+  }
+  return { ok: true, capability: c };
+}
+function redeemCapability(c, audience) {
+  const v = verifyCapability(c, audience);
+  if (!v.ok) return v;
+  const digest = capabilityDigest(baseOf(c));
+  const entry = registry.get(digest);
+  if (entry?.redeemed) {
+    return { ok: false, reason: "already-redeemed", detail: `redeemed by ${entry.redeemed.by} at ${new Date(entry.redeemed.at).toISOString()} \u2014 one approval, one use` };
+  }
+  if (entry) entry.redeemed = { by: audience, at: Date.now() };
   return v;
 }
-var canon = (o) => JSON.stringify(sortDeep(o));
-async function sha256hex(s) {
-  const d = await crypto.subtle.digest("SHA-256", enc.encode(s));
-  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-async function hmacHex(s, secret) {
-  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(s));
-  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-async function buildChainedReceipt(args) {
-  const header = {
-    mission: args.mission,
-    teamId: args.teamId,
-    startedAt: args.startedAt,
-    finishedAt: args.finishedAt,
-    version: args.version,
-    edition: args.edition,
-    autonomyArms: []
-  };
-  const events = [];
-  let prev = "0".repeat(64);
-  let seq3 = 0;
-  const chain = [
-    { kind: "receipt.header", seatId: null, data: { ...header } },
-    ...args.events
-  ];
-  for (const r of chain) {
-    const ts = (/* @__PURE__ */ new Date()).toISOString();
-    const body = { seq: seq3, ts, kind: r.kind, seatId: r.seatId, data: r.data, prev };
-    const hash2 = await sha256hex(canon(body));
-    events.push({ ...body, hash: hash2 });
-    prev = hash2;
-    seq3 += 1;
-  }
-  const seal2 = await hmacHex(prev, VERIFY_SECRET);
-  const sig = await signChainHash(prev);
-  if (sig) {
-    return {
-      format: "si-proof-receipt/2",
-      header,
-      events,
-      seal: seal2,
-      issuer: { keyId: sig.keyId, publicKeyHex: sig.publicKeyHex },
-      signature: sig.sigHex
-    };
-  }
-  return {
-    format: "si-proof-receipt/2",
-    header,
-    events,
-    seal: seal2,
-    issuer: null,
-    signature: null,
-    signatureNote: "This runtime has no Ed25519 (WebCrypto refused or is absent). The receipt is tamper-evident via its HMAC seal but NOT issuer-signed."
-  };
-}
-async function verifyProofReceipt(rc) {
-  const sealSecret = SEAL_SECRET_BY_FORMAT[rc.format];
-  if (!sealSecret) return { ok: false, reason: `unknown format ${rc.format}` };
-  const bound = rc.events[0]?.kind === "receipt.header";
-  const isCurrent = rc.format === "si-proof-receipt/2";
-  if (isCurrent && !bound) {
-    return {
-      ok: false,
-      reason: "receipt header is not bound to the signed chain \u2014 mission, teamId, edition and autonomyArms could be edited freely. A current-format receipt must begin with a receipt.header event."
-    };
-  }
-  if (bound) {
-    const h = rc.events[0].data;
-    if (!h || h.mission !== rc.header?.mission || h.teamId !== rc.header?.teamId || h.edition !== rc.header?.edition) {
-      return { ok: false, reason: "receipt header does not match the bound header event \u2014 the header was edited after signing" };
+function invalidateCapabilitiesForRoot(rootKeyId) {
+  let killed = 0;
+  for (const entry of registry.values()) {
+    if (entry.mintedRootKeyId === rootKeyId && !entry.invalidated) {
+      entry.invalidated = true;
+      killed += 1;
     }
   }
-  let prev = "0".repeat(64);
-  for (const e of rc.events) {
-    if (e.prev !== prev) return { ok: false, reason: `chain broken at seq ${e.seq}` };
-    const { hash: hash2, ...body } = e;
-    const expect = await sha256hex(canon(body));
-    if (expect !== hash2) return { ok: false, reason: `hash mismatch at seq ${e.seq}` };
-    prev = hash2;
-  }
-  const seal2 = await hmacHex(prev, sealSecret);
-  if (seal2 !== rc.seal) return { ok: false, reason: "seal mismatch" };
-  if (rc.signature) {
-    if (!rc.issuer?.publicKeyHex) return { ok: false, reason: "receipt is signed but carries no issuer public key" };
-    const ok = await verifyIssuerSignature(prev, rc.signature, rc.issuer.publicKeyHex);
-    if (!ok) return { ok: false, reason: `issuer signature verification FAILED for chain head ${prev}` };
-  } else if (rc.format !== "mj-proof-receipt/1" && !rc.signatureNote) {
-    return { ok: false, reason: "receipt is neither signed nor carries a signatureNote explaining why not" };
-  }
-  return { ok: true, events: rc.events.length, binding: bound ? "header-bound" : "legacy-unbound", signed: Boolean(rc.signature) };
+  return killed;
 }
-
-// src/selfimpulse/engine/webSearch.ts
-init_guardrail();
-var WEB_PROVIDERS = [
-  {
-    id: "wikipedia",
-    name: "Wikipedia (opensearch)",
-    kind: "secondary",
-    needsConfig: false,
-    note: "keyless, CORS-open \u2014 primary encyclopedic sources",
-    buildUrl: (q) => `https://en.wikipedia.org/w/api.php?action=opensearch&origin=*&format=json&limit=5&search=${encodeURIComponent(q)}`
-  },
-  {
-    id: "hn",
-    name: "Hacker News (Algolia)",
-    kind: "secondary",
-    needsConfig: false,
-    note: "keyless, CORS-open \u2014 recent primary discussion + links",
-    buildUrl: (q) => `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(q)}&hitsPerPage=5`
-  },
-  {
-    id: "github",
-    name: "GitHub repository search",
-    kind: "primary",
-    needsConfig: false,
-    note: "keyless unauthenticated repository search \u2014 first-party code/docs",
-    buildUrl: (q) => `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&per_page=5`
-  },
-  {
-    id: "searxng",
-    name: "SearXNG (self-hosted)",
-    kind: "meta",
-    needsConfig: true,
-    note: "user's own metasearch endpoint \u2014 keeps queries local-first",
-    buildUrl: (q, o) => {
-      if (!o?.searxngRoot) return null;
-      const root = o.searxngRoot.replace(/\/$/, "");
-      if (!checkEgressUrl(`${root}/search`).ok) return null;
-      return `${root}/search?q=${encodeURIComponent(q)}&format=json`;
-    }
-  },
-  {
-    id: "brave",
-    name: "Brave Search (BYO key)",
-    kind: "meta",
-    needsConfig: true,
-    note: "optional key in Providers \u2014 never stored by this module",
-    buildUrl: (q, o) => o?.braveKey ? `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(q)}&count=5` : null
-  }
-];
-function normalizeWikipedia(json2, query) {
-  if (!Array.isArray(json2) || json2.length < 4) return [];
-  const [, titles, snippets, urls] = json2;
-  if (!Array.isArray(titles) || !Array.isArray(urls)) return [];
-  return titles.map((title, i) => ({
-    url: String(urls[i] ?? ""),
-    title: String(title),
-    snippet: String(Array.isArray(snippets) ? snippets[i] ?? "" : ""),
-    source: "wikipedia",
-    kind: "secondary",
-    ts: null,
-    score: scoreHit({ url: String(urls[i] ?? ""), title: String(title), snippet: String(Array.isArray(snippets) ? snippets[i] ?? "" : ""), source: "wikipedia", kind: "secondary", ts: null }, query)
-  })).filter((h) => h.url.length > 0);
-}
-function normalizeHn(json2, query) {
-  const hits = json2?.hits;
-  if (!Array.isArray(hits)) return [];
-  return hits.map((h) => {
-    const o = h;
-    const url2 = o.url ?? (o.objectID ? `https://news.ycombinator.com/item?id=${o.objectID}` : "");
-    return {
-      url: url2,
-      title: String(o.title ?? ""),
-      snippet: String(o.story_text ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 220),
-      source: "hn",
-      kind: "secondary",
-      ts: o.created_at ?? null,
-      score: 0
-    };
-  }).filter((h) => h.url.length > 0).map((h) => ({ ...h, score: scoreHit(h, query) }));
-}
-function normalizeGithub(json2, query) {
-  const items = json2?.items;
-  if (!Array.isArray(items)) return [];
-  return items.map((it2) => {
-    const o = it2;
-    return {
-      url: String(o.html_url ?? ""),
-      title: String(o.full_name ?? ""),
-      snippet: String(o.description ?? "").slice(0, 220),
-      source: "github",
-      kind: "primary",
-      ts: o.pushed_at ?? null,
-      score: 0
-    };
-  }).filter((h) => h.url.length > 0).map((h) => ({ ...h, score: scoreHit(h, query) }));
-}
-var SOURCE_PRIOR = {
-  wikipedia: 0.55,
-  hn: 0.45,
-  github: 0.45,
-  searxng: 0.4,
-  brave: 0.4
-};
-function scoreHit(hit, query) {
-  const qTokens = new Set(
-    query.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3)
-  );
-  if (qTokens.size === 0) return SOURCE_PRIOR[hit.source] * 0.8;
-  const text = `${hit.title} ${hit.snippet}`.toLowerCase();
-  let matched = 0;
-  for (const t of qTokens) if (text.includes(t)) matched += 1;
-  const overlap = matched / qTokens.size;
-  let recency = 0;
-  if (hit.ts) {
-    const ageDays = (Date.now() - Date.parse(hit.ts)) / 864e5;
-    if (Number.isFinite(ageDays)) recency = ageDays < 7 ? 0.1 : ageDays < 90 ? 0.05 : 0;
-  }
-  return Math.min(1, 0.35 * overlap + 0.55 * overlap * SOURCE_PRIOR[hit.source] + recency + 0.1 * SOURCE_PRIOR[hit.source]);
-}
-function dedupeHits(hits) {
-  const seen = /* @__PURE__ */ new Set();
-  const out = [];
-  for (const h of hits) {
-    if (seen.has(h.url)) continue;
-    seen.add(h.url);
-    out.push(h);
-  }
-  return out.sort((a, b) => b.score - a.score);
-}
-async function searchWeb(query, opts = {}) {
-  const doFetch = opts.fetchImpl ?? (opts.useGlobalFetch === false ? void 0 : typeof fetch === "function" ? fetch : void 0);
-  const timeoutMs = opts.timeoutMs ?? 6e3;
-  const outcomes = [];
-  const hits = [];
-  if (!doFetch) {
-    return {
-      query,
-      hits: [],
-      providers: WEB_PROVIDERS.map((p) => ({ id: p.id, ok: false, hits: 0, note: "no fetch available in this host" })),
-      fetchedAt: (/* @__PURE__ */ new Date()).toISOString()
-    };
-  }
-  await Promise.all(
-    WEB_PROVIDERS.map(async (p) => {
-      const url2 = p.buildUrl(query, opts);
-      if (url2 === null) {
-        outcomes.push({ id: p.id, ok: false, hits: 0, note: p.needsConfig ? "not configured" : "no url" });
-        return;
-      }
-      const ctl = new AbortController();
-      const timer = setTimeout(() => ctl.abort(), timeoutMs);
-      try {
-        const res = await doFetch(url2, { signal: ctl.signal, headers: p.id === "github" ? { Accept: "application/vnd.github+json" } : void 0 });
-        if (!res.ok) {
-          outcomes.push({ id: p.id, ok: false, hits: 0, note: `http ${res.status}` });
-          return;
-        }
-        const json2 = await res.json();
-        const norm2 = p.id === "wikipedia" ? normalizeWikipedia(json2, query) : p.id === "hn" ? normalizeHn(json2, query) : p.id === "github" ? normalizeGithub(json2, query) : [];
-        hits.push(...norm2);
-        outcomes.push({ id: p.id, ok: true, hits: norm2.length, note: "ok" });
-      } catch (e) {
-        const msg = e instanceof Error && e.name === "AbortError" ? `timeout ${timeoutMs}ms` : "network/cors";
-        outcomes.push({ id: p.id, ok: false, hits: 0, note: msg });
-      } finally {
-        clearTimeout(timer);
-      }
-    })
-  );
-  return { query, hits: dedupeHits(hits), providers: outcomes, fetchedAt: (/* @__PURE__ */ new Date()).toISOString() };
+var READ_ONLY_OPERATIONS = /* @__PURE__ */ new Set([
+  "read",
+  "list",
+  "get",
+  "status",
+  "search",
+  "describe",
+  "poll",
+  "simulate",
+  "call_status",
+  "export",
+  "help"
+]);
+function actionIsEffectful(action) {
+  return !READ_ONLY_OPERATIONS.has(String(action).trim().toLowerCase());
 }
 
 // src/mission/missionLoop.ts
@@ -2762,10 +2783,10 @@ function parseTeam(raw) {
   const findings = validateTeam(t);
   return { ok: true, team: t, error: null, errors: [], findings };
 }
-var STORAGE_KEY2 = "vh.teams.v1";
+var STORAGE_KEY = "vh.teams.v1";
 function loadSavedTeams() {
   try {
-    const raw = globalThis.localStorage?.getItem(STORAGE_KEY2);
+    const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
     if (!raw) return [];
     const arr = JSON.parse(raw);
     if (!Array.isArray(arr)) return [];
@@ -3229,12 +3250,12 @@ function saveAutonomy(next) {
 init_id();
 
 // src/mission/licensing.ts
-var VERIFY_SECRET2 = "si-commercial-v1-offline";
-var LEGACY_SEAL_SECRET2 = "mj-commercial-v1-offline";
-var SEAL_SECRET_BY_FORMAT2 = {
-  "si-proof-receipt/2": VERIFY_SECRET2,
-  "mj-proof-receipt/2": LEGACY_SEAL_SECRET2,
-  "mj-proof-receipt/1": LEGACY_SEAL_SECRET2
+var VERIFY_SECRET = "si-commercial-v1-offline";
+var LEGACY_SEAL_SECRET = "mj-commercial-v1-offline";
+var SEAL_SECRET_BY_FORMAT = {
+  "si-proof-receipt/2": VERIFY_SECRET,
+  "mj-proof-receipt/2": LEGACY_SEAL_SECRET,
+  "mj-proof-receipt/1": LEGACY_SEAL_SECRET
 };
 var TRIAL_DAYS = 14;
 var LS_LICENSE = "vh.license.v1";
@@ -3382,7 +3403,7 @@ function settleAutonomyAfterRun(args) {
 import * as path from "node:path";
 
 // src/mission/webSearch.ts
-var WEB_PROVIDERS2 = [
+var WEB_PROVIDERS = [
   {
     id: "wikipedia",
     name: "Wikipedia (opensearch)",
@@ -3424,7 +3445,7 @@ var WEB_PROVIDERS2 = [
     buildUrl: (q, o) => o?.braveKey ? `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(q)}&count=5` : null
   }
 ];
-function normalizeWikipedia2(json2, query) {
+function normalizeWikipedia(json2, query) {
   if (!Array.isArray(json2) || json2.length < 4) return [];
   const [, titles, snippets, urls] = json2;
   if (!Array.isArray(titles) || !Array.isArray(urls)) return [];
@@ -3435,10 +3456,10 @@ function normalizeWikipedia2(json2, query) {
     source: "wikipedia",
     kind: "secondary",
     ts: null,
-    score: scoreHit2({ url: String(urls[i] ?? ""), title: String(title), snippet: String(Array.isArray(snippets) ? snippets[i] ?? "" : ""), source: "wikipedia", kind: "secondary", ts: null }, query)
+    score: scoreHit({ url: String(urls[i] ?? ""), title: String(title), snippet: String(Array.isArray(snippets) ? snippets[i] ?? "" : ""), source: "wikipedia", kind: "secondary", ts: null }, query)
   })).filter((h) => h.url.length > 0);
 }
-function normalizeHn2(json2, query) {
+function normalizeHn(json2, query) {
   const hits = json2?.hits;
   if (!Array.isArray(hits)) return [];
   return hits.map((h) => {
@@ -3453,9 +3474,9 @@ function normalizeHn2(json2, query) {
       ts: o.created_at ?? null,
       score: 0
     };
-  }).filter((h) => h.url.length > 0).map((h) => ({ ...h, score: scoreHit2(h, query) }));
+  }).filter((h) => h.url.length > 0).map((h) => ({ ...h, score: scoreHit(h, query) }));
 }
-function normalizeGithub2(json2, query) {
+function normalizeGithub(json2, query) {
   const items = json2?.items;
   if (!Array.isArray(items)) return [];
   return items.map((it2) => {
@@ -3469,20 +3490,20 @@ function normalizeGithub2(json2, query) {
       ts: o.pushed_at ?? null,
       score: 0
     };
-  }).filter((h) => h.url.length > 0).map((h) => ({ ...h, score: scoreHit2(h, query) }));
+  }).filter((h) => h.url.length > 0).map((h) => ({ ...h, score: scoreHit(h, query) }));
 }
-var SOURCE_PRIOR2 = {
+var SOURCE_PRIOR = {
   wikipedia: 0.55,
   hn: 0.45,
   github: 0.45,
   searxng: 0.4,
   brave: 0.4
 };
-function scoreHit2(hit, query) {
+function scoreHit(hit, query) {
   const qTokens = new Set(
     query.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3)
   );
-  if (qTokens.size === 0) return SOURCE_PRIOR2[hit.source] * 0.8;
+  if (qTokens.size === 0) return SOURCE_PRIOR[hit.source] * 0.8;
   const text = `${hit.title} ${hit.snippet}`.toLowerCase();
   let matched = 0;
   for (const t of qTokens) if (text.includes(t)) matched += 1;
@@ -3492,9 +3513,9 @@ function scoreHit2(hit, query) {
     const ageDays = (Date.now() - Date.parse(hit.ts)) / 864e5;
     if (Number.isFinite(ageDays)) recency = ageDays < 7 ? 0.1 : ageDays < 90 ? 0.05 : 0;
   }
-  return Math.min(1, 0.35 * overlap + 0.55 * overlap * SOURCE_PRIOR2[hit.source] + recency + 0.1 * SOURCE_PRIOR2[hit.source]);
+  return Math.min(1, 0.35 * overlap + 0.55 * overlap * SOURCE_PRIOR[hit.source] + recency + 0.1 * SOURCE_PRIOR[hit.source]);
 }
-function dedupeHits2(hits) {
+function dedupeHits(hits) {
   const seen = /* @__PURE__ */ new Set();
   const out = [];
   for (const h of hits) {
@@ -3512,7 +3533,7 @@ function toTriples(hits) {
     kind: h.kind
   }));
 }
-async function searchWeb2(query, opts = {}) {
+async function searchWeb(query, opts = {}) {
   const doFetch = opts.fetchImpl ?? (opts.useGlobalFetch === false ? void 0 : typeof fetch === "function" ? fetch : void 0);
   const timeoutMs = opts.timeoutMs ?? 6e3;
   const outcomes = [];
@@ -3521,12 +3542,12 @@ async function searchWeb2(query, opts = {}) {
     return {
       query,
       hits: [],
-      providers: WEB_PROVIDERS2.map((p) => ({ id: p.id, ok: false, hits: 0, note: "no fetch available in this host" })),
+      providers: WEB_PROVIDERS.map((p) => ({ id: p.id, ok: false, hits: 0, note: "no fetch available in this host" })),
       fetchedAt: (/* @__PURE__ */ new Date()).toISOString()
     };
   }
   await Promise.all(
-    WEB_PROVIDERS2.map(async (p) => {
+    WEB_PROVIDERS.map(async (p) => {
       const url2 = p.buildUrl(query, opts);
       if (url2 === null) {
         outcomes.push({ id: p.id, ok: false, hits: 0, note: p.needsConfig ? "not configured" : "no url" });
@@ -3541,7 +3562,7 @@ async function searchWeb2(query, opts = {}) {
           return;
         }
         const json2 = await res.json();
-        const norm2 = p.id === "wikipedia" ? normalizeWikipedia2(json2, query) : p.id === "hn" ? normalizeHn2(json2, query) : p.id === "github" ? normalizeGithub2(json2, query) : [];
+        const norm2 = p.id === "wikipedia" ? normalizeWikipedia(json2, query) : p.id === "hn" ? normalizeHn(json2, query) : p.id === "github" ? normalizeGithub(json2, query) : [];
         hits.push(...norm2);
         outcomes.push({ id: p.id, ok: true, hits: norm2.length, note: "ok" });
       } catch (e) {
@@ -3552,21 +3573,21 @@ async function searchWeb2(query, opts = {}) {
       }
     })
   );
-  return { query, hits: dedupeHits2(hits), providers: outcomes, fetchedAt: (/* @__PURE__ */ new Date()).toISOString() };
+  return { query, hits: dedupeHits(hits), providers: outcomes, fetchedAt: (/* @__PURE__ */ new Date()).toISOString() };
 }
 
 // src/mission/signing.ts
-var STORAGE_KEY3 = "vh.issuerkey.v1";
-var KEYCHAIN_REF2 = "vh.issuerkey.v1";
-async function keychainBridge2() {
+var STORAGE_KEY2 = "vh.issuerkey.v1";
+var KEYCHAIN_REF = "vh.issuerkey.v1";
+async function keychainBridge() {
   try {
     const native = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
     if (!native) return null;
-    const { ipc: ipc3 } = await Promise.resolve().then(() => (init_client2(), client_exports2));
+    const { ipc: ipc3 } = await Promise.resolve().then(() => (init_client(), client_exports));
     return {
       get: async () => {
         try {
-          const r = await ipc3.secretGet(KEYCHAIN_REF2);
+          const r = await ipc3.secretGet(KEYCHAIN_REF);
           return r?.present && r.value ? r.value : null;
         } catch {
           return null;
@@ -3574,7 +3595,7 @@ async function keychainBridge2() {
       },
       set: async (json2) => {
         try {
-          const r = await ipc3.secretSet(KEYCHAIN_REF2, json2);
+          const r = await ipc3.secretSet(KEYCHAIN_REF, json2);
           return Boolean(r?.stored);
         } catch {
           return false;
@@ -3585,28 +3606,28 @@ async function keychainBridge2() {
     return null;
   }
 }
-var cached2 = null;
-function toHex2(bytes) {
+var cached = null;
+function toHex(bytes) {
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
-function fromHex2(hex3) {
+function fromHex(hex3) {
   const out = new Uint8Array(new ArrayBuffer(hex3.length / 2));
   for (let i = 0; i < out.length; i++) out[i] = parseInt(hex3.slice(i * 2, i * 2 + 2), 16);
   return out;
 }
-function ed25519Available2() {
+function ed25519Available() {
   try {
     return typeof crypto !== "undefined" && Boolean(crypto.subtle) && typeof crypto.subtle.generateKey === "function";
   } catch {
     return false;
   }
 }
-async function ensureIssuerIdentity2() {
-  if (cached2) return cached2;
-  if (!ed25519Available2()) return null;
-  const bridge = await keychainBridge2();
+async function ensureIssuerIdentity() {
+  if (cached) return cached;
+  if (!ed25519Available()) return null;
+  const bridge = await keychainBridge();
   try {
-    const raw = bridge ? await bridge.get() : globalThis.localStorage?.getItem(STORAGE_KEY3);
+    const raw = bridge ? await bridge.get() : globalThis.localStorage?.getItem(STORAGE_KEY2);
     if (raw) {
       const stored = JSON.parse(raw);
       if (stored?.publicKeyHex && stored?.privateJwk) {
@@ -3616,8 +3637,8 @@ async function ensureIssuerIdentity2() {
           publicKeyHex: stored.publicKeyHex,
           createdAt: stored.createdAt ?? (/* @__PURE__ */ new Date(0)).toISOString()
         };
-        cached2 = { identity, privateKey };
-        return cached2;
+        cached = { identity, privateKey };
+        return cached;
       }
     }
   } catch {
@@ -3625,7 +3646,7 @@ async function ensureIssuerIdentity2() {
   try {
     const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
     const rawPub = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
-    const publicKeyHex = toHex2(rawPub);
+    const publicKeyHex = toHex(rawPub);
     const identity = {
       keyId: `si-issuer-${publicKeyHex.slice(0, 12)}`,
       publicKeyHex,
@@ -3638,39 +3659,39 @@ async function ensureIssuerIdentity2() {
     } catch {
     }
     try {
-      globalThis.localStorage?.setItem(STORAGE_KEY3, persisted);
+      globalThis.localStorage?.setItem(STORAGE_KEY2, persisted);
     } catch {
     }
-    cached2 = { identity, privateKey: pair.privateKey };
-    return cached2;
+    cached = { identity, privateKey: pair.privateKey };
+    return cached;
   } catch {
     return null;
   }
 }
-async function signHexDigest2(hexDigest) {
-  const holder = await ensureIssuerIdentity2();
+async function signHexDigest(hexDigest) {
+  const holder = await ensureIssuerIdentity();
   if (!holder) return null;
   try {
-    const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, holder.privateKey, fromHex2(hexDigest)));
-    return { alg: "EdDSA", keyId: holder.identity.keyId, publicKeyHex: holder.identity.publicKeyHex, sigHex: toHex2(sig) };
+    const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, holder.privateKey, fromHex(hexDigest)));
+    return { alg: "EdDSA", keyId: holder.identity.keyId, publicKeyHex: holder.identity.publicKeyHex, sigHex: toHex(sig) };
   } catch {
     return null;
   }
 }
-async function signChainHash2(chainHashHex) {
-  return signHexDigest2(chainHashHex);
+async function signChainHash(chainHashHex) {
+  return signHexDigest(chainHashHex);
 }
-async function verifyIssuerSignature2(chainHashHex, sigHex, publicKeyHex) {
-  if (!ed25519Available2()) return false;
+async function verifyIssuerSignature(chainHashHex, sigHex, publicKeyHex) {
+  if (!ed25519Available()) return false;
   try {
-    const publicKey = await crypto.subtle.importKey("raw", fromHex2(publicKeyHex), { name: "Ed25519" }, false, ["verify"]);
-    return await crypto.subtle.verify({ name: "Ed25519" }, publicKey, fromHex2(sigHex), fromHex2(chainHashHex));
+    const publicKey = await crypto.subtle.importKey("raw", fromHex(publicKeyHex), { name: "Ed25519" }, false, ["verify"]);
+    return await crypto.subtle.verify({ name: "Ed25519" }, publicKey, fromHex(sigHex), fromHex(chainHashHex));
   } catch {
     return false;
   }
 }
 function signingSupported() {
-  return ed25519Available2();
+  return ed25519Available();
 }
 
 // src/mission/learningReceipt.ts
@@ -3700,7 +3721,7 @@ async function seal(base) {
   const digest = await sha256Hex(canonicalEnvelopeInput(base));
   const env = { ...base, digest };
   if (signingSupported()) {
-    const sig = await signHexDigest2(digest);
+    const sig = await signHexDigest(digest);
     if (sig) env.signature = sig;
     else env.signatureNote = "Ed25519 unavailable in this runtime; envelope unsigned.";
   } else {
@@ -3836,7 +3857,7 @@ async function verifyEnvelope(e) {
   const recomputed = await sha256Hex(canonicalEnvelopeInput(rest));
   if (recomputed !== digest) return { ok: false, reason: "digest mismatch \u2014 envelope was altered" };
   if (e.signature) {
-    const good = await verifyIssuerSignature2(digest, e.signature.sigHex, e.signature.publicKeyHex);
+    const good = await verifyIssuerSignature(digest, e.signature.sigHex, e.signature.publicKeyHex);
     if (!good) return { ok: false, reason: "signature does not verify" };
   }
   return { ok: true };
@@ -4678,6 +4699,12 @@ function gitApi(runner) {
 
 // src/mission/caps.ts
 var DEFAULT_CAPS = { timeoutMs: 10 * 60 * 1e3, maxTurns: 40, maxCostUsd: 5 };
+var INBOUND_DELEGATION_CAPS = {
+  maxCostUsd: 2,
+  maxTurns: 40,
+  maxInvocations: 4,
+  maxWallClockMs: 30 * 6e4
+};
 var CapLedger = class {
   caps;
   state;
@@ -4688,8 +4715,39 @@ var CapLedger = class {
   beginInvocation() {
     this.state.invocationsUsed += 1;
   }
-  /** Can another invocation start at all? Checked BEFORE dispatch — refusing is control, charging after is bookkeeping. */
+  /**
+   * Can another invocation start at all? Checked BEFORE dispatch — refusing is control, charging after is bookkeeping.
+   *
+   * TWO FAIL-CLOSED RULES, both added because an unpopulated `MissionCaps` used
+   * to mean "no ceiling at all":
+   *
+   *  1. A DECLARED-BUT-UNREADABLE CAP IS A REFUSAL, NOT AN ABSENT CAP. Every
+   *     guard below reads `?? 0`, and `NaN > 0` is false, so `{ maxTurns: NaN }`
+   *     and `{ maxCostUsd: -1 }` each silently disable themselves. A ceiling
+   *     nobody can read is not a ceiling, so any declared value that is not a
+   *     finite non-negative number refuses the dispatch and names the field.
+   *
+   *  2. A LEDGER WITH NO ARMED GUARD ADMITS NOTHING. `new CapLedger({})` scored
+   *     zero on every guard, so it returned `null` — admit, forever — which meant
+   *     the federation path's `new CapLedger({})` was an unbounded budget for
+   *     whoever reached the port. There is no honest reading of "no ceiling was
+   *     declared" as "run without limit", so it refuses and says so.
+   *
+   * An explicit `0` is still this build's way of saying "this one dimension is
+   * unlimited" (`mayRunTurn` documents the same convention) and stays honoured.
+   * What is refused is the ABSENCE of every armed guard, not a chosen zero.
+   *
+   * `missionLoop` constructs a ledger with `maxTurns: 120` and a numeric
+   * `maxCostUsd`, so rule 2 never fires on the mission path; rule 1 only fires
+   * on a malformed value, which is the direction it is meant to fail.
+   */
   admissionError(now = Date.now()) {
+    for (const [field, value] of Object.entries(this.caps)) {
+      if (value === void 0 || value === null) continue;
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+        return `the ${field} ceiling is declared as ${JSON.stringify(value)}, which is not a usable number \u2014 refusing rather than treating a broken ceiling as no ceiling`;
+      }
+    }
     const maxCost = this.caps.maxCostUsd ?? 0;
     if (maxCost > 0 && this.state.spentUsd >= maxCost) {
       return `the mission has already spent $${this.state.spentUsd.toFixed(4)} of its $${maxCost.toFixed(4)} ceiling`;
@@ -4705,6 +4763,9 @@ var CapLedger = class {
     const maxWall = this.caps.maxWallClockMs ?? this.caps.timeoutMs ?? 0;
     if (maxWall > 0 && now - this.state.startedAt >= maxWall) {
       return `the mission's ${Math.round(maxWall / 1e3)}s wall clock has elapsed`;
+    }
+    if (maxCost <= 0 && maxTurns <= 0 && maxInvocations <= 0 && maxWall <= 0) {
+      return `no ceiling is set \u2014 cost, turns, invocations and the wall clock are all absent or zero, so this ledger would admit without limit; dispatch is refused until a real ceiling is declared`;
     }
     return null;
   }
@@ -5401,7 +5462,7 @@ async function verifyActionPacket(p) {
   const recomputed = await sha256Hex(canonicalPacketInput(rest));
   if (recomputed !== digest) return { ok: false, reason: "digest mismatch \u2014 packet was altered" };
   if (p.signature) {
-    const good = await verifyIssuerSignature2(digest, p.signature.sigHex, p.signature.publicKeyHex);
+    const good = await verifyIssuerSignature(digest, p.signature.sigHex, p.signature.publicKeyHex);
     if (!good) return { ok: false, reason: "signature does not verify" };
   }
   return { ok: true };
@@ -5413,6 +5474,42 @@ function packetAllowsExecution(p) {
     return { ok: false, reason: `irreversible action requires explicit "allowed" permission; packet ${p.id} says "${p.permission}"` };
   }
   return { ok: true, reason: `packet ${p.id} permits execution (${p.permission}${p.reversible ? ", reversible" : ", irreversible+allowed"})` };
+}
+
+// src/engine/finops.ts
+var MAX_ENTRIES = 2e3;
+var all = [];
+function recordSeatRun(e) {
+  all.push(e);
+  if (all.length > MAX_ENTRIES) all = all.slice(-MAX_ENTRIES);
+}
+
+// src/mission/runCheckpoints.ts
+import { createHash as createHash3 } from "node:crypto";
+var chainOf = /* @__PURE__ */ new Map();
+var states = /* @__PURE__ */ new Map();
+var digestOf = (s) => createHash3("sha256").update(stableStringify(s ?? null)).digest("hex");
+function checkpoint(runId, missionId, step, label, state) {
+  const chain = chainOf.get(runId) ?? [];
+  const prev = chain[chain.length - 1];
+  const at = Date.now();
+  const stateDigest = digestOf(state);
+  const prevDigest = prev ? prev.entryDigest : "";
+  const entryDigest = createHash3("sha256").update(`${missionId}|${step}|${label}|${stateDigest}|${prevDigest}|${at}`).digest("hex");
+  const cp = {
+    runId,
+    missionId,
+    step,
+    label,
+    stateDigest,
+    prevDigest,
+    entryDigest,
+    at
+  };
+  chain.push(cp);
+  chainOf.set(runId, chain);
+  states.set(cp.stateDigest, stableStringify(state ?? null));
+  return cp;
 }
 
 // src/mission/consensusEngine.ts
@@ -5647,7 +5744,7 @@ Spent: $${(spentUsd2 || 0).toFixed(4)}`, "orchestrator", "finding");
   }
   if (req.autonomy?.webEvidence !== false && req.team.seats.some((st) => st.role === "planner" || st.role === "reviewer")) {
     try {
-      const web = await searchWeb2(req.objective.slice(0, 80), { timeoutMs: 4e3 });
+      const web = await searchWeb(req.objective.slice(0, 80), { timeoutMs: 4e3 });
       const live = web.providers.filter((pr) => pr.ok);
       if (live.length > 0) {
         autonomyLines.push(`[web evidence] ${web.hits.length} deduplicated hit(s) from ${live.map((pr) => pr.id).join(", ")}:`);
@@ -5797,6 +5894,8 @@ ${lessonLines.map((l) => `- ${l}`).join("\n")}
   let budgetStop = null;
   let snapshot = emptySnapshot;
   const committedBranches = [];
+  let waveNo = 0;
+  const durableRunId = `run:${req.missionSlug}`;
   for (const wave of waves) {
     if (waveFailed) {
       const skipReason = budgetStop ? `Spend authority ran out \u2014 ${budgetStop}` : "An earlier wave did not complete, so this seat was skipped rather than asked to review work that does not exist.";
@@ -5879,7 +5978,24 @@ ${lessonLines.map((l) => `- ${l}`).join("\n")}
       const tk = tickets.get(r.seatId);
       if (budgetGate && tk) budgetAccounting.overrun += budgetGate.settle(tk, r.chargedUsd ?? 0).overrunUsd;
       if ((r.usage?.costUsd === null || r.usage?.costUsd === void 0) && (r.usage?.tokens ?? 0) > 0) budgetAccounting.tokensOnly.add(r.seatId);
+      recordSeatRun({
+        at: Date.now(),
+        seatId: r.seatId,
+        missionId: req.missionSlug,
+        usd: r.usage?.costUsd ?? null,
+        tokens: r.usage?.tokens ?? null,
+        turns: r.usage?.turns ?? null,
+        verdict: r.verified ? "verified" : r.outcome === "completed" ? "completed" : r.outcome,
+        source: r.usage?.source ?? "unknown"
+      });
     }
+    checkpoint(durableRunId, req.missionSlug, waveNo, "wave settled", {
+      settled: results.length,
+      verified: results.filter((x) => x.verified).length,
+      budgetStop,
+      failed: waveFailed
+    });
+    waveNo += 1;
     if (req.rootEnvelope && req.rootEnvelope.budgetUsd !== null && !budgetStop) {
       const spentSoFar = seats.reduce((sum, r) => sum + (r.chargedUsd ?? 0), 0);
       const bc = budgetCheck(req.rootEnvelope, spentSoFar);
@@ -6370,7 +6486,7 @@ function buildSummary(o) {
 }
 
 // src/mission/hostDeps.ts
-init_client2();
+init_client();
 function hostRunnerDeps(opts) {
   const isNative = useTauri();
   const testCmd = opts?.testCommand?.trim().split(/\s+/) ?? ["npm", "test"];
@@ -6387,7 +6503,7 @@ function hostRunnerDeps(opts) {
       let chosen = null;
       for (const kind of candidates) {
         const secret_ref = kind === "ollama" ? "provider.ollama.local" : `provider.${kind}.production`;
-        const have = await ipc2.secretExists([secret_ref]);
+        const have = await ipc.secretExists([secret_ref]);
         if (have?.[secret_ref]) {
           chosen = {
             provider: kind,
@@ -6408,7 +6524,7 @@ function hostRunnerDeps(opts) {
         };
       }
       try {
-        const out = await ipc2.llmChat({
+        const out = await ipc.llmChat({
           provider: chosen.provider,
           model: chosen.model,
           secret_ref: chosen.secret_ref,
@@ -6451,7 +6567,7 @@ function hostRunnerDeps(opts) {
     git: async (args, cwd) => {
       if (isNative) {
         try {
-          const r = await ipc2.shellExec("git", args, cwd, 60);
+          const r = await ipc.shellExec("git", args, cwd, 60);
           return { ok: r.code === 0, exitCode: r.code ?? null, stdout: r.stdout ?? "", stderr: r.stderr ?? "", reason: r.code === 0 ? null : r.stderr || "git command failed" };
         } catch (e) {
           return { ok: false, exitCode: null, stdout: "", stderr: String(e), reason: String(e) };
@@ -6460,12 +6576,12 @@ function hostRunnerDeps(opts) {
       return { ok: true, exitCode: 0, stdout: "ok", stderr: "", reason: null };
     },
     writeFile: async (filePath, contents) => {
-      if (isNative) await ipc2.fsWrite(filePath, contents).catch(() => void 0);
+      if (isNative) await ipc.fsWrite(filePath, contents).catch(() => void 0);
     },
     verify: async (cwd) => {
       if (isNative) {
         try {
-          const r = await ipc2.shellExec(testCmd[0] ?? "npm", testCmd.slice(1), cwd, 120);
+          const r = await ipc.shellExec(testCmd[0] ?? "npm", testCmd.slice(1), cwd, 120);
           return { exitCode: r.code ?? 0, stdout: r.stdout ?? "", stderr: r.stderr ?? "", durationMs: 0, timedOut: false };
         } catch (e) {
           return { exitCode: 1, stdout: "", stderr: String(e), durationMs: 0, timedOut: false };
@@ -6478,24 +6594,24 @@ function hostRunnerDeps(opts) {
 }
 
 // src/mission/receipts.ts
-var enc2 = new TextEncoder();
-function sortDeep2(v) {
-  if (Array.isArray(v)) return v.map(sortDeep2);
+var enc = new TextEncoder();
+function sortDeep(v) {
+  if (Array.isArray(v)) return v.map(sortDeep);
   if (v && typeof v === "object") {
     const out = {};
-    for (const k of Object.keys(v).sort()) out[k] = sortDeep2(v[k]);
+    for (const k of Object.keys(v).sort()) out[k] = sortDeep(v[k]);
     return out;
   }
   return v;
 }
-var canon2 = (o) => JSON.stringify(sortDeep2(o));
-async function sha256hex2(s) {
-  const d = await crypto.subtle.digest("SHA-256", enc2.encode(s));
+var canon = (o) => JSON.stringify(sortDeep(o));
+async function sha256hex(s) {
+  const d = await crypto.subtle.digest("SHA-256", enc.encode(s));
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
-async function hmacHex2(s, secret) {
-  const key = await crypto.subtle.importKey("raw", enc2.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const sig = await crypto.subtle.sign("HMAC", key, enc2.encode(s));
+async function hmacHex(s, secret) {
+  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(s));
   return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 async function buildProofReceipt(args) {
@@ -6505,7 +6621,7 @@ async function buildProofReceipt(args) {
     const data = { role: s.role, outcome: s.outcome, verified: s.verified };
     if (s.harness) {
       data.harness = s.harness;
-      data.identity = await sha256hex2(`${s.seatId}|${s.role}|${s.harness}`);
+      data.identity = await sha256hex(`${s.seatId}|${s.role}|${s.harness}`);
     }
     seatEvents.push({ kind: "seat.outcome", seatId: s.seatId, data });
   }
@@ -6558,13 +6674,13 @@ async function buildProofReceipt(args) {
   for (const r of chain) {
     const ts = (/* @__PURE__ */ new Date()).toISOString();
     const body = { seq: seq3, ts, kind: r.kind, seatId: r.seatId, data: r.data, prev };
-    const hash2 = await sha256hex2(canon2(body));
+    const hash2 = await sha256hex(canon(body));
     events.push({ ...body, hash: hash2 });
     prev = hash2;
     seq3 += 1;
   }
-  const seal2 = await hmacHex2(prev, VERIFY_SECRET2);
-  const sig = await signChainHash2(prev);
+  const seal2 = await hmacHex(prev, VERIFY_SECRET);
+  const sig = await signChainHash(prev);
   if (sig) {
     return {
       format: "si-proof-receipt/2",
@@ -6585,7 +6701,7 @@ async function buildProofReceipt(args) {
     signatureNote: "This runtime has no Ed25519 (WebCrypto refused or is absent). The receipt is tamper-evident via its HMAC seal but NOT issuer-signed."
   };
 }
-async function verifyProofReceipt2(rc) {
+async function verifyProofReceipt(rc) {
   if (rc.format !== "si-proof-receipt/2" && rc.format !== "mj-proof-receipt/2" && rc.format !== "mj-proof-receipt/1") return { ok: false, reason: "unknown format" };
   const HEADER_KIND = "receipt.header";
   const bound = rc.events[0]?.kind === HEADER_KIND;
@@ -6606,12 +6722,12 @@ async function verifyProofReceipt2(rc) {
   for (const e of rc.events) {
     if (e.prev !== prev) return { ok: false, reason: `chain broken at seq ${e.seq}` };
     const { hash: hash2, ...body } = e;
-    const expect = await sha256hex2(canon2(body));
+    const expect = await sha256hex(canon(body));
     if (expect !== hash2) return { ok: false, reason: `hash mismatch at seq ${e.seq}` };
     prev = hash2;
   }
-  const sealSecret = SEAL_SECRET_BY_FORMAT2[rc.format] ?? VERIFY_SECRET2;
-  const seal2 = await hmacHex2(prev, sealSecret);
+  const sealSecret = SEAL_SECRET_BY_FORMAT[rc.format] ?? VERIFY_SECRET;
+  const seal2 = await hmacHex(prev, sealSecret);
   if (seal2 !== rc.seal) return { ok: false, reason: "seal mismatch" };
   const isCurrent = rc.format === "si-proof-receipt/2";
   if (isCurrent && !rc.signature) {
@@ -6622,7 +6738,7 @@ async function verifyProofReceipt2(rc) {
   }
   if (rc.signature) {
     if (!rc.issuer?.publicKeyHex) return { ok: false, reason: "receipt is signed but carries no issuer public key" };
-    const ok = await verifyIssuerSignature2(prev, rc.signature, rc.issuer.publicKeyHex);
+    const ok = await verifyIssuerSignature(prev, rc.signature, rc.issuer.publicKeyHex);
     if (!ok) return { ok: false, reason: `issuer signature verification FAILED for chain head ${prev}` };
   }
   return { ok: true, events: rc.events.length, binding: bound ? "header-bound" : "legacy-unbound", signed: Boolean(rc.signature) };
@@ -6690,10 +6806,10 @@ var LocalTestHarness = class {
   }
 };
 var localTestHarness = new LocalTestHarness();
-var registry = /* @__PURE__ */ new Map();
-registry.set("local-test", localTestHarness);
+var registry2 = /* @__PURE__ */ new Map();
+registry2.set("local-test", localTestHarness);
 function getHarness(id) {
-  return registry.get(id) ?? null;
+  return registry2.get(id) ?? null;
 }
 
 // src/mission/missionLoop.ts
@@ -6928,7 +7044,7 @@ async function runMissionLoopCycle(args) {
         ...arena ? { arenaGate: { gate: arena.gate, digest: arena.digest, summary: report.arena?.summary ?? "", total: report.arena?.total ?? 0, defended: report.arena?.defended ?? 0, breached: report.arena?.breached ?? 0 } } : {}
       }
     });
-    const verifiedReceipt = (await verifyProofReceipt2(receipt)).ok;
+    const verifiedReceipt = (await verifyProofReceipt(receipt)).ok;
     const autonomyNow = loadAutonomy();
     const record2 = {
       cycleNo,
@@ -7039,6 +7155,433 @@ async function runSelfImpulseMission(objective, missionId, opts = {}) {
     trace,
     runMs: Date.now() - t0
   };
+}
+
+// src/selfimpulse/engine/signing.ts
+var STORAGE_KEY3 = "selfimpulse.issuerkey.v1";
+var KEYCHAIN_REF2 = "selfimpulse.issuerkey.v1";
+async function keychainBridge2() {
+  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return null;
+  try {
+    const { ipc: ipc3 } = await Promise.resolve().then(() => (init_client2(), client_exports2));
+    return {
+      get: async () => {
+        try {
+          const r = await ipc3.secretGet(KEYCHAIN_REF2);
+          return r.present && r.value ? r.value : null;
+        } catch {
+          return null;
+        }
+      },
+      set: async (json2) => {
+        try {
+          const r = await ipc3.secretSet(KEYCHAIN_REF2, json2);
+          return Boolean(r.stored);
+        } catch {
+          return false;
+        }
+      }
+    };
+  } catch {
+    return null;
+  }
+}
+var cached2 = null;
+function toHex2(bytes) {
+  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+function fromHex2(hex3) {
+  const out = new Uint8Array(new ArrayBuffer(hex3.length / 2));
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex3.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+function ed25519Available2() {
+  try {
+    return typeof crypto !== "undefined" && Boolean(crypto.subtle) && typeof crypto.subtle.generateKey === "function";
+  } catch {
+    return false;
+  }
+}
+async function ensureIssuerIdentity2() {
+  if (cached2) return cached2;
+  if (!ed25519Available2()) return null;
+  const bridge = await keychainBridge2();
+  try {
+    const raw = bridge ? await bridge.get() : globalThis.localStorage?.getItem(STORAGE_KEY3);
+    if (raw) {
+      const stored = JSON.parse(raw);
+      if (stored?.publicKeyHex && stored?.privateJwk) {
+        const privateKey = await crypto.subtle.importKey("jwk", stored.privateJwk, { name: "Ed25519" }, true, ["sign"]);
+        const identity = {
+          keyId: `selfimpulse-issuer-${stored.publicKeyHex.slice(0, 12)}`,
+          publicKeyHex: stored.publicKeyHex,
+          createdAt: stored.createdAt ?? (/* @__PURE__ */ new Date(0)).toISOString()
+        };
+        cached2 = { identity, privateKey };
+        return cached2;
+      }
+    }
+  } catch {
+  }
+  try {
+    const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+    const rawPub = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
+    const publicKeyHex = toHex2(rawPub);
+    const identity = {
+      keyId: `selfimpulse-issuer-${publicKeyHex.slice(0, 12)}`,
+      publicKeyHex,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    const privateJwk = await crypto.subtle.exportKey("jwk", pair.privateKey);
+    const persisted = JSON.stringify({ publicKeyHex, privateJwk, createdAt: identity.createdAt });
+    try {
+      if (bridge) await bridge.set(persisted);
+    } catch {
+    }
+    try {
+      globalThis.localStorage?.setItem(STORAGE_KEY3, persisted);
+    } catch {
+    }
+    cached2 = { identity, privateKey: pair.privateKey };
+    return cached2;
+  } catch {
+    return null;
+  }
+}
+async function signHexDigest2(hexDigest) {
+  const holder = await ensureIssuerIdentity2();
+  if (!holder) return null;
+  try {
+    const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, holder.privateKey, fromHex2(hexDigest)));
+    return { alg: "EdDSA", keyId: holder.identity.keyId, publicKeyHex: holder.identity.publicKeyHex, sigHex: toHex2(sig) };
+  } catch {
+    return null;
+  }
+}
+async function signChainHash2(chainHashHex) {
+  return signHexDigest2(chainHashHex);
+}
+async function verifyIssuerSignature2(chainHashHex, sigHex, publicKeyHex) {
+  if (!ed25519Available2()) return false;
+  try {
+    const publicKey = await crypto.subtle.importKey("raw", fromHex2(publicKeyHex), { name: "Ed25519" }, false, ["verify"]);
+    return await crypto.subtle.verify({ name: "Ed25519" }, publicKey, fromHex2(sigHex), fromHex2(chainHashHex));
+  } catch {
+    return false;
+  }
+}
+
+// src/selfimpulse/engine/proof.ts
+var VERIFY_SECRET2 = "si-commercial-v1-offline";
+var LEGACY_SEAL_SECRET2 = "mj-commercial-v1-offline";
+var SEAL_SECRET_BY_FORMAT2 = {
+  "si-proof-receipt/2": VERIFY_SECRET2,
+  "mj-proof-receipt/2": LEGACY_SEAL_SECRET2,
+  "mj-proof-receipt/1": LEGACY_SEAL_SECRET2
+};
+var enc2 = new TextEncoder();
+function sortDeep2(v) {
+  if (Array.isArray(v)) return v.map(sortDeep2);
+  if (v && typeof v === "object") {
+    const out = {};
+    for (const k of Object.keys(v).sort()) out[k] = sortDeep2(v[k]);
+    return out;
+  }
+  return v;
+}
+var canon2 = (o) => JSON.stringify(sortDeep2(o));
+async function sha256hex2(s) {
+  const d = await crypto.subtle.digest("SHA-256", enc2.encode(s));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+async function hmacHex2(s, secret) {
+  const key = await crypto.subtle.importKey("raw", enc2.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, enc2.encode(s));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+async function buildChainedReceipt(args) {
+  const header = {
+    mission: args.mission,
+    teamId: args.teamId,
+    startedAt: args.startedAt,
+    finishedAt: args.finishedAt,
+    version: args.version,
+    edition: args.edition,
+    autonomyArms: []
+  };
+  const events = [];
+  let prev = "0".repeat(64);
+  let seq3 = 0;
+  const chain = [
+    { kind: "receipt.header", seatId: null, data: { ...header } },
+    ...args.events
+  ];
+  for (const r of chain) {
+    const ts = (/* @__PURE__ */ new Date()).toISOString();
+    const body = { seq: seq3, ts, kind: r.kind, seatId: r.seatId, data: r.data, prev };
+    const hash2 = await sha256hex2(canon2(body));
+    events.push({ ...body, hash: hash2 });
+    prev = hash2;
+    seq3 += 1;
+  }
+  const seal2 = await hmacHex2(prev, VERIFY_SECRET2);
+  const sig = await signChainHash2(prev);
+  if (sig) {
+    return {
+      format: "si-proof-receipt/2",
+      header,
+      events,
+      seal: seal2,
+      issuer: { keyId: sig.keyId, publicKeyHex: sig.publicKeyHex },
+      signature: sig.sigHex
+    };
+  }
+  return {
+    format: "si-proof-receipt/2",
+    header,
+    events,
+    seal: seal2,
+    issuer: null,
+    signature: null,
+    signatureNote: "This runtime has no Ed25519 (WebCrypto refused or is absent). The receipt is tamper-evident via its HMAC seal but NOT issuer-signed."
+  };
+}
+async function verifyProofReceipt2(rc) {
+  const sealSecret = SEAL_SECRET_BY_FORMAT2[rc.format];
+  if (!sealSecret) return { ok: false, reason: `unknown format ${rc.format}` };
+  const bound = rc.events[0]?.kind === "receipt.header";
+  const isCurrent = rc.format === "si-proof-receipt/2";
+  if (isCurrent && !bound) {
+    return {
+      ok: false,
+      reason: "receipt header is not bound to the signed chain \u2014 mission, teamId, edition and autonomyArms could be edited freely. A current-format receipt must begin with a receipt.header event."
+    };
+  }
+  if (bound) {
+    const h = rc.events[0].data;
+    if (!h || h.mission !== rc.header?.mission || h.teamId !== rc.header?.teamId || h.edition !== rc.header?.edition) {
+      return { ok: false, reason: "receipt header does not match the bound header event \u2014 the header was edited after signing" };
+    }
+  }
+  let prev = "0".repeat(64);
+  for (const e of rc.events) {
+    if (e.prev !== prev) return { ok: false, reason: `chain broken at seq ${e.seq}` };
+    const { hash: hash2, ...body } = e;
+    const expect = await sha256hex2(canon2(body));
+    if (expect !== hash2) return { ok: false, reason: `hash mismatch at seq ${e.seq}` };
+    prev = hash2;
+  }
+  const seal2 = await hmacHex2(prev, sealSecret);
+  if (seal2 !== rc.seal) return { ok: false, reason: "seal mismatch" };
+  if (rc.signature) {
+    if (!rc.issuer?.publicKeyHex) return { ok: false, reason: "receipt is signed but carries no issuer public key" };
+    const ok = await verifyIssuerSignature2(prev, rc.signature, rc.issuer.publicKeyHex);
+    if (!ok) return { ok: false, reason: `issuer signature verification FAILED for chain head ${prev}` };
+  } else if (rc.format !== "mj-proof-receipt/1" && !rc.signatureNote) {
+    return { ok: false, reason: "receipt is neither signed nor carries a signatureNote explaining why not" };
+  }
+  return { ok: true, events: rc.events.length, binding: bound ? "header-bound" : "legacy-unbound", signed: Boolean(rc.signature) };
+}
+
+// src/selfimpulse/engine/webSearch.ts
+init_guardrail();
+init_egressNet();
+var WEB_PROVIDERS2 = [
+  {
+    id: "wikipedia",
+    name: "Wikipedia (opensearch)",
+    kind: "secondary",
+    needsConfig: false,
+    note: "keyless, CORS-open \u2014 primary encyclopedic sources",
+    buildUrl: (q) => `https://en.wikipedia.org/w/api.php?action=opensearch&origin=*&format=json&limit=5&search=${encodeURIComponent(q)}`
+  },
+  {
+    id: "hn",
+    name: "Hacker News (Algolia)",
+    kind: "secondary",
+    needsConfig: false,
+    note: "keyless, CORS-open \u2014 recent primary discussion + links",
+    buildUrl: (q) => `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(q)}&hitsPerPage=5`
+  },
+  {
+    id: "github",
+    name: "GitHub repository search",
+    kind: "primary",
+    needsConfig: false,
+    note: "keyless unauthenticated repository search \u2014 first-party code/docs",
+    buildUrl: (q) => `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&per_page=5`
+  },
+  {
+    id: "searxng",
+    name: "SearXNG (self-hosted)",
+    kind: "meta",
+    needsConfig: true,
+    note: "user's own metasearch endpoint \u2014 keeps queries local-first",
+    buildUrl: (q, o) => {
+      if (!o?.searxngRoot) return null;
+      const root = o.searxngRoot.replace(/\/$/, "");
+      if (!checkEgressUrl(`${root}/search`).ok) return null;
+      return `${root}/search?q=${encodeURIComponent(q)}&format=json`;
+    }
+  },
+  {
+    id: "brave",
+    name: "Brave Search (BYO key)",
+    kind: "meta",
+    needsConfig: true,
+    note: "optional key in Providers \u2014 never stored by this module",
+    buildUrl: (q, o) => o?.braveKey ? `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(q)}&count=5` : null
+  }
+];
+function normalizeWikipedia2(json2, query) {
+  if (!Array.isArray(json2) || json2.length < 4) return [];
+  const [, titles, snippets, urls] = json2;
+  if (!Array.isArray(titles) || !Array.isArray(urls)) return [];
+  return titles.map((title, i) => ({
+    url: String(urls[i] ?? ""),
+    title: String(title),
+    snippet: String(Array.isArray(snippets) ? snippets[i] ?? "" : ""),
+    source: "wikipedia",
+    kind: "secondary",
+    ts: null,
+    score: scoreHit2({ url: String(urls[i] ?? ""), title: String(title), snippet: String(Array.isArray(snippets) ? snippets[i] ?? "" : ""), source: "wikipedia", kind: "secondary", ts: null }, query)
+  })).filter((h) => h.url.length > 0);
+}
+function normalizeHn2(json2, query) {
+  const hits = json2?.hits;
+  if (!Array.isArray(hits)) return [];
+  return hits.map((h) => {
+    const o = h;
+    const url2 = o.url ?? (o.objectID ? `https://news.ycombinator.com/item?id=${o.objectID}` : "");
+    return {
+      url: url2,
+      title: String(o.title ?? ""),
+      snippet: String(o.story_text ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 220),
+      source: "hn",
+      kind: "secondary",
+      ts: o.created_at ?? null,
+      score: 0
+    };
+  }).filter((h) => h.url.length > 0).map((h) => ({ ...h, score: scoreHit2(h, query) }));
+}
+function normalizeGithub2(json2, query) {
+  const items = json2?.items;
+  if (!Array.isArray(items)) return [];
+  return items.map((it2) => {
+    const o = it2;
+    return {
+      url: String(o.html_url ?? ""),
+      title: String(o.full_name ?? ""),
+      snippet: String(o.description ?? "").slice(0, 220),
+      source: "github",
+      kind: "primary",
+      ts: o.pushed_at ?? null,
+      score: 0
+    };
+  }).filter((h) => h.url.length > 0).map((h) => ({ ...h, score: scoreHit2(h, query) }));
+}
+var SOURCE_PRIOR2 = {
+  wikipedia: 0.55,
+  hn: 0.45,
+  github: 0.45,
+  searxng: 0.4,
+  brave: 0.4
+};
+function scoreHit2(hit, query) {
+  const qTokens = new Set(
+    query.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3)
+  );
+  if (qTokens.size === 0) return SOURCE_PRIOR2[hit.source] * 0.8;
+  const text = `${hit.title} ${hit.snippet}`.toLowerCase();
+  let matched = 0;
+  for (const t of qTokens) if (text.includes(t)) matched += 1;
+  const overlap = matched / qTokens.size;
+  let recency = 0;
+  if (hit.ts) {
+    const ageDays = (Date.now() - Date.parse(hit.ts)) / 864e5;
+    if (Number.isFinite(ageDays)) recency = ageDays < 7 ? 0.1 : ageDays < 90 ? 0.05 : 0;
+  }
+  return Math.min(1, 0.35 * overlap + 0.55 * overlap * SOURCE_PRIOR2[hit.source] + recency + 0.1 * SOURCE_PRIOR2[hit.source]);
+}
+function dedupeHits2(hits) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const h of hits) {
+    if (seen.has(h.url)) continue;
+    seen.add(h.url);
+    out.push(h);
+  }
+  return out.sort((a, b) => b.score - a.score);
+}
+var USER_CHOSEN = /* @__PURE__ */ new Set(["searxng"]);
+async function guardedFetch(id, url2, init, doFetch) {
+  if (USER_CHOSEN.has(id)) {
+    return safeEgressFetch(url2, {
+      ...init,
+      fetchImpl: doFetch,
+      allowLoopback: true,
+      maxRedirects: 5
+    });
+  }
+  return doFetch(url2, { ...init, redirect: "manual" });
+}
+function notConfiguredNote(p, opts) {
+  if (p.id === "searxng" && opts.searxngRoot) {
+    const verdict = checkEgressUrl(`${opts.searxngRoot.replace(/\/$/, "")}/search`);
+    return verdict.ok ? "egress guard produced no url for this root" : `egress refused: ${verdict.reason} \u2014 nothing was sent`;
+  }
+  return "not configured";
+}
+async function searchWeb2(query, opts = {}) {
+  const doFetch = opts.fetchImpl ?? (opts.useGlobalFetch === false ? void 0 : typeof fetch === "function" ? fetch : void 0);
+  const timeoutMs = opts.timeoutMs ?? 6e3;
+  const outcomes = [];
+  const hits = [];
+  if (!doFetch) {
+    return {
+      query,
+      hits: [],
+      providers: WEB_PROVIDERS2.map((p) => ({ id: p.id, ok: false, hits: 0, note: "no fetch available in this host" })),
+      fetchedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+  }
+  await Promise.all(
+    WEB_PROVIDERS2.map(async (p) => {
+      const url2 = p.buildUrl(query, opts);
+      if (url2 === null) {
+        outcomes.push({ id: p.id, ok: false, hits: 0, note: p.needsConfig ? notConfiguredNote(p, opts) : "no url" });
+        return;
+      }
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), timeoutMs);
+      try {
+        const res = await guardedFetch(
+          p.id,
+          url2,
+          { signal: ctl.signal, headers: p.id === "github" ? { Accept: "application/vnd.github+json" } : void 0 },
+          doFetch
+        );
+        if (res.status >= 300 && res.status <= 399) {
+          outcomes.push({ id: p.id, ok: false, hits: 0, note: `http ${res.status} redirect not followed (egress guard)` });
+          return;
+        }
+        if (!res.ok) {
+          outcomes.push({ id: p.id, ok: false, hits: 0, note: `http ${res.status}` });
+          return;
+        }
+        const json2 = await res.json();
+        const norm2 = p.id === "wikipedia" ? normalizeWikipedia2(json2, query) : p.id === "hn" ? normalizeHn2(json2, query) : p.id === "github" ? normalizeGithub2(json2, query) : [];
+        hits.push(...norm2);
+        outcomes.push({ id: p.id, ok: true, hits: norm2.length, note: "ok" });
+      } catch (e) {
+        const msg = e instanceof Error && e.name === "AbortError" ? `timeout ${timeoutMs}ms` : e instanceof Error && /egress refused/.test(e.message) ? e.message.slice(0, 200) : "network/cors";
+        outcomes.push({ id: p.id, ok: false, hits: 0, note: msg });
+      } finally {
+        clearTimeout(timer);
+      }
+    })
+  );
+  return { query, hits: dedupeHits2(hits), providers: outcomes, fetchedAt: (/* @__PURE__ */ new Date()).toISOString() };
 }
 
 // src/selfimpulse/engine/brainSeam.ts
@@ -7164,7 +7707,7 @@ function wrapRealModelBrain(base, deps = realBrainDeps, prefOverride) {
 }
 
 // src/selfimpulse/engine/providers.ts
-init_client2();
+init_client();
 init_localDb();
 var REGISTRY_KEY = "vh.providers";
 function asKV(store2) {
@@ -7206,7 +7749,7 @@ function modelPrefs(store2 = defaultStore()) {
   }
 }
 var tierFor = (mode) => mode === "deep" ? "big" : "cheap";
-var ipcCaller = (req) => ipc2.llmChat(req);
+var ipcCaller = (req) => ipc.llmChat(req);
 var PLANNER_SYSTEM = "You are the planner inside SelfImpulse's governed brain. Answer with 3 to 6 concrete steps, one per line, no preamble or markdown. The runtime simulates risky steps and pauses them at a human gate \u2014 propose honestly.";
 async function chatStep(prompt, tier, opts) {
   const prefs = opts?.prefs ?? modelPrefs(opts?.store);
@@ -7326,13 +7869,30 @@ var riskyToolRule = (input2) => {
     reason: `"${input2.tool}" is a governed action \u2014 human approval required before execution.`
   };
 };
+var sovereignRule = (input2) => {
+  const env = sovereign.frontDoorEnvelope();
+  const verdict = authorize(env, input2.tool);
+  if (verdict.allowed) return null;
+  if (verdict.risk === "critical") {
+    return {
+      decision: "deny",
+      rule: "sovereign-critical-refuses",
+      reason: verdict.reason
+    };
+  }
+  return {
+    decision: "steer",
+    rule: "sovereign-envelope",
+    reason: `${verdict.reason} \u2014 the human decides.`
+  };
+};
 var budgetRule = (_input) => null;
 var workspaceRootRule = (_input) => null;
-var RULES = [riskyToolRule, workspaceRootRule, budgetRule];
-var DEFAULT_ALLOW = {
+var RULES = [riskyToolRule, sovereignRule, workspaceRootRule, budgetRule];
+var SOVEREIGN_ALLOW = {
   decision: "allow",
-  rule: "default-allow",
-  reason: "no governing rule matched; action allowed"
+  rule: "sovereign-safe-class",
+  reason: "within the front-door envelope \u2014 low-risk action on the owner's own authority"
 };
 function propose(input2) {
   for (const rule of RULES) {
@@ -7341,7 +7901,7 @@ function propose(input2) {
       return { ...r, audit: { kind: "policy", decision: r.decision, rule: r.rule, reason: r.reason, tool: input2.tool, ts: (/* @__PURE__ */ new Date()).toISOString() } };
     }
   }
-  return { ...DEFAULT_ALLOW, audit: { kind: "policy", decision: "allow", rule: DEFAULT_ALLOW.rule, reason: DEFAULT_ALLOW.reason, tool: input2.tool, ts: (/* @__PURE__ */ new Date()).toISOString() } };
+  return { ...SOVEREIGN_ALLOW, audit: { kind: "policy", decision: "allow", rule: SOVEREIGN_ALLOW.rule, reason: SOVEREIGN_ALLOW.reason, tool: input2.tool, ts: (/* @__PURE__ */ new Date()).toISOString() } };
 }
 
 // node_modules/zod/v4/classic/external.js
@@ -7558,7 +8118,7 @@ __export(external_exports, {
   refine: () => refine,
   regex: () => _regex,
   regexes: () => regexes_exports,
-  registry: () => registry2,
+  registry: () => registry3,
   safeDecode: () => safeDecode2,
   safeDecodeAsync: () => safeDecodeAsync2,
   safeEncode: () => safeEncode2,
@@ -7901,7 +8461,7 @@ __export(core_exports3, {
   process: () => processSchema,
   processSchema: () => processSchema,
   regexes: () => regexes_exports,
-  registry: () => registry2,
+  registry: () => registry3,
   safeDecode: () => safeDecode,
   safeDecodeAsync: () => safeDecodeAsync,
   safeEncode: () => safeEncode,
@@ -20187,10 +20747,10 @@ var $ZodRegistry = class {
     return this._map.has(schema);
   }
 };
-function registry2() {
+function registry3() {
   return new $ZodRegistry();
 }
-(_a2 = globalThis).__zod_globalRegistry ?? (_a2.__zod_globalRegistry = registry2());
+(_a2 = globalThis).__zod_globalRegistry ?? (_a2.__zod_globalRegistry = registry3());
 var globalRegistry = globalThis.__zod_globalRegistry;
 
 // node_modules/zod/v4/core/compile.js
@@ -24141,21 +24701,21 @@ var allProcessors = {
 };
 function toJSONSchema(input2, params) {
   if ("_idmap" in input2) {
-    const registry3 = input2;
+    const registry4 = input2;
     const ctx2 = initializeContext({ ...params, processors: allProcessors });
     const defs = {};
-    for (const entry of registry3._idmap.entries()) {
+    for (const entry of registry4._idmap.entries()) {
       const [_, schema] = entry;
       processSchema(schema, ctx2);
     }
     const schemas = {};
     const external = {
-      registry: registry3,
+      registry: registry4,
       uri: params?.uri,
       defs
     };
     ctx2.external = external;
-    for (const entry of registry3._idmap.entries()) {
+    for (const entry of registry4._idmap.entries()) {
       const [key, schema] = entry;
       extractDefs(ctx2, schema);
       assignProp(schemas, key, finalize(ctx2, schema));
@@ -25064,8 +25624,8 @@ function hex2(_params) {
   return _stringFormat(ZodCustomStringFormat, "hex", regexes_exports.hex, _params);
 }
 function hash(alg, params) {
-  const enc3 = params?.enc ?? "hex";
-  const format = `${alg}_${enc3}`;
+  const enc4 = params?.enc ?? "hex";
+  const format = `${alg}_${enc4}`;
   const regex = regexes_exports[format];
   if (!regex)
     throw new Error(`Unrecognized hash format: ${format}`);
@@ -27518,7 +28078,7 @@ This machine: ${local}`;
       const query = String(a.query ?? "").trim();
       if (!query) return "no query given";
       try {
-        const rep = await searchWeb(query, { timeoutMs: 6e3 });
+        const rep = await searchWeb2(query, { timeoutMs: 6e3 });
         if (rep.hits.length === 0) {
           const prov2 = rep.providers.map((p) => `${p.id}: ${p.ok ? "ok, 0 hits" : p.note}`).join(" \xB7 ");
           return `no web hits for "${query}"
@@ -27633,11 +28193,11 @@ function simulateSelfImpulseAction(action) {
 var approvalWaiters = /* @__PURE__ */ new Map();
 var APPROVAL_TTL_MS = 10 * 60 * 1e3;
 var badApprovalProbeGate = new RateGate(10, 6e4);
-function requestSelfImpulseApproval(action, detail) {
+function requestSelfImpulseApproval(action, detail, runRef) {
   const id = secureId("a");
-  session = { ...session, approvals: [...session.approvals, { id, action, detail, status: "pending", ts: (/* @__PURE__ */ new Date()).toISOString() }] };
+  session = { ...session, approvals: [...session.approvals, { id, action, detail, status: "pending", ts: (/* @__PURE__ */ new Date()).toISOString(), runRef }] };
   commit();
-  void Promise.resolve().then(() => (init_client(), client_exports)).then(({ isNativeHost: isNativeHost2, ipc: ipc3 }) => {
+  void Promise.resolve().then(() => (init_client2(), client_exports2)).then(({ isNativeHost: isNativeHost2, ipc: ipc3 }) => {
     if (isNativeHost2()) void ipc3.notifyApproval("SelfImpulse \u2014 human gate", `${action}: ${detail.slice(0, 140).replace(/\n/g, " ")}`);
   }).catch(() => void 0);
   return new Promise((resolve2) => {
@@ -27653,11 +28213,37 @@ function resolveSelfImpulseApproval(id, ok) {
   if (approval.status !== "pending") return;
   const expired = Date.now() - new Date(approval.ts).getTime() > APPROVAL_TTL_MS;
   const settle2 = approvalWaiters.get(id);
-  session = { ...session, approvals: session.approvals.map((a) => a.id === id ? { ...a, status: expired ? "expired" : ok ? "approved" : "denied" } : a) };
+  let grant = { ok: false, capability: null, reason: expired ? "expired" : "denied" };
+  let capabilityDigest2;
+  if (ok && !expired) {
+    try {
+      const minted = mintCapability({
+        approvalId: id,
+        subject: "si.captain",
+        audience: "si.runtime",
+        action: approval.action,
+        resource: approval.detail.slice(0, 200),
+        budget: 0
+      });
+      const v = verifyCapability(minted.capability, "si.runtime");
+      if (v.ok) {
+        capabilityDigest2 = minted.digest;
+        grant = { ok: true, capability: minted.capability };
+      } else {
+        grant = { ok: false, capability: null, reason: "capability-unavailable" };
+      }
+    } catch {
+      grant = { ok: false, capability: null, reason: "capability-unavailable" };
+    }
+  }
+  session = { ...session, approvals: session.approvals.map((a) => a.id === id ? { ...a, status: expired ? "expired" : grant.ok ? "approved" : "denied", capability: capabilityDigest2 } : a) };
   commit();
+  if (approval.runRef) {
+    checkpoint(approval.runRef.runId, "human-gate", approval.runRef.step + 1, expired ? "decision expired" : grant.ok ? "decision granted" : "decision denied", { approvalId: id, granted: grant.ok });
+  }
   if (settle2) {
     approvalWaiters.delete(id);
-    settle2(!expired && ok);
+    settle2(grant);
   }
 }
 var brain;
@@ -28064,7 +28650,7 @@ function nowIso2() {
 function verifySelfImpulseReceipt(id) {
   const ref = session.receipts.find((r) => r.id === id);
   if (!ref) return Promise.resolve({ ok: false, reason: "receipt not found" });
-  return verifyProofReceipt(ref.receipt);
+  return verifyProofReceipt2(ref.receipt);
 }
 var toolCallTracks = /* @__PURE__ */ new Map();
 function selfimpulseToolCallStatus(callId) {
@@ -28205,22 +28791,32 @@ async function runSelfImpulseToolCall(tool, args, opts = {}) {
 SIMULATION: ${sim.prediction}` : `Write file "${String(args.name ?? "untitled.txt")}" to the local workspace
 SIMULATION: ${sim.prediction}${sim.warnings.length > 0 ? `
 WARNINGS: ${sim.warnings.join("; ")}` : ""}`;
-  const approvalPromise = requestSelfImpulseApproval(tool, detail);
+  const approvalPromise = requestSelfImpulseApproval(tool, detail, { runId: `run:${callId}`, step: 1 });
   approvalIdRef = selfimpulseSession().approvals[selfimpulseSession().approvals.length - 1]?.id ?? null;
-  const settle2 = async (granted) => {
-    if (!granted) {
-      return finalize2({ ok: false, output: "Denied by the human gate \u2014 nothing was executed.", approved: false, simulated: true, mission: null });
+  checkpoint(`run:${callId}`, isDispatch ? "dispatch" : "tool", 1, "awaiting-human", { tool, approvalId: approvalIdRef });
+  const settle2 = async (gate) => {
+    if (!gate.ok) {
+      checkpoint(`run:${callId}`, isDispatch ? "dispatch" : "tool", 2, "denied at the gate", { reason: gate.reason ?? "denied" });
+      const why = gate.reason === "expired" ? "The approval expired before it could be backed by a capability \u2014 nothing was executed." : gate.reason === "capability-unavailable" ? "The approval could not be backed by a signed capability \u2014 refused fail-closed, nothing was executed." : "Denied by the human gate \u2014 nothing was executed.";
+      return finalize2({ ok: false, output: why, approved: false, simulated: true, mission: null });
     }
+    const v2 = verifyCapability(gate.capability, "si.runtime");
+    const redemption = v2.ok ? redeemCapability(gate.capability, "si.runtime") : v2;
+    if (!redemption.ok) {
+      checkpoint(`run:${callId}`, isDispatch ? "dispatch" : "tool", 2, "redemption refused", { reason: redemption.reason });
+      return finalize2({ ok: false, output: `The signed capability behind the approval did not redeem (${redemption.reason}) \u2014 nothing was executed.`, approved: true, simulated: true, mission: null });
+    }
+    checkpoint(`run:${callId}`, isDispatch ? "dispatch" : "tool", 2, "capability redeemed", { tool });
     toolCallTracks.get(callId).state = "running";
     const a = await runAction();
     return finalize2({ ok: a.ok, output: a.output, approved: true, simulated: true, mission: a.mission });
   };
   if (opts.blockOnGate) {
-    const granted = await approvalPromise;
-    return settle2(granted);
+    const gate = await approvalPromise;
+    return settle2(gate);
   }
   toolCallTracks.set(callId, { state: "gated", result: null, missionId: null, tool });
-  void approvalPromise.then((granted) => settle2(granted)).then((result) => {
+  void approvalPromise.then((gate) => settle2(gate)).then((result) => {
     const track = toolCallTracks.get(callId);
     if (track) {
       track.state = "done";
@@ -28506,7 +29102,7 @@ function testFileCanary(canonical) {
   return (current) => current === null ? "absent" : current === canonical ? "ok" : "tampered";
 }
 function sha256(s) {
-  return createHash("sha256").update(s).digest("hex");
+  return createHash4("sha256").update(s).digest("hex");
 }
 function whichBin(name) {
   const dirs = (process.env.PATH ?? "").split(path2.delimiter).filter(Boolean);
@@ -28697,7 +29293,80 @@ function registerDrillTool() {
 }
 registerDrillTool();
 
+// src/security/ownerRoot.ts
+import { createHash as createHash5, createPrivateKey, createPublicKey, hkdfSync, pbkdf2Sync, sign as edSign2, verify as edVerify2 } from "node:crypto";
+
+// src/engine/vault.ts
+var VAULT_META_KEY = "vh.vault.meta.v1";
+var enc3 = new TextEncoder();
+var dec = new TextDecoder();
+function storage() {
+  try {
+    return globalThis.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+function readMeta() {
+  const s = storage();
+  if (!s) return null;
+  try {
+    const raw = JSON.parse(s.getItem(VAULT_META_KEY) ?? "null");
+    return raw && raw.v === "si-vault-meta/1" ? raw : null;
+  } catch {
+    return null;
+  }
+}
+function vaultKdfParams() {
+  const meta3 = readMeta();
+  return meta3 ? { saltB64: meta3.saltB64, iterations: meta3.iterations } : null;
+}
+
+// src/security/ownerRoot.ts
+var OWNER_ROOT_SALT = "si.owner-root.v1";
+var OWNER_ROOT_INFO = "ed25519 root seed";
+function ed25519Pkcs8Prefix() {
+  return Buffer.from("302e020100300506032b657004220420", "hex");
+}
+function deriveOwnerSigner(passphrase) {
+  let material;
+  const kdf = vaultKdfParams();
+  if (kdf) {
+    material = pbkdf2Sync(passphrase, Buffer.from(kdf.saltB64, "base64"), kdf.iterations, 32, "sha256");
+  } else {
+    material = Buffer.from(passphrase, "utf8");
+  }
+  const seed = Buffer.from(hkdfSync("sha256", material, OWNER_ROOT_SALT, OWNER_ROOT_INFO, 32));
+  const privateKey = createPrivateKey({ key: Buffer.concat([ed25519Pkcs8Prefix(), seed]), format: "der", type: "pkcs8" });
+  const publicKey = createPublicKey(privateKey);
+  const pubDer = publicKey.export({ type: "spki", format: "der" });
+  const id = createHash5("sha256").update(pubDer).digest("hex").slice(0, 16);
+  return {
+    id,
+    sign: (data) => edSign2(null, Buffer.from(data, "utf8"), privateKey).toString("base64"),
+    verify: (data, sig) => {
+      try {
+        return edVerify2(null, Buffer.from(data, "utf8"), publicKey, Buffer.from(sig, "base64"));
+      } catch {
+        return false;
+      }
+    }
+  };
+}
+function bindOwnerRoot(passphrase) {
+  try {
+    const previous = sovereign.signerId;
+    const signer = deriveOwnerSigner(passphrase);
+    sovereign.bindOwnerSigner(signer);
+    if (previous !== signer.id) invalidateCapabilitiesForRoot(previous);
+    return { ok: true, signerId: signer.id };
+  } catch (e) {
+    return { ok: false, error: `the owner root could not be bound: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
 // probe/drill.test.ts
+bindOwnerRoot("probe-owner-passphrase");
 var ROOT = ".".length > 0 ? "." : process.cwd();
 var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 var forensics = null;
@@ -28888,7 +29557,7 @@ describe3("drill over the wire \u2014 run_drill through the MCP face", () => {
   };
   const call = (name, args) => request("tools/call", { name, arguments: args }).then((m) => m.result.content[0].text);
   before(async () => {
-    child = spawn(process.execPath, ["tools/mcp.mjs"], { cwd: ROOT, stdio: ["pipe", "pipe", "pipe"] });
+    child = spawn(process.execPath, ["tools/mcp.mjs"], { env: { ...process.env, SI_OWNER_SECRET: "probe-owner-passphrase" }, cwd: ROOT, stdio: ["pipe", "pipe", "pipe"] });
     child.stdout.on("data", (d) => {
       buf += d.toString("utf8");
       let idx;

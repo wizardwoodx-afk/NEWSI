@@ -34,6 +34,42 @@ buildSync({
   logLevel: "warning",
 });
 
+/* Optional argument: a single probe path. `npm run unit` (no argument) runs
+ * the pure decision gate in tools/unit.ts, exactly as before. Passing a probe
+ * path — `node tools/run-unit.mjs probe/a2aBridge.test.ts` — builds and runs
+ * that ONE suite through the same esbuild pipeline run-all-probes.mjs uses
+ * (same banner, same SI_ROOT define), so a standalone run behaves identically
+ * to a gate run. Before this, arguments were silently ignored, which made
+ * "run just this suite" lie about what it ran. */
+const target = process.argv[2];
+if (target) {
+  const t = path.resolve(root, target);
+  if (!fs.existsSync(t)) {
+    console.error(`run-unit: no such file: ${target}`);
+    process.exit(2);
+  }
+  const single = path.join(root, "tools", "single.built.mjs");
+  buildSync({
+    entryPoints: [t],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    packages: "external",
+    banner: {
+      js: 'import { createRequire as __mjCreateRequire } from "node:module"; const require = __mjCreateRequire(import.meta.url);',
+    },
+    define: { SI_ROOT: JSON.stringify(root) },
+    outfile: single,
+    logLevel: "warning",
+  });
+  try {
+    execFileSync(process.execPath, [single], { cwd: root, stdio: "inherit" });
+  } finally {
+    fs.rmSync(single, { force: true });
+  }
+  if (!target.includes("unit.ts")) process.exit(0);
+}
+
 try {
   execFileSync(process.execPath, [out], { cwd: root, stdio: "inherit" });
 } finally {

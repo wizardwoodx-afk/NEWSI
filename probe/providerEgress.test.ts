@@ -26,6 +26,8 @@ import {
 import type { ProviderConfig } from "../src/engine/types";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { bindOwnerRoot } from "../src/security/ownerRoot";
+bindOwnerRoot("probe-owner-passphrase");
 
 // Source-tree root, resolved the way every other disk-reading probe does it
 // (docIdentity / legacyCompat / shellAffordances / versionDrift) so this file

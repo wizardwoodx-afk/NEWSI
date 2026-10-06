@@ -12266,6 +12266,110 @@ function listHandoffs() {
   }
 }
 
+// src/security/injectionGuard.ts
+var LEXICAL = [
+  {
+    id: "h1",
+    family: "lexical",
+    severity: "high",
+    label: "Instruction override",
+    pattern: /\b(ignore|disregard|forget|override|bypass)\s+(all\s+|any\s+|the\s+|your\s+)?(previous|prior|above|earlier|preceding|system)\s+(instruction|prompt|rule|direction|message|context)/i
+  },
+  {
+    id: "h2",
+    family: "lexical",
+    severity: "high",
+    label: "System-prompt exfiltration",
+    pattern: /\b(reveal|repeat|print|show|output|disclose|echo|dump)\s+(me\s+)?(your\s+|the\s+)?(full\s+|entire\s+|complete\s+|verbatim\s+)?(system\s+prompt|initial\s+prompt|instructions|system\s+message|prompt\s+template)/i
+  },
+  {
+    id: "h3",
+    family: "lexical",
+    severity: "medium",
+    label: "Role hijack",
+    pattern: /\b(you\s+are\s+now|from\s+now\s+on\s+you|act\s+as\s+(if\s+you\s+are\s+)?(a|an|the)\s+(unrestricted|unfiltered|new|different|admin)|pretend\s+(that\s+)?you\s+(are|have)|assume\s+the\s+(role|persona|identity)\s+of|new\s+(persona|identity|role)\s*:)/i
+  },
+  {
+    id: "h4",
+    family: "lexical",
+    severity: "medium",
+    label: "Authority claim",
+    pattern: /\b(as\s+(the|an?)\s+(administrator|admin|developer|owner|operator|root)|developer\s+mode|admin(istrative)?\s+override|god\s+mode|jailbreak|maintenance\s+mode|authorized\s+override|sudo\s+mode)/i
+  },
+  {
+    id: "h5",
+    family: "lexical",
+    severity: "high",
+    label: "Exfiltration request",
+    pattern: /\b(send|post|upload|transmit|exfiltrate|forward|email|leak)\b[^.\n]{0,60}\b(to|at)\b\s*(https?:\/\/|ftp:\/\/|[\w.-]+@)/i
+  },
+  {
+    id: "h6",
+    family: "lexical",
+    severity: "medium",
+    label: "Fake conversation delimiter",
+    pattern: /(^|\n)\s*(#{1,4}\s*)?(system|assistant|human|user|developer)\s*(\[|:|\|)/i
+  }
+];
+var STRUCTURAL = [
+  {
+    id: "s7",
+    family: "structural",
+    severity: "high",
+    label: "Encoded blob in prose",
+    // A long base64 run inside flowing text is not how documents are written.
+    pattern: /(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{120,}={0,2}(?![A-Za-z0-9+/])/
+  },
+  {
+    id: "s8",
+    family: "structural",
+    severity: "medium",
+    label: "Homoglyph substitution",
+    // Cyrillic/Greek lookalikes mixed into otherwise-Latin words.
+    pattern: /(?:\b\w*[\u0400-\u04FF\u0370-\u03FF]\w*\b)/
+  },
+  {
+    id: "s9",
+    family: "structural",
+    severity: "medium",
+    label: "Data-URI or encoded redirect",
+    pattern: /data:text\/html|base64,[A-Za-z0-9+/]{40,}|\bjavascript:\s*\w/i
+  },
+  {
+    id: "s10",
+    family: "structural",
+    severity: "medium",
+    label: "Imperative embedded in a link",
+    pattern: /https?:\/\/[^\s<>"']*[?&][^\s<>"']*(prompt|instruction|cmd|command|exec|payload)=/i
+  },
+  {
+    id: "s11",
+    family: "structural",
+    severity: "low",
+    label: "Assignment-shaped secret echo",
+    // text inviting the model to reproduce a credential-looking pair
+    pattern: /\b(api[_-]?key|secret|token|password|passwd|credential)s?\b\s*[:=]\s*\S{8,}/i
+  }
+];
+var SELFIMPULSE_TOOLS = "fs\\.(?:list|read|write)|net\\.fetch|wiki\\.search|pc\\.(?:exec|browser)|mcp\\.call|shell_exec";
+var CAPABILITY = [
+  {
+    id: "c12",
+    family: "capability",
+    severity: "high",
+    label: "Engine tool named in content",
+    pattern: new RegExp(`\\b(?:${SELFIMPULSE_TOOLS})\\b`)
+  },
+  {
+    id: "c13",
+    family: "capability",
+    severity: "high",
+    label: "Tool-call-shaped payload",
+    pattern: /(?:```[a-z]*\s*)?[{[][^}\]]{0,200}?"(?:tool|tool_name|function|name|action)"\s*:\s*"(?:[a-z_]+\.)?(?:exec|write|shell|run|call|fetch|read)[a-z_]*"/i
+  }
+];
+var ALL = [...CAPABILITY, ...STRUCTURAL, ...LEXICAL];
+
 // src/engine/skillsImport.ts
 var KEY2 = "engine.skills.imported.v1";
 var session = [];

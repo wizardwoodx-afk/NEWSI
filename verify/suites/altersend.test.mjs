@@ -278,6 +278,14 @@ function secureId(prefix) {
   throw new Error("no secure random source available \u2014 refusing to mint an id");
 }
 
+// src/security/actionGraph.ts
+function stableStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const entries = Object.entries(value).filter(([, v]) => v !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(",")}}`;
+}
+
 // src/mission/a2aV10.ts
 var WELL_KNOWN_CARD_PATH = "/.well-known/agent-card.json";
 var A2A_ERRORS = {
@@ -297,6 +305,7 @@ var enc = new TextEncoder();
 // src/mission/a2aServer.ts
 var MAX_BODY_BYTES = 1024 * 1024;
 var REPLAY_WINDOW_MS = 3e4;
+var REPLAY_SEEN_CAP = 4096;
 var AUDIT_CAP = 500;
 var TASK_CAP = 200;
 var STOP_HEADER = "x-si-stop-nonce";
@@ -343,11 +352,24 @@ function createA2AServer(opts) {
       pushConfigs.delete(first);
     }
   };
-  const fingerprintOf = (req) => createHash("sha256").update(`${req.method}|${JSON.stringify(req.params ?? {})}`).digest("hex");
+  const fingerprintOf = (req) => {
+    const params = req.params;
+    const message = params?.message;
+    const canonical = stableStringify({
+      method: req.method,
+      // Only for message methods; a non-message method has no messageId to drop.
+      ...message && typeof message === "object" ? { params: { ...params, message: { ...message, messageId: "<per-attempt>" } } } : { params }
+    });
+    return createHash("sha256").update(`${req.method}|${canonical}`).digest("hex");
+  };
   const replayed = (fp) => {
     const now = Date.now();
     for (const [k, ts] of [...seen]) if (now - ts > REPLAY_WINDOW_MS) seen.delete(k);
     if (seen.has(fp)) return true;
+    if (seen.size >= REPLAY_SEEN_CAP) {
+      const oldest = seen.keys().next().value;
+      if (oldest !== void 0) seen.delete(oldest);
+    }
     seen.set(fp, now);
     return false;
   };

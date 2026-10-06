@@ -22,6 +22,9 @@
  * rule, reason, tool? } so refusals are auditable and the policy-replay
  * sandbox can re-evaluate historical chains against new rules.
  */
+import { authorize as graphAuthorize } from "../../security/actionGraph";
+import { sovereign } from "../../security/sovereign";
+
 export type PolicyDecision = "allow" | "steer" | "deny";
 
 export interface PolicyInput {
@@ -80,6 +83,40 @@ const riskyToolRule: PolicyRule = (input) => {
   };
 };
 
+/* 1.2.0 — THE SINGLE THROAT. The gateway is no longer its own authority:
+ * the second rule judges every non-risky action against the SOVEREIGN
+ * envelope (security/sovereign.ts — the owner's signed mandate), using the
+ * same risk classes and the same authorize() the governed native loop uses.
+ * v1.1.0 had two policy semantics: this front door default-allowed anything
+ * no rule named while the native path was default-deny. Now both throats
+ * speak one language:
+ *   • an action the sovereign judges CRITICAL is DENIED outright — a seat
+ *     never takes a critical action on its own authority;
+ *   • an action OUTSIDE the envelope (high-risk on a read-only seat) STEERs
+ *     to the human — the approval IS the owner act, and it is receipted;
+ *   • a low-risk read within the envelope passes through (null), letting
+ *     the named safe-class allow speak;
+ *   • an UNCLASSIFIABLE action resolves to medium risk — which steers.
+ *     The anonymous default-allow is gone: nothing executes because no rule
+ *     noticed it. */
+const sovereignRule: PolicyRule = (input) => {
+  const env = sovereign.frontDoorEnvelope();
+  const verdict = graphAuthorize(env, input.tool);
+  if (verdict.allowed) return null;
+  if (verdict.risk === "critical") {
+    return {
+      decision: "deny",
+      rule: "sovereign-critical-refuses",
+      reason: verdict.reason,
+    };
+  }
+  return {
+    decision: "steer",
+    rule: "sovereign-envelope",
+    reason: `${verdict.reason} — the human decides.`,
+  };
+};
+
 /**
  * Budget-aware refuse: once per-mission spend exceeds the envelope, refuse
  * with the budget rule. 17.1.3 ships this as a hook (predicate returns false
@@ -95,24 +132,52 @@ const budgetRule: PolicyRule = (_input) => null;
  */
 const workspaceRootRule: PolicyRule = (_input) => null;
 
-/** Ordered list. Order matters: earlier rules win. */
-const RULES: PolicyRule[] = [riskyToolRule, workspaceRootRule, budgetRule];
+/** Ordered list. Order matters: earlier rules win. The risky-set rule
+ * speaks first so a governed tool keeps its historical rule name; the
+ * sovereign envelope judges everything else. */
+const RULES: PolicyRule[] = [riskyToolRule, sovereignRule, workspaceRootRule, budgetRule];
 
-const DEFAULT_ALLOW: PolicyResult = {
+/* 1.2.0 — the anonymous default-allow is RETIRED. The fallback decision now
+ * names the sovereign envelope that allowed it: a low-risk read passes with
+ * a rule an auditor can read, and anything the sovereign cannot vouch for
+ * never reaches this line (the sovereign rule already steered or denied it). */
+const SOVEREIGN_ALLOW: PolicyResult = {
   decision: "allow",
-  rule: "default-allow",
-  reason: "no governing rule matched; action allowed",
+  rule: "sovereign-safe-class",
+  reason: "within the front-door envelope — low-risk action on the owner's own authority",
 };
 
-/** Register an additional rule. Used by tests and (in 17.2) the CEL loader. */
+/** Trusted-startup registration of an additional rule (tests; the CEL
+ *  loader when it lands). SEALED AFTER BOOT: once `sealPolicyRegistry`
+ *  runs, registration refuses forever — a worker or plugin loaded later
+ *  can evaluate policy, never rewrite it. The same immutable treatment
+ *  the read-only action registry already has. */
+let policySealed = false;
+
 export function registerPolicyRule(rule: PolicyRule): void {
+  if (policySealed) {
+    throw new Error("the policy registry is sealed — rules are registered at trusted startup only, never by loaded code");
+  }
   RULES.push(rule);
 }
 
-/** Test helper: clear rules back to the built-in set. */
+/** Freeze the policy registry — the last step of trusted startup, next to
+ *  the read-only registry seal. Policy semantics become load-time fact. */
+export function sealPolicyRegistry(): void {
+  policySealed = true;
+}
+
+/** Test helper: clear rules back to the built-in set. PRE-SEAL ONLY — once
+ *  the registry is sealed, NO path mutates RULES, this one included: a
+ *  security-critical module does not keep a public reset that outlives its
+ *  own seal. (Probes that need a reset must run before sealing, exactly
+ *  like every other registration.) */
 export function _resetPolicyRulesForProbe(): void {
+  if (policySealed) {
+    throw new Error("the policy registry is sealed — no path mutates rules after trusted startup, test helpers included");
+  }
   RULES.length = 0;
-  RULES.push(riskyToolRule, workspaceRootRule, budgetRule);
+  RULES.push(riskyToolRule, sovereignRule, workspaceRootRule, budgetRule);
 }
 
 /** Propose an action. Returns the winning decision and produces a sealed audit event. */
@@ -123,5 +188,5 @@ export function propose(input: PolicyInput): PolicyResult & { audit: PolicyAudit
       return { ...r, audit: { kind: "policy", decision: r.decision, rule: r.rule, reason: r.reason, tool: input.tool, ts: new Date().toISOString() } };
     }
   }
-  return { ...DEFAULT_ALLOW, audit: { kind: "policy", decision: "allow", rule: DEFAULT_ALLOW.rule, reason: DEFAULT_ALLOW.reason, tool: input.tool, ts: new Date().toISOString() } };
+  return { ...SOVEREIGN_ALLOW, audit: { kind: "policy", decision: "allow", rule: SOVEREIGN_ALLOW.rule, reason: SOVEREIGN_ALLOW.reason, tool: input.tool, ts: new Date().toISOString() } };
 }

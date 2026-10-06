@@ -194,7 +194,22 @@ export function Shell(): React.ReactElement {
                   rail item would break a guarantee that is deliberately pinned.
                   Placement here also matches the product's own logic: Settings is
                   where a provider key is configured, and the Captain's "Add a
-                  key" button already routes to this door. */}
+                  key" button already routes to this door.
+
+                  A9 — TWO DOORS, TWO NAMED REGIONS. These are two independent
+                  multi-section documents stacked in one scroll region, so a
+                  screen-reader user had no handle on either and no way to reach
+                  the second without reading past everything in the first.
+                  probe/navAlign pins the exact literal `screen === "settings" &&
+                  door("settings", <Settings />)` — deliberately, so a door cannot
+                  be listed but never rendered — so the separating element cannot
+                  be inserted HERE without breaking a guarantee that is worth more.
+                  It went where it costs nothing instead: each door's own root
+                  carries the region. Settings wraps its grid in a labelled
+                  `<section>` (Settings.tsx) and ProviderConnect already had a
+                  `<section>`, now labelled. The landmark list therefore reads
+                  "Settings" and "Accounts and model access" as two places rather
+                  than one long one, and not one class name changed. */}
               {screen === "settings" && (
                 <ErrorBoundary label="Sign in" resetKey="provider-connect">
                   <ProviderConnect />

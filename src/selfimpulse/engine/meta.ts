@@ -44,6 +44,7 @@ import {
   removeSelfImpulsePreference,
   type SelfImpulseReceiptRef,
 } from "./selfimpulse";
+import { redeemCapability, verifyCapability } from "../../security/capability";
 import { buildChainedReceipt, type ProofReceipt } from "./proof";
 import { ENGINE_VERSION } from "../../version";
 
@@ -408,7 +409,16 @@ async function runMetaFlow(kind: string, targetRaw: string, reason: string, isRe
   const approvalId = selfimpulseSession().approvals[selfimpulseSession().approvals.length - 1]?.id ?? null;
 
   void approvalPromise
-    .then((approved) => settle(c, approved, v.simulation))
+    .then((g) => {
+      /* The capability is redeemed for THIS change — one approval, one apply. */
+      let approved = g.ok;
+      if (g.ok && g.capability) {
+        const gv = verifyCapability(g.capability, "si.runtime");
+        const r = gv.ok ? redeemCapability(g.capability, "si.runtime") : gv;
+        approved = r.ok;
+      }
+      return settle(c, approved, v.simulation);
+    })
     .catch((e) => {
       c.status = "denied";
       c.decidedAt = nowIso();

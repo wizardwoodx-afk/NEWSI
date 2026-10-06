@@ -13,12 +13,15 @@ var __export = (target, all) => {
 var vault_exports = {};
 __export(vault_exports, {
   VAULT_FORMAT: () => VAULT_FORMAT,
+  calibratedIterations: () => calibratedIterations,
   destroyVault: () => destroyVault,
   lockVault: () => lockVault,
   purgePlain: () => purgePlain,
   setVaultPassphrase: () => setVaultPassphrase,
+  upgradeVaultCost: () => upgradeVaultCost,
   vaultDecrypt: () => vaultDecrypt,
   vaultHasPassphrase: () => vaultHasPassphrase,
+  vaultKdfParams: () => vaultKdfParams,
   vaultOpen: () => vaultOpen,
   vaultOpenAsync: () => vaultOpenAsync,
   vaultRemove: () => vaultRemove,
@@ -41,12 +44,12 @@ function randomBytes(n) {
   globalThis.crypto.getRandomValues(u8);
   return u8;
 }
-async function deriveKey(passphrase, salt) {
+async function deriveKey(passphrase, salt, iterations = PBKDF_ITERATIONS) {
   const s = subtle();
   if (!s) throw new Error("WebCrypto SubtleCrypto is unavailable in this runtime \u2014 the vault refuses rather than pretend to encrypt");
   const base = await s.importKey("raw", enc.encode(passphrase), "PBKDF2", false, ["deriveKey"]);
   return s.deriveKey(
-    { name: "PBKDF2", salt, iterations: PBKDF_ITERATIONS, hash: "SHA-256" },
+    { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
     base,
     { name: "AES-GCM", length: 256 },
     false,
@@ -72,9 +75,10 @@ async function setVaultPassphrase(passphrase, now = () => /* @__PURE__ */ new Da
     if (!existing) {
       const salt = randomBytes(16);
       const iv = randomBytes(12);
-      const key = await deriveKey(passphrase, salt);
+      const iterations = await calibratedIterations();
+      const key = await deriveKey(passphrase, salt, iterations);
       const check = await subtle().encrypt({ name: "AES-GCM", iv }, key, enc.encode("si-vault-check/1"));
-      const meta = { v: "si-vault-meta/1", saltB64: toB64(salt), ivB64: toB64(iv), cipherB64: toB64(check), kdf: "PBKDF2-SHA-256", iterations: PBKDF_ITERATIONS, createdAt: now().toISOString() };
+      const meta = { v: "si-vault-meta/1", saltB64: toB64(salt), ivB64: toB64(iv), cipherB64: toB64(check), kdf: "PBKDF2-SHA-256", iterations, createdAt: now().toISOString() };
       const s = storage();
       if (!s) return { ok: false, error: "no storage in this runtime \u2014 the vault can exist for this session only; persistence needs a store" };
       s.setItem(VAULT_META_KEY, JSON.stringify(meta));
@@ -84,7 +88,7 @@ async function setVaultPassphrase(passphrase, now = () => /* @__PURE__ */ new Da
     }
     try {
       const salt = fromB64(existing.saltB64);
-      const key = await deriveKey(passphrase, salt);
+      const key = await deriveKey(passphrase, salt, existing.iterations);
       const plain = await subtle().decrypt({ name: "AES-GCM", iv: fromB64(existing.ivB64) }, key, fromB64(existing.cipherB64));
       if (dec.decode(plain) !== "si-vault-check/1") return { ok: false, error: "that passphrase did not open the vault \u2014 nothing was changed" };
       sessionKey = key;
@@ -103,6 +107,71 @@ function lockVault() {
 }
 function vaultHasPassphrase() {
   return sessionKey !== null;
+}
+function vaultKdfParams() {
+  const meta = readMeta();
+  return meta ? { saltB64: meta.saltB64, iterations: meta.iterations } : null;
+}
+async function calibratedIterations(targetMs = 250) {
+  const s = subtle();
+  if (!s) return PBKDF_ITERATIONS;
+  try {
+    const base = await s.importKey("raw", enc.encode("si-vault-calibration"), "PBKDF2", false, ["deriveBits"]);
+    const probeSalt = new Uint8Array(16);
+    const t0 = Date.now();
+    await s.deriveBits({ name: "PBKDF2", salt: probeSalt, iterations: 2e4, hash: "SHA-256" }, base, 256);
+    const per20k = Math.max(1, Date.now() - t0);
+    const scaled = Math.round(2e4 * targetMs / per20k / 1e3) * 1e3;
+    return Math.min(2e6, Math.max(PBKDF_ITERATIONS, scaled));
+  } catch {
+    return PBKDF_ITERATIONS;
+  }
+}
+async function upgradeVaultCost(passphrase, targetIterations) {
+  const meta = readMeta();
+  if (!meta) return { changed: false, note: "no vault on this machine \u2014 nothing to upgrade" };
+  if (!sessionKey) return { changed: false, note: "the vault is locked \u2014 unlock before upgrading its cost" };
+  const target = targetIterations ?? await calibratedIterations();
+  if (target <= meta.iterations) {
+    return { changed: false, note: `the vault's cost (${meta.iterations}) already meets this machine's measured level (${target})` };
+  }
+  const s = storage();
+  if (!s) return { changed: false, note: "no storage in this runtime \u2014 nothing to upgrade" };
+  const sealed = [];
+  for (let i = 0; i < s.length; i++) {
+    const k = s.key(i);
+    if (!k) continue;
+    const raw = s.getItem(k);
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed?.v === VAULT_FORMAT) sealed.push(k);
+    } catch {
+    }
+  }
+  const plain = [];
+  for (const name of sealed) {
+    const r = await vaultOpenAsync(name);
+    if (!r.found || r.locked || r.text === void 0) {
+      return { changed: false, note: `a sealed record (${name}) did not open \u2014 the cost was not changed` };
+    }
+    plain.push({ name, text: r.text });
+  }
+  const salt = randomBytes(16);
+  const iv = randomBytes(12);
+  const newKey = await deriveKey(passphrase, salt, target);
+  const check = await subtle().encrypt({ name: "AES-GCM", iv }, newKey, enc.encode("si-vault-check/1"));
+  const newMeta = { ...meta, saltB64: toB64(salt), ivB64: toB64(iv), cipherB64: toB64(check), iterations: target };
+  sessionKey = newKey;
+  sessionParams = { salt, meta: newMeta };
+  s.setItem(VAULT_META_KEY, JSON.stringify(newMeta));
+  let resealed2 = 0;
+  for (const p of plain) {
+    const r = await vaultSeal(p.name, p.text);
+    if (!r.ok) return { changed: true, iterations: target, note: `upgraded to ${target} iterations, but ${p.name} failed to re-seal \u2014 seal it again from its source` };
+    resealed2 += 1;
+  }
+  return { changed: true, iterations: target, note: `cost upgraded to ${target} iterations; ${resealed2} sealed record(s) re-sealed` };
 }
 function vaultStatus() {
   const meta = readMeta();

@@ -8,6 +8,8 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { bindOwnerRoot } from "../src/security/ownerRoot";
+bindOwnerRoot("probe-owner-passphrase");
 
 let passed = 0; let failed = 0; const failures: string[] = [];
 function ok(label: string, cond: boolean, detail = ""): void {

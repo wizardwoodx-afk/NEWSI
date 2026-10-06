@@ -22,6 +22,8 @@ import {
   DecisionJournal, askHuman,
   type AuthorityEnvelope, type HitlRequest, type HitlTier,
 } from "../src/security/actionGraph";
+import { bindOwnerRoot } from "../src/security/ownerRoot";
+bindOwnerRoot("probe-owner-passphrase");
 
 const ROOT: string = process.env.SI_ROOT ?? process.cwd();
 
@@ -255,8 +257,14 @@ section("9. this is wired into the runtime, not just exported");
   ok("the AFTER guard exists too, not only the before-guard", (src.match(/governStep\(/g) ?? []).length >= 2);
   ok("a trip stops the run and says why", /STOPPED BY GOVERNANCE/.test(src));
   ok("a trip does not merely warn and continue", /break;/.test(src));
-  ok("the envelope defaults to the conservative value when unstated",
-    /bool\("allowWrite", false\)/.test(src) && /bool\("allowShell", false\)/.test(src));
+  /* 1.2.0 — RE-ANCHORED: the conservative defaults moved with the authority
+     itself. Config is no longer authority, so the defaults live in the
+     sovereign profile reader (requestProfileOf), and the runtime is pinned
+     for importing the sovereign path at all. */
+  const sovereignSrc = fs.readFileSync(path.join(ROOT, "src", "security", "sovereign.ts"), "utf8");
+  ok("the envelope defaults to the conservative value when unstated — the defaults live in the sovereign profile reader, and the runtime uses it",
+    /bool\("allowWrite", false\)/.test(sovereignSrc) && /bool\("allowShell", false\)/.test(sovereignSrc)
+    && /security\/sovereign/.test(src));
   ok("repeat counts are tracked, so non-convergence is detectable", /repeatCounts/.test(src));
   ok("the governance verdict is reported with the run",
     /HERMES_LOOP/.test(src) && /toolsUsed/.test(src));

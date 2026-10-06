@@ -19,6 +19,8 @@ import {
   decisionReceiptEvent, type DecisionBody, type DecisionReceipt,
 } from "../src/security/decisionReceipt";
 import { NO_EVIDENCE, NO_GRANT, narrowTo } from "../src/security/authority";
+import { bindOwnerRoot } from "../src/security/ownerRoot";
+bindOwnerRoot("probe-owner-passphrase");
 
 const ROOT: string = process.env.SI_ROOT ?? process.cwd();
 

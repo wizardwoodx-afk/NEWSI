@@ -52,7 +52,7 @@ import {
 } from "./teamExecutor";
 import type { CliAgentTeam, TeamSeat, TeamRole } from "./agentTeam";
 import type { HarnessId } from "../domain/harness";
-import { CapLedger } from "./caps";
+import { CapLedger, INBOUND_DELEGATION_CAPS, type MissionCaps } from "./caps";
 import { buildProofReceipt, verifyProofReceipt, type ProofReceipt } from "./receipts";
 import { ENGINE_VERSION } from "../version";
 import { uid } from "../app/id";
@@ -135,6 +135,14 @@ export interface BridgeConfig {
   timeoutSecs?: number;
   maxTurns?: number | null;
   /**
+   * The receiving operator may NARROW the ceiling a remote delegation gets. It
+   * can never widen it: `inboundCapsFor` intersects whatever is supplied here
+   * with `INBOUND_DELEGATION_CAPS`, so a misconfigured or over-confident host
+   * still cannot hand a remote caller more than the floor allows. Omit it and
+   * the floor applies unchanged.
+   */
+  inboundCaps?: MissionCaps;
+  /**
    * Escape hatch, OFF by default. When true, a host that cannot execute returns
    * `not-executed` WITH a descriptive artifact instead of refusing — for demos
    * and UI previews only. The record's outcome still says `not-executed`; this
@@ -142,6 +150,33 @@ export interface BridgeConfig {
    */
   allowUnexecuted?: boolean;
   now?: () => number;
+}
+
+/**
+ * Intersect the host's request with the inbound floor. It can only NARROW.
+ *
+ * A dimension the host omits, sets to 0 ("unlimited"), sets to `NaN` or sets
+ * negative keeps the floor's number. That is the whole point of the function:
+ * `INBOUND_DELEGATION_CAPS` is a floor set by the receiver, and a receiving
+ * operator may tighten it for their own machine but must not be able to loosen it
+ * by configuration — otherwise "the host configured it" becomes the new way to
+ * say "unlimited", which is the defect this replaces.
+ */
+export function inboundCapsFor(requested?: MissionCaps): MissionCaps {
+  const narrowed: MissionCaps = { ...INBOUND_DELEGATION_CAPS };
+  if (!requested || typeof requested !== "object") return narrowed;
+  const fields = ["maxCostUsd", "maxTurns", "maxInvocations", "maxWallClockMs"] as const;
+  for (const field of fields) {
+    const asked = requested[field];
+    if (typeof asked !== "number" || !Number.isFinite(asked) || asked <= 0) continue;
+    narrowed[field] = Math.min(asked, INBOUND_DELEGATION_CAPS[field]);
+  }
+  return narrowed;
+}
+
+/** One line a human can read: what this delegation was allowed to spend. */
+function capsSummary(caps: MissionCaps): string {
+  return `$${(caps.maxCostUsd ?? 0).toFixed(2)}/${caps.maxTurns ?? 0}turns/${caps.maxInvocations ?? 0}inv/${Math.round((caps.maxWallClockMs ?? 0) / 1000)}s`;
 }
 
 function seatFor(teammate: Teammate, cfg: BridgeConfig): TeamSeat {
@@ -348,6 +383,48 @@ export async function runInboundDelegation(
   }
   const team = bridgeTeam(teammate, fromUser, seats);
 
+  /* ── 2c. THE INBOUND LEDGER — a real ceiling, charged BEFORE dispatch ────
+   *
+   * This line used to be `ledger: new CapLedger({})`. An empty caps object scores
+   * zero on cost, turns, invocations and the wall clock, and `admissionError`
+   * read every one of them as "no limit", so an inbound A2A delegation ran with
+   * NO mission ceiling at all: the only brake was the per-seat 600s timeout, and
+   * a remote principal could send packet after packet, each one a fresh ledger,
+   * each one spending this host's provider key. Two changes fix it:
+   *
+   *   • the ledger is built from `INBOUND_DELEGATION_CAPS` (narrowed, never
+   *     widened, by whatever the host configured), and
+   *   • the work is CHARGED TO IT BEFORE `executeTeam` is called — one invocation
+   *     per seat and each seat's DECLARED turn ceiling. Charging the declared
+   *     figure rather than the observed one over-charges in the safe direction,
+   *     and it is what makes the executor's own per-turn `admissionError()` check
+   *     meaningful: it reads a number that already moves. (The executor charges
+   *     real dollars and real tokens through `charge()`; the SEAT COUNT and the
+   *     seat turn budgets come from this file, which is why they are pre-charged
+   *     here.)
+   *
+   * A plan that cannot fit the ceiling is refused in words rather than silently
+   * truncated mid-run: a caller that asked for 80 turns is told the ceiling is 40,
+   * instead of discovering at turn 41 that its work stopped existing.
+   */
+  const caps = inboundCapsFor(cfg.inboundCaps);
+  const seatTurns = (s: TeamSeat): number => (typeof s.maxTurns === "number" && s.maxTurns > 0 ? s.maxTurns : 0);
+  const declaredTurns = seats.reduce((n, s) => n + seatTurns(s), 0);
+  const turnCeiling = caps.maxTurns ?? 0;
+  if (turnCeiling > 0 && declaredTurns > turnCeiling) {
+    return refuse(
+      `this host's inbound plan declares ${declaredTurns} turns across ${seats.length} seats, which does not fit the ${turnCeiling}-turn ceiling a remote delegation gets — ` +
+      "narrow the seat budget on this host, or send the work as smaller delegations. Nothing ran.",
+    );
+  }
+  const ledger = new CapLedger(caps, cfg.now?.() ?? Date.now());
+  for (const s of seats) {
+    ledger.beginInvocation();
+    ledger.addTurns(seatTurns(s));
+  }
+  const preflight = ledger.admissionError(cfg.now?.() ?? Date.now());
+  if (preflight) return refuse(`the delegation was refused before dispatch — ${preflight}`);
+
   const startedAt = new Date(cfg.now?.() ?? Date.now()).toISOString();
   let report: TeamRunReport;
   try {
@@ -360,7 +437,7 @@ export async function runInboundDelegation(
       objective: task,
       constraints: [`Inbound A2A delegation from ${fromUser} — stay inside the delegated task.`],
       testCommand: cfg.testCommand,
-      ledger: new CapLedger({}),
+      ledger,
       minimumRunnableSeats: 1,
     }, cfg.deps);
   } catch (err) {
@@ -418,6 +495,7 @@ export async function runInboundDelegation(
     `gate=${report.gate.status}/${report.gate.tier}`,
     `seats=${execution.seatsRun}/${execution.seatsVerified} verified`,
     execution.spentUsd > 0 ? `spent=$${execution.spentUsd.toFixed(4)}` : "spent=unmeasured",
+    `caps=${capsSummary(caps)}`,
     `receipt=${chainHead.slice(0, 16)}`,
   ].join(" · ");
 

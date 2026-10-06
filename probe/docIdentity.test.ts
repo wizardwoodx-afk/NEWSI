@@ -109,7 +109,12 @@ const ok = (label: string, cond: boolean, detail = ""): void => {
 test("docIdentity — current-facing documents name only the current release (outside historical context)", () => {
   console.log(`\n== doc identity scan (VH ${PRODUCT_VERSION}) ==\n`);
   const files = mdFiles();
-  ok("the scan covers the current docs surface", files.length >= 10, `only ${files.length} files`);
+  /* RE-ANCHORED at 1.1.0: the engineering records (limits, compat, gap audit,
+     positioning) moved to docs/internal/ — out of the current-facing scan by
+     design, the same role docs/history plays for releases. The live surface
+     is the README plus the docs a user reads; eight files is the whole
+     current-facing set, and every one of them is scanned below. */
+  ok("the scan covers the current docs surface", files.length >= 8, `only ${files.length} files`);
 
   /* THE ANTI-DORMANCY PIN (19.7.10). The whole failure this suite is being
      repaired for was a regex that matched nothing, so it could never fail.
@@ -125,7 +130,7 @@ test("docIdentity — current-facing documents name only the current release (ou
   ok("VERSION_RE matches a STALE release string — the gate would catch drift",
     matchesOnce.test(`${MAJOR}.${Number(MINOR) > 0 ? Number(MINOR) - 1 : 0}.0`));
   ok("historical-by-role documents are excluded by NAME, not by accident",
-    !files.some((f) => HISTORICAL_BY_ROLE.test(f)) && files.length >= 10);
+    !files.some((f) => HISTORICAL_BY_ROLE.test(f)) && files.length >= 8);
 
   const offenders: string[] = [];
   let scanned = 0;

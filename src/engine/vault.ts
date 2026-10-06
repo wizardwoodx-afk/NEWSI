@@ -9,7 +9,13 @@
  * pattern `secureKeys.ts` set in 18.3.0:
  *
  *   • AES-256-GCM under a key derived from the owner's passphrase
- *     (PBKDF2-SHA-256, 310k iterations — OWASP 2023 guidance for PBKDF2-HMAC-SHA-256);
+ *     (PBKDF2-HMAC-SHA-256. The shipped 310k cost is a measured desktop-
+ *      performance choice, recorded in the vault meta — not a claim about
+ *      current third-party guidance, which has since moved higher. New
+ *      vaults calibrate against THIS machine and never calibrate below the
+ *      shipped floor; existing vaults can be upgraded on unlock —
+ *      see upgradeVaultCost. Where the platform offers a memory-hard KDF,
+ *      a future re-key moment may adopt it);
  *   • the passphrase and the derived key are NEVER stored — the key lives
  *     in module memory for the session only; nothing decrypts at boot;
  *   • a sealed record is a small JSON envelope: version, salt, iv,
@@ -93,12 +99,12 @@ let sessionKey: CryptoKey | null = null;
 /* the exact params the CURRENT meta record was derived with, so opens match */
 let sessionParams: { salt: Uint8Array; meta: VaultMeta } | null = null;
 
-async function deriveKey(passphrase: string, salt: Uint8Array): Promise<CryptoKey> {
+async function deriveKey(passphrase: string, salt: Uint8Array, iterations: number = PBKDF_ITERATIONS): Promise<CryptoKey> {
   const s = subtle();
   if (!s) throw new Error("WebCrypto SubtleCrypto is unavailable in this runtime — the vault refuses rather than pretend to encrypt");
   const base = await s.importKey("raw", enc.encode(passphrase), "PBKDF2", false, ["deriveKey"]);
   return s.deriveKey(
-    { name: "PBKDF2", salt: salt as BufferSource, iterations: PBKDF_ITERATIONS, hash: "SHA-256" },
+    { name: "PBKDF2", salt: salt as BufferSource, iterations, hash: "SHA-256" },
     base,
     { name: "AES-GCM", length: 256 },
     false,
@@ -132,9 +138,12 @@ export async function setVaultPassphrase(passphrase: string, now: () => Date = (
     if (!existing) {
       const salt = randomBytes(16);
       const iv = randomBytes(12);
-      const key = await deriveKey(passphrase, salt);
+      /* A NEW vault measures this machine and never sets less than the
+       * shipped floor: the cost is honest for the hardware it lives on. */
+      const iterations = await calibratedIterations();
+      const key = await deriveKey(passphrase, salt, iterations);
       const check = await subtle()!.encrypt({ name: "AES-GCM", iv: iv as BufferSource }, key, enc.encode("si-vault-check/1"));
-      const meta: VaultMeta = { v: "si-vault-meta/1", saltB64: toB64(salt), ivB64: toB64(iv), cipherB64: toB64(check), kdf: "PBKDF2-SHA-256", iterations: PBKDF_ITERATIONS, createdAt: now().toISOString() };
+      const meta: VaultMeta = { v: "si-vault-meta/1", saltB64: toB64(salt), ivB64: toB64(iv), cipherB64: toB64(check), kdf: "PBKDF2-SHA-256", iterations, createdAt: now().toISOString() };
       const s = storage();
       if (!s) return { ok: false, error: "no storage in this runtime — the vault can exist for this session only; persistence needs a store" };
       s.setItem(VAULT_META_KEY, JSON.stringify(meta));
@@ -145,7 +154,9 @@ export async function setVaultPassphrase(passphrase: string, now: () => Date = (
     // existing meta — verify by decrypting the check string
     try {
       const salt = fromB64(existing.saltB64);
-      const key = await deriveKey(passphrase, salt);
+      /* the cost the vault was BORN with — an upgraded vault opens at its
+         own recorded cost, never at the shipped constant */
+      const key = await deriveKey(passphrase, salt, existing.iterations);
       const plain = await subtle()!.decrypt({ name: "AES-GCM", iv: fromB64(existing.ivB64) as BufferSource }, key, fromB64(existing.cipherB64) as BufferSource);
       if (dec.decode(plain) !== "si-vault-check/1") return { ok: false, error: "that passphrase did not open the vault — nothing was changed" };
       sessionKey = key;
@@ -167,6 +178,88 @@ export function lockVault(): void {
 
 export function vaultHasPassphrase(): boolean {
   return sessionKey !== null;
+}
+
+/** The vault's hardened derivation parameters (salt + iteration cost) —
+ *  readable WITHOUT the session, because the meta record is not secret.
+ *  The owner-root derivation rides on exactly these params, so the owner's
+ *  key inherits the vault's password hardening instead of inventing its own. */
+export function vaultKdfParams(): { saltB64: string; iterations: number } | null {
+  const meta = readMeta();
+  return meta ? { saltB64: meta.saltB64, iterations: meta.iterations } : null;
+}
+
+/** Measured on THIS machine: a PBKDF2 cost worth about `targetMs` of unlock
+ *  work. Never returns less than the shipped floor — calibration raises the
+ *  cost on fast hardware; it never weakens a vault below it. */
+export async function calibratedIterations(targetMs = 250): Promise<number> {
+  const s = subtle();
+  if (!s) return PBKDF_ITERATIONS;
+  try {
+    const base = await s.importKey("raw", enc.encode("si-vault-calibration"), "PBKDF2", false, ["deriveBits"]);
+    const probeSalt = new Uint8Array(16);
+    const t0 = Date.now();
+    await s.deriveBits({ name: "PBKDF2", salt: probeSalt as BufferSource, iterations: 20_000, hash: "SHA-256" }, base, 256);
+    const per20k = Math.max(1, Date.now() - t0);
+    const scaled = Math.round((20_000 * targetMs) / per20k / 1000) * 1000;
+    return Math.min(2_000_000, Math.max(PBKDF_ITERATIONS, scaled));
+  } catch {
+    return PBKDF_ITERATIONS;
+  }
+}
+
+/** Raise the vault's cost to this machine's measured level — the unlock-time
+ *  upgrade. The passphrase re-derives at the new cost with a FRESH salt,
+ *  every sealed record is decrypted FIRST (with the still-current key) and
+ *  re-sealed after the swap; if any record fails to open, nothing changes.
+ *  Safe to call on every unlock: an already-current vault is a no-op. */
+export async function upgradeVaultCost(passphrase: string, targetIterations?: number): Promise<{ changed: boolean; iterations?: number; note: string }> {
+  const meta = readMeta();
+  if (!meta) return { changed: false, note: "no vault on this machine — nothing to upgrade" };
+  if (!sessionKey) return { changed: false, note: "the vault is locked — unlock before upgrading its cost" };
+  const target = targetIterations ?? await calibratedIterations();
+  if (target <= meta.iterations) {
+    return { changed: false, note: `the vault's cost (${meta.iterations}) already meets this machine's measured level (${target})` };
+  }
+  const s = storage();
+  if (!s) return { changed: false, note: "no storage in this runtime — nothing to upgrade" };
+  // 1 · find every sealed record and decrypt it NOW, with the current key
+  const sealed: string[] = [];
+  for (let i = 0; i < s.length; i++) {
+    const k = s.key(i);
+    if (!k) continue;
+    const raw = s.getItem(k);
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw) as { v?: string };
+      if (parsed?.v === VAULT_FORMAT) sealed.push(k);
+    } catch { /* not a vault record */ }
+  }
+  const plain: Array<{ name: string; text: string }> = [];
+  for (const name of sealed) {
+    const r = await vaultOpenAsync(name);
+    if (!r.found || r.locked || r.text === undefined) {
+      return { changed: false, note: `a sealed record (${name}) did not open — the cost was not changed` };
+    }
+    plain.push({ name, text: r.text });
+  }
+  // 2 · re-derive at the new cost with a fresh salt, then swap the session
+  const salt = randomBytes(16);
+  const iv = randomBytes(12);
+  const newKey = await deriveKey(passphrase, salt, target);
+  const check = await subtle()!.encrypt({ name: "AES-GCM", iv: iv as BufferSource }, newKey, enc.encode("si-vault-check/1"));
+  const newMeta: VaultMeta = { ...meta, saltB64: toB64(salt), ivB64: toB64(iv), cipherB64: toB64(check), iterations: target };
+  sessionKey = newKey;
+  sessionParams = { salt, meta: newMeta };
+  s.setItem(VAULT_META_KEY, JSON.stringify(newMeta));
+  // 3 · re-seal everything at the new cost
+  let resealed = 0;
+  for (const p of plain) {
+    const r = await vaultSeal(p.name, p.text);
+    if (!r.ok) return { changed: true, iterations: target, note: `upgraded to ${target} iterations, but ${p.name} failed to re-seal — seal it again from its source` };
+    resealed += 1;
+  }
+  return { changed: true, iterations: target, note: `cost upgraded to ${target} iterations; ${resealed} sealed record(s) re-sealed` };
 }
 
 export type VaultStatusInfo = {

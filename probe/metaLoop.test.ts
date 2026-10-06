@@ -45,6 +45,8 @@ import {
   selfimpulseSession,
   verifySelfImpulseReceipt,
 } from "../src/selfimpulse/engine/selfimpulse";
+import { bindOwnerRoot } from "../src/security/ownerRoot";
+bindOwnerRoot("probe-owner-passphrase");
 
 declare const SI_ROOT: string | undefined;
 const ROOT = typeof SI_ROOT === "string" && SI_ROOT.length > 0 ? SI_ROOT : process.cwd();
@@ -221,7 +223,7 @@ describe("M6 protocol — meta_propose / meta_status / meta_revert over the wire
   };
 
   before(async () => {
-    child = spawn(process.execPath, ["tools/mcp.mjs"], { cwd: ROOT, stdio: ["pipe", "pipe", "pipe"] });
+    child = spawn(process.execPath, ["tools/mcp.mjs"], { env: { ...process.env, SI_OWNER_SECRET: "probe-owner-passphrase" }, cwd: ROOT, stdio: ["pipe", "pipe", "pipe"] });
     child.stdout!.on("data", (d: Buffer) => {
       buf += d.toString("utf8");
       let idx: number;

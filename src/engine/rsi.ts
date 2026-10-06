@@ -36,7 +36,7 @@ import { loadMemory } from "./memory";
 import { listHandoffs } from "./handoffs";
 import { getSpecialist } from "./registry";
 import { importSkillMd, removeImportedSkill, importedSkills } from "./skillsImport";
-import type { ProviderConfig } from "./types";
+import type { ProviderConfig, SpecialistCategory } from "./types";
 import { complete } from "./providers";
 import { draftContract, validateChangeContract, type ChangeContract, type MeasurementEvidence, sealMeasurement } from "./rsirals";
 
@@ -174,6 +174,41 @@ export function rsiCurriculum(userId = "local"): RsiTopic[] {
 
 /* ── ACTOR — draft a frozen playbook per topic ───────────────────────────── */
 
+/**
+ * WHERE AN RSI PLAYBOOK IS ALLOWED TO LAND.
+ *
+ * A draft used to be written with `category: *`, which binds its text in front of
+ * EVERY specialist. That is the widest possible blast radius for text the loop
+ * wrote itself — and with a provider configured the body is model-authored, so
+ * "it came from our own loop" is not a trust argument. `importSkillMd` now
+ * refuses an unbound import outright, which is the correct behaviour; the bug was
+ * on this side, asking for the wildcard in the first place.
+ *
+ * So a draft names ONE category, and an unrecognised evidence source resolves to
+ * `review`: the correction is "re-derive before you answer", which is a reviewing
+ * discipline, and it is the conservative choice — it is NOT `security` or `code`,
+ * so a lesson learned at the gate is never handed to the seats that hold the most
+ * authority. The map is exhaustive over the sources `rsiCurriculum` emits, so a
+ * new source is a compile error rather than a silent unbound install.
+ */
+const RSI_CATEGORY: Record<string, SpecialistCategory> = {
+  reject: "review",
+  gate: "review",
+  failure: "review",
+  livedata: "research",
+  handoff: "comms",
+};
+
+const rsiCategoryFor = (source: string, declared?: string): SpecialistCategory => {
+  if (declared) return declared as SpecialistCategory;
+  const mapped = RSI_CATEGORY[source];
+  if (mapped) return mapped;
+  throw new Error(
+    `RSI evidence source "${source}" has no bound category. Refusing to install an unbound playbook — ` +
+      `add it to RSI_CATEGORY rather than widening the install to every specialist.`,
+  );
+};
+
 const draftBody = (t: RsiTopic): string =>
   `Procedure:\n1. When a task resembles "${t.subject.split("—")[0].trim()}", recall this ledger event (${t.source}).\n2. Apply the recorded correction before answering; if the correction conflicts with a newer human decision, the NEWER decision wins.\n3. State in one line that this playbook came from the RSI loop, with its evidence id.\nQuality checklist: does the correction trace to a real ledger entry? does it tighten rather than widen discretion? would a reviewer accept it in one sentence?`;
 
@@ -215,7 +250,7 @@ export async function runRsiCycle(userId: string, opts: { provider?: ProviderCon
       state: "pending",
       verifierNote: "verifier hierarchy: human approval now (strong) + measured promotion before broad trust; intrinsic self-assessment is never a verifier (floor)",
       contract,
-      category: t.category,
+      category: rsiCategoryFor(t.source, t.category),
       at: new Date().toISOString(),
     });
   }
@@ -230,7 +265,17 @@ export async function applyRsiDraft(draftId: string): Promise<{ ok: boolean; err
   const d = st.drafts.find((x) => x.id === draftId);
   if (!d) return { ok: false, error: "no such draft" };
   if (d.state !== "pending") return { ok: false, error: `draft already ${d.state}` };
-  const skillMd = `---\nname: ${d.name}\ndescription: ${d.description.slice(0, 160)}\ncategory: ${d.category ?? "*"}\n---\n\n# RSI playbook ${d.name}\n\n${d.body}\n\n## Provenance\nFrozen RSI memory ${d.digest.slice(0, 16)}… · ${d.provenance} · ${d.at}. Applied by human decision; reverts exactly.`;
+  /* A draft persisted before drafts carried a category has none, and the wildcard
+     it used to ask for is refused at the door. Recover the evidence source from the
+     topic id rather than widening the install — and if neither is present, refuse
+     the apply instead of guessing a category for text the loop wrote itself. */
+  let category: SpecialistCategory;
+  try {
+    category = rsiCategoryFor(d.topicId.split(".")[1] ?? "", d.category);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+  const skillMd = `---\nname: ${d.name}\ndescription: ${d.description.slice(0, 160)}\ncategory: ${category}\n---\n\n# RSI playbook ${d.name}\n\n${d.body}\n\n## Provenance\nFrozen RSI memory ${d.digest.slice(0, 16)}… · ${d.provenance} · ${d.at}. Applied by human decision; reverts exactly.`;
   try {
     await importSkillMd(skillMd, "pasted");
   } catch (err) {

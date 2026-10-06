@@ -3075,7 +3075,7 @@ var init_localDb = __esm({
           throw new Error("approval_authorize requires an interactive confirm dialog \u2014 refusing to mint a capability non-interactively.");
         }
         const word = decision === "APPROVED" ? "approve" : "refuse";
-        const ok = window.confirm(
+        const ok2 = window.confirm(
           `SelfImpulse \u2014 human approval gate
 
 ${a.summary}
@@ -3086,7 +3086,7 @@ Verdict if you confirm: ${decision}
 
 ${word.toUpperCase()} this? Cancel mints nothing and decides nothing.`
         );
-        if (!ok) {
+        if (!ok2) {
           throw new Error(`approval ${id}: declined at the confirm dialog \u2014 no capability was minted and no decision was recorded.`);
         }
         const token = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? `cap_${crypto.randomUUID()}` : uid("cap");
@@ -4015,6 +4015,9 @@ var init_sandbox = __esm({
     WRAPPER_UNAVAILABLE = /* @__PURE__ */ new Set(["ENOENT", "EACCES", "EPERM", "ENOEXEC"]);
   }
 });
+
+// probe/diag3.test.ts
+import assert from "node:assert/strict";
 
 // src/mission/missionRuntime.ts
 init_id();
@@ -11075,6 +11078,19 @@ function truncate(s, n) {
 }
 
 // probe/diag3.test.ts
+var pass = 0;
+var fail = 0;
+var ok = (label, cond, detail = "") => {
+  if (cond) {
+    pass += 1;
+    console.log(`  ok   ${label}`);
+  } else {
+    fail += 1;
+    console.log(`  FAIL ${label}${detail ? ` \u2014 ${detail}` : ""}`);
+  }
+};
+var section = (t) => console.log(`
+== ${t} ==`);
 var m = instantiateTemplate("tpl.software-development", { objective: "Build a production-ready SaaS billing feature in TypeScript", name: "d", workspace: "." });
 m.successCriteria = ["Builds without errors", "Tests pass"];
 m.budget = { ...DEFAULT_BUDGET, maxCostUsd: 5, maxRetriesPerTask: 3, maxConcurrentAgents: 6, maxGraphMutations: 4 };
@@ -11087,10 +11103,60 @@ rt.buildOrganization();
 await rt.run();
 console.log("mission status:", m.status);
 for (const t of rt.org.tasks_()) console.log(` task ${t.title} | ${t.state} | risk=${t.risk} cls=${t.cls} deps=[${t.dependsOn.join(",")}] err=${(t.error ?? "").slice(0, 60)}`);
-console.log("approvals:", services.approvals.forMission(m.missionId).length);
+console.log("approvals opened:", services.approvals.forMission(m.missionId).length, "still PENDING:", services.approvals.pendingForMission(m.missionId).length);
 var arts = services.artifacts.forMission(m.missionId);
 console.log("artifacts:", arts.length);
 for (const a of arts.slice(0, 8)) console.log(`  ${a.name} v${a.version} passed=${a.evaluation?.passed} fullyMeasured=${a.evaluation?.fullyMeasured} unmeasured=[${(a.evaluation?.unmeasured ?? []).join("; ")}]`);
 var ev = rt.getEvents();
 console.log("event kinds:", [...new Set(ev.map((e) => e.kind))].sort().join(", "));
 console.log("last 3:", ev.slice(-3).map((e) => e.kind + " :: " + e.reason.slice(0, 100)).join("\n        "));
+section("1. artifact honesty \u2014 the contract this suite was reaching for");
+ok("the run produced a mission status", !!m.status, `${m.status}`);
+var contradictory = arts.filter((a) => a.evaluation?.fullyMeasured === true && (a.evaluation?.unmeasured?.length ?? 0) > 0);
+ok(
+  "no artifact claims fullyMeasured while listing what it did not measure",
+  contradictory.length === 0,
+  contradictory.map((a) => `${a.name}: fullyMeasured=true but unmeasured=[${(a.evaluation?.unmeasured ?? []).join(", ")}]`).join("; ")
+);
+var unmeasuredButPassed = arts.filter((a) => (a.evaluation?.unmeasured?.length ?? 0) > 0 && a.evaluation?.passed === true && a.evaluation?.fullyMeasured);
+ok(
+  "no partially-measured artifact reports a verified pass",
+  unmeasuredButPassed.length === 0,
+  unmeasuredButPassed.map((a) => a.name).join("; ")
+);
+var malformed = arts.filter((a) => a.evaluation !== void 0 && a.evaluation !== null && typeof a.evaluation.passed !== "boolean");
+ok(
+  "every artifact evaluation reports a boolean passed",
+  malformed.length === 0,
+  malformed.map((a) => `${a.name}: ${typeof a.evaluation?.passed}`).join("; ")
+);
+section("2. the run left nothing dangling");
+var stillPending = services.approvals.pendingForMission(m.missionId);
+if (stillPending.length > 0) {
+  ok("an unanswered gate is reflected as a BLOCKED mission", m.status === "BLOCKED", `${m.status}`);
+  ok(
+    "\u2026and the blocked task says it is waiting on a human",
+    rt.org.tasks_().filter((t) => t.state === "BLOCKED").every((t) => /approval|human/i.test(t.error ?? "")),
+    JSON.stringify(rt.org.tasks_().filter((t) => t.state === "BLOCKED").map((t) => t.error))
+  );
+  ok(
+    "no approval-gated task was marked done while unanswered",
+    rt.org.tasks_().filter((t) => t.cls === "APPROVAL_GATED").every((t) => t.state !== "done"),
+    JSON.stringify(rt.org.tasks_().filter((t) => t.cls === "APPROVAL_GATED").map((t) => `${t.title}:${t.state}`))
+  );
+}
+var stuck = rt.org.tasks_().filter((t) => t.state === "running");
+ok(
+  "no task is still running after run() returned",
+  stuck.length === 0,
+  JSON.stringify(stuck.map((t) => t.title))
+);
+ok("every artifact is named", arts.every((a) => !!a.name), `${arts.length} artifacts`);
+ok(
+  "every artifact carries a version",
+  arts.every((a) => a.version !== void 0 && a.version !== null),
+  JSON.stringify(arts.filter((a) => a.version === void 0).map((a) => a.name))
+);
+console.log(`
+diag3: ${pass} passed, ${fail} failed`);
+assert.equal(fail, 0, `${fail} diag3 assertion(s) failed`);

@@ -3075,7 +3075,7 @@ var init_localDb = __esm({
           throw new Error("approval_authorize requires an interactive confirm dialog \u2014 refusing to mint a capability non-interactively.");
         }
         const word = decision === "APPROVED" ? "approve" : "refuse";
-        const ok = window.confirm(
+        const ok2 = window.confirm(
           `SelfImpulse \u2014 human approval gate
 
 ${a.summary}
@@ -3086,7 +3086,7 @@ Verdict if you confirm: ${decision}
 
 ${word.toUpperCase()} this? Cancel mints nothing and decides nothing.`
         );
-        if (!ok) {
+        if (!ok2) {
           throw new Error(`approval ${id}: declined at the confirm dialog \u2014 no capability was minted and no decision was recorded.`);
         }
         const token = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? `cap_${crypto.randomUUID()}` : uid("cap");
@@ -4015,6 +4015,9 @@ var init_sandbox = __esm({
     WRAPPER_UNAVAILABLE = /* @__PURE__ */ new Set(["ENOENT", "EACCES", "EPERM", "ENOEXEC"]);
   }
 });
+
+// probe/diag.test.ts
+import assert from "node:assert/strict";
 
 // src/mission/missionRuntime.ts
 init_id();
@@ -11075,6 +11078,19 @@ function truncate(s, n) {
 }
 
 // probe/diag.test.ts
+var pass = 0;
+var fail = 0;
+var ok = (label, cond, detail = "") => {
+  if (cond) {
+    pass += 1;
+    console.log(`  ok   ${label}`);
+  } else {
+    fail += 1;
+    console.log(`  FAIL ${label}${detail ? ` \u2014 ${detail}` : ""}`);
+  }
+};
+var section = (t) => console.log(`
+== ${t} ==`);
 var m = instantiateTemplate("tpl.software-development", { objective: "Build a production-ready SaaS billing feature in TypeScript", name: "d", workspace: "." });
 m.successCriteria = ["Builds without errors", "Tests pass"];
 m.budget = { ...DEFAULT_BUDGET, maxCostUsd: 5, maxRetriesPerTask: 3, maxConcurrentAgents: 6, maxGraphMutations: 4 };
@@ -11092,16 +11108,61 @@ var rt = new MissionRuntime(m, services, {
     setTimeout(() => services.approvals.decide(id, "APPROVED", "human", "ok"), 20);
   }
 });
+section("0. the loop runs at all");
 rt.prepare();
 rt.buildOrganization();
 var res = await rt.run();
 var ev = rt.getEvents();
 var count = (k) => ev.filter((e) => e.kind === k).length;
 console.log("status", m.status, res.status ?? "");
-console.log("approvalsSeen", approvals, "pending", services.approvals.forMission(m.missionId).length);
+console.log("approvalsSeen", approvals, "opened", services.approvals.forMission(m.missionId).length, "still PENDING", services.approvals.pendingForMission(m.missionId).length);
 console.log("REPAIR_STARTED", count("REPAIR_STARTED"), "REPAIR_COMPLETED", count("REPAIR_COMPLETED"));
 console.log("tasks:");
 for (const t of rt.org.tasks_()) console.log("  ", t.title, t.state, "attempts", t.attempts, "/", t.maxAttempts, "risk", t.risk, "cls", t.cls, "|", (t.error ?? "").slice(0, 80));
 console.log("distinct event kinds", new Set(ev.map((e) => e.kind)).size, "total", ev.length);
-console.log("checkpoints", rt.getCheckpoints ? "?" : "?");
 console.log("last 5 events:", ev.slice(-5).map((e) => e.kind + " :: " + e.reason.slice(0, 90)).join("\n  "));
+section("1. the governed path actually governed");
+ok("the mission was prepared and organised", rt.org.tasks_().length > 0, `${rt.org.tasks_().length} tasks`);
+ok("the run emitted events", ev.length > 0, `${ev.length}`);
+ok("the event log is sequenced, not unordered", ev.every((e, i) => i === 0 || e.seq > ev[i - 1].seq), "");
+var askedForApproval = ev.some((e) => /APPROVAL|GATE|approval/i.test(e.kind) || /approval|gate/i.test(e.reason));
+if (askedForApproval) {
+  ok("an approval was requested", approvals > 0, `${approvals}`);
+  const pending = services.approvals.pendingForMission(m.missionId);
+  const stillPending = pending.filter((r) => r.status === "PENDING");
+  if (stillPending.length > 0) {
+    ok("an unanswered gate leaves the mission BLOCKED, not completed", m.status === "BLOCKED", `${m.status}`);
+    ok(
+      "the blocked task names the human as the reason",
+      rt.org.tasks_().some((t) => t.state === "BLOCKED" && /approval|human/i.test(t.error ?? "")),
+      JSON.stringify(rt.org.tasks_().filter((t) => t.state === "BLOCKED").map((t) => t.error))
+    );
+    ok(
+      "no task was executed while a gate was still unanswered",
+      rt.org.tasks_().every((t) => t.state !== "done" || t.cls !== "APPROVAL_GATED"),
+      JSON.stringify(rt.org.tasks_().filter((t) => t.cls === "APPROVAL_GATED").map((t) => `${t.title}:${t.state}`))
+    );
+  } else {
+    ok("every gate that was opened was also answered", true);
+  }
+} else {
+  ok("no approval was needed, so none was requested", approvals === 0, `${approvals}`);
+  ok(
+    "every task reached a terminal state",
+    rt.org.tasks_().every((t) => t.state === "done" || t.state === "failed" || t.state === "skipped"),
+    JSON.stringify(rt.org.tasks_().map((t) => `${t.title}:${t.state}`))
+  );
+}
+section("2. the outcome is honest");
+ok("the mission reports a terminal status", m.status !== void 0 && m.status !== null, `${m.status}`);
+ok(
+  "no task silently sits in 'running' after run() returns",
+  rt.org.tasks_().every((t) => t.state !== "running"),
+  JSON.stringify(rt.org.tasks_().filter((t) => t.state === "running").map((t) => t.title))
+);
+if (m.status !== "SUCCEEDED") {
+  ok("a non-success status is stated, not dressed up as success", m.status !== "COMPLETED", `${m.status}`);
+}
+console.log(`
+diag: ${pass} passed, ${fail} failed`);
+assert.equal(fail, 0, `${fail} diag assertion(s) failed`);

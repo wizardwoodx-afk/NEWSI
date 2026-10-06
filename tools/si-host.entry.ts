@@ -31,6 +31,16 @@ import {
 import type { BridgeConfig } from "../src/mission/a2aBridge";
 import type { HarnessId } from "../src/domain/harness";
 import type { ReceiverRiskMode, RiskTier } from "../src/mission/selfimpulseTeams";
+/* Headless boot: the operator who launched this host vouches through the
+   environment (SI_OWNER_SECRET). Without it the host stays the labelled
+   bootstrap — the gate refuses every effectful approval. */
+import { bindOwnerRootFromEnv } from "../src/security/ownerRoot";
+bindOwnerRootFromEnv();
+/* Trusted startup ends here: the read-only registry seals. */
+import { sealReadOnlyRegistry } from "../src/security/capability";
+sealReadOnlyRegistry();
+import { sealPolicyRegistry } from "../src/selfimpulse/engine/policyGateway";
+sealPolicyRegistry();
 
 interface Args {
   [k: string]: string | boolean | undefined;

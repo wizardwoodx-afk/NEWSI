@@ -24,6 +24,8 @@ import {
   narrowCeiling, narrowTo, cleanStreakOf, NO_GRANT,
   type Capability, type ChainHop, type Evidence, type Grant, type Principal,
 } from "../src/security/authority";
+import { bindOwnerRoot } from "../src/security/ownerRoot";
+bindOwnerRoot("probe-owner-passphrase");
 
 const ROOT: string = process.env.SI_ROOT ?? process.cwd();
 

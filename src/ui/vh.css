@@ -1,39 +1,54 @@
 /* ============================================================
-   SELFIMPULSE — Precision & Density. Tight, technical, monochrome.
+   SELFIMPULSE — Quiet precision. EIGHT finishes, one law.
 
-   TRUE BLACK ground, silverwhite ink, warm paper for the light theme.
-   One accent, used only for the action in context. Nothing else carries
-   colour, so colour means something when it appears.
+   The finishes are supplied palettes, each kept as one coherent
+   material rather than a recolour:
 
-   Every pairing below is machine-verified. tools/contrast-check.mjs parses
-   this file and computes real WCAG 2.1 ratios; it is wired into the verify
-   suite, so a token cannot drift away from its own documentation again.
-   Worst case across 30 pairings, both themes: 4.75:1 (AA normal text).
+     holst      navy / sage / cream        (dark)
+     obsidian   onyx / blue slate / alabaster (dark)
+     azure      onyx / dark azure / paper white (dark)
+     platinum   platinum / french gray / gunmetal (light)
+     titanium   midnight / steel blue / champagne gold (dark)
+     akaroa     white rock / akaroa / barley corn (light)
+     caesar     black / burgundy / white   (dark)
+     stratos    black / vibe purple / white (dark)
 
-     --fg on black            19.3:1   (AAA)
-     --fg-2 on black            9.4:1   (AAA)
-     --fg-3 on black            5.4:1   (AA)   <- was 4.15:1, FAILED
-     accent on black           11.8:1   (AAA)
-     label on accent          10.7:1   (AAA)
-     --fg on paper            16.8:1   (AAA)
-     --fg-2 on paper            7.5:1   (AAA)
-     --fg-3 on paper            5.0:1   (AA)   <- was 3.21:1, FAILED
-     accent on paper            5.7:1   (AA)
+   Two laws survive from the four-finish era, because they are
+   about legibility rather than taste:
+
+   1. A ground is a SHADE, never an extreme. No dark ground is
+      pure black, no light ground is screen-white.
+   2. A surface ramp is measurably RAISED — each step sits above
+      the last, and s1 clears 1.6x the ground, so a card reads as
+      a surface rather than as a line.
+
+   What the four-finish era also pinned — one WARM accent hue per
+   day/night PAIR — is deliberately gone. The palettes above are
+   cool and violet by design, and a rule that forbids a blue
+   palette is a rule that forbids the owner's own colours. What
+   replaces it is the part that is actually load-bearing: ONE
+   accent per finish, measurably distinct from the secondary ink
+   (so colour means something when it appears), and clearing AA
+   as text on its own ground.
+
+   Every pairing is machine-verified: tools/contrast-check.mjs
+   parses this file across all eight finishes and computes real
+   WCAG 2.1 ratios, and probe/theme.test.ts pins the properties
+   above (raised ramps, shaded grounds, one accent, boot parity).
+   A token cannot drift from its own law again.
    ============================================================ */
-@font-face{font-family:"Geist";src:url(/fonts/Geist-Variable.woff2) format("woff2");font-weight:100 900;font-display:swap}
-@font-face{font-family:"Geist Mono";src:url(/fonts/GeistMono-Variable.woff2) format("woff2");font-weight:100 900;font-display:swap}
-@font-face{font-family:"Geist Pixel";src:url(/fonts/GeistPixel-Square.woff2) format("woff2");font-weight:400;font-display:swap}
-@font-face{font-family:"Space Grotesk";src:url(/fonts/space-grotesk-var.woff2) format("woff2");font-weight:100 900;font-display:swap}
-@font-face{font-family:"JetBrains Mono";src:url(/fonts/jetbrains-400.woff2) format("woff2");font-weight:400;font-display:swap}
-@font-face{font-family:"JetBrains Mono";src:url(/fonts/jetbrains-500.woff2) format("woff2");font-weight:500;font-display:swap}
-@font-face{font-family:"Instrument Serif";src:url(/fonts/instrument-serif-latin-400-normal.woff2) format("woff2");font-weight:400;font-style:normal;font-display:swap}
-@font-face{font-family:"Instrument Serif";src:url(/fonts/instrument-serif-latin-400-italic.woff2) format("woff2");font-weight:400;font-style:italic;font-display:swap}
+@font-face{font-family:"Gambetta";src:url(/fonts/Gambetta-Variable.woff2) format("woff2");font-weight:400 700;font-style:normal;font-display:swap}
+@font-face{font-family:"Gambetta";src:url(/fonts/Gambetta-VariableItalic.woff2) format("woff2");font-weight:400 700;font-style:italic;font-display:swap}
+@font-face{font-family:"Switzer";src:url(/fonts/Switzer-Variable.woff2) format("woff2");font-weight:100 900;font-style:normal;font-display:swap}
+@font-face{font-family:"Switzer";src:url(/fonts/Switzer-VariableItalic.woff2) format("woff2");font-weight:100 900;font-style:italic;font-display:swap}
+@font-face{font-family:"Fragment Mono";src:url(/fonts/FragmentMono-Regular.ttf) format("truetype");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"Fragment Mono";src:url(/fonts/FragmentMono-Italic.ttf) format("truetype");font-weight:400;font-style:italic;font-display:swap}
 
 :root{
-  --font:"Geist",-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
-  --display:"Space Grotesk","Geist",system-ui,sans-serif;
-  --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
-  --pixel:"Geist Pixel","Geist Mono",monospace;
+  --font:"Switzer",-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+  --display:"Gambetta",Georgia,"Times New Roman",serif;
+  --mono:"Fragment Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --pixel:"Fragment Mono",ui-monospace,monospace;
 
   /* One spacing scale. Everything is a multiple of 4.
      NOTE the deliberate gap: there is no --s1/--s2/--s3 in :root any more.
@@ -51,93 +66,250 @@
   --rail-w:248px;
 }
 
-[data-theme=dark]{
+/* HOLST — navy ground, sage accent, cream ink.
+   Palette: #0D1B2A  #1B263B  #415A77  #778D7A  #D4C4A8  #F4F1DE */
+[data-theme=holst]{
   color-scheme:dark;
-  /* A SHADE OF BLACK, not black and not a "dark grey". #0A0C0E is a neutral two
-     percent — measured at relLum 0.00359 against true black's 0.00000, which is
-     enough to read as a surface rather than a hole in the screen, and far too
-     little to tint anything. The previous value was #000000 exactly; that is a
-     defensible choice on OLED and it was the house choice for a while, but a
-     ground at literal zero makes every hairline do the work of a shape, and a
-     white line on true black reads as an edge of the screen rather than as a
-     rule on a surface.
-
-     What did NOT change: the ramp must still be measurably raised, the single
-     accent still carries all the colour, and no cool hue enters the ink. */
-  --bg:#14100C;--bg-deep:#0E0C09;
-  /* ELEVATION, measured rather than guessed. Asme steps: each lifted above the
-     previous, none flat against the ground. */
-  --s1:#1E1913;--s2:#26201A;--s3:#342C23;
-  --line:rgba(230,215,190,.10);--line-2:rgba(230,215,190,.17);
-  --fg:#F2EFE7;--fg-2:#B3A893;--fg-3:#8A8073;
-  /* THE ACCENT IS AQUA-TEAL AT 177deg — the house identity, and the one both
-     gate suites pin (probe/theme.test.ts asserts hue + AA on the ground;
-     probe/face.test.ts asserts 162–192deg — the cyan-leaning house hue).
-
-     20.1 briefly repointed this token at a deep navy (#1B4480) to match an
-     interim shell sheet. It failed on every count the product machine-checks:
-     as TEXT on this ground it measured 2.16:1 (WCAG AA needs 4.5), it dragged
-     the dark/light hue pair apart, and tools/contrast-check.mjs went RED on
-     three pairings. A dark fill can be navy; a TOKEN THAT IS ALSO TEXT cannot
-     be nearly the same value as the black behind it. The teal values below are
-     the documented ones from the sheet header — 11.8:1 on black, 5.7:1 on
-     paper — and the shell sheet (si.css) now derives from the same hue, so
-     both sheets are one accent again.
-
-     --accent-fg is the DARK ink because the fill is BRIGHT: a pale label on a
-     pale teal fill is unreadable, and the button label is what carries
-     meaning. */
-  --accent:#F2A45C;--accent-fg:#221207;--accent-soft:rgba(242,164,92,.16);
-  /* Status hues exist for text and dots only — never as a control fill.
-     20.1 — the warn hue is far less saturated than before. It was a bright
-     amber (#D4AC72) that read as gold-on-black next to the accent fill and made
-     status pills look like the primary action. */
-  --ok:#A8C079;--warn:#E5B94E;--bad:#C77A66;
-  --ok-soft:rgba(168,192,121,.14);--warn-soft:rgba(229,185,78,.13);--bad-soft:rgba(199,122,102,.14);
+  /* Ground relLum 0.0104 — a shade of black, never pure black. */
+  --bg:#0D1B2A;--bg-deep:#070F17;
+  --s1:#17263E;--s2:#1E2F49;--s3:#263853;
+  --line:rgba(244,241,222,0.1);--line-2:rgba(244,241,222,0.18);
+  --fg:#F4F1DE;--fg-2:#D4C4A8;--fg-3:#A9B6C2;
+  /* ONE accent, so colour means something when it appears. The label on an
+     accent fill stays the quiet half: deep ink on a light accent, porcelain on
+     a dark one. */
+  --accent:#879B8A;--accent-fg:#0A080A;--accent-soft:rgba(135,155,138,0.16);
+  --ok:#A8C079;--warn:#E5B94E;--bad:#CE8373;
+  --ok-soft:rgba(168,192,121,0.14);--warn-soft:rgba(229,185,78,0.13);--bad-soft:rgba(206,131,115,0.14);
+  --accent-2:#6A796C;--accent-3:#ABB9AD;
+  --sb:#566479;
   /* Real depth. A 1px ring alone cannot describe "this floats above that" on a
-     black ground; these pair a tight contact shadow with a wide ambient one. */
+     near-black ground; these pair a tight contact shadow with a wide ambient
+     one. On paper, depth comes from the contact shadow under a crisp ring. */
   --shadow-1:0 0 0 1px var(--line);
-  --shadow-2:0 1px 2px rgba(0,0,0,.5),0 0 0 1px var(--line);
-  --shadow-3:0 2px 4px rgba(0,0,0,.35),0 10px 28px -10px rgba(0,0,0,.85),0 0 0 1px var(--line);
-  --shadow-4:0 8px 20px rgba(0,0,0,.5),0 28px 60px -20px rgba(0,0,0,.9),0 0 0 1px var(--line-2);
-  --glass:rgba(24,20,16,.72);
-  --on-accent:#221207;
+  --shadow-2:0 1px 2px rgba(0,0,0,0.5),0 0 0 1px var(--line);
+  --shadow-3:0 2px 4px rgba(0,0,0,0.35),0 10px 24px -12px rgba(0,0,0,0.5),0 0 0 1px var(--line);
+  --shadow-4:0 8px 20px rgba(0,0,0,0.85),0 28px 56px -22px rgba(0,0,0,0.5),0 0 0 1px var(--line-2);
+  --glass:rgba(10,20,32,0.72);
+  --on-accent:#0A080A;
 }
 
-[data-theme=light]{
-  color-scheme:light;
-  /* STONE, not paper and not white. The previous light ground was #F7F7F5 with
-     PURE WHITE cards on top — near-white paper carrying actual #FFFFFF, which
-     is the glare this theme was supposed to avoid. This is a mineral light:
-     a warm grey ground with the cards a half-step above it, so the light theme
-     has the same lifted-surface logic the dark one has instead of one flat
-     white field. Measured at relLum 0.7808 — light enough to be a light theme,
-     dark enough that a white rectangle would still be visible on it. */
-  --bg:#E7E4DA;--bg-deep:#D8D4C6;
-  --s1:#F2F0E8;--s2:#E9E6DB;--s3:#DED9CB;
-  --line:rgba(26,20,12,.14);--line-2:rgba(26,20,12,.22);
-  --fg:#1A1611;--fg-2:#52483A;--fg-3:#6E6455;
-  /* Same 177deg teal identity as the dark theme, pulled deep for paper so it
-     holds contrast as TEXT (5.7:1 on this ground — the sheet header's own
-     measurement). Both themes sit on the same hue; only the depth changes.
-     --accent-fg is white because the fill is deep. */
-  --accent:#8A4A0E;--accent-fg:#FFFFFF;--accent-soft:rgba(138,74,14,.10);
-  --ok:#55682F;--warn:#8A5C1F;--bad:#9C3B2D;
-  --ok-soft:rgba(85,104,47,.10);--warn-soft:rgba(138,92,31,.10);--bad-soft:rgba(156,59,45,.10);
-  /* On paper, depth comes from the contact shadow under a crisp ring rather
-     than from a broad ambient blur, which would just muddy the surface. */
+/* OBSIDIAN — onyx, blue slate, alabaster.
+   Palette: #0A0A0A  #536878  #E5E4E2 */
+[data-theme=obsidian]{
+  color-scheme:dark;
+  /* Ground relLum 0.0030 — a shade of black, never pure black. */
+  --bg:#0A0A0A;--bg-deep:#060606;
+  --s1:#141719;--s2:#1C2023;--s3:#262B2F;
+  --line:rgba(229,228,226,0.1);--line-2:rgba(229,228,226,0.18);
+  --fg:#E5E4E2;--fg-2:#A7ADB1;--fg-3:#8f979c;
+  /* ONE accent, so colour means something when it appears. The label on an
+     accent fill stays the quiet half: deep ink on a light accent, porcelain on
+     a dark one. */
+  --accent:#798996;--accent-fg:#0A080A;--accent-soft:rgba(121,137,150,0.16);
+  --ok:#A8C079;--warn:#E5B94E;--bad:#CD8070;
+  --ok-soft:rgba(168,192,121,0.14);--warn-soft:rgba(229,185,78,0.13);--bad-soft:rgba(205,128,112,0.14);
+  --accent-2:#5E6B75;--accent-3:#A1ADB5;
+  --sb:#565A5D;
+  /* Real depth. A 1px ring alone cannot describe "this floats above that" on a
+     near-black ground; these pair a tight contact shadow with a wide ambient
+     one. On paper, depth comes from the contact shadow under a crisp ring. */
   --shadow-1:0 0 0 1px var(--line);
-  --shadow-2:0 1px 2px rgba(18,20,24,.07),0 0 0 1px var(--line);
-  --shadow-3:0 2px 4px rgba(18,20,24,.06),0 10px 24px -12px rgba(18,20,24,.16),0 0 0 1px var(--line);
-  --shadow-4:0 8px 20px rgba(18,20,24,.10),0 28px 56px -22px rgba(18,20,24,.22),0 0 0 1px var(--line-2);
-  --glass:rgba(242,240,232,.82);
-  --on-accent:#FFFFFF;
+  --shadow-2:0 1px 2px rgba(0,0,0,0.5),0 0 0 1px var(--line);
+  --shadow-3:0 2px 4px rgba(0,0,0,0.35),0 10px 24px -12px rgba(0,0,0,0.5),0 0 0 1px var(--line);
+  --shadow-4:0 8px 20px rgba(0,0,0,0.85),0 28px 56px -22px rgba(0,0,0,0.5),0 0 0 1px var(--line-2);
+  --glass:rgba(8,8,8,0.72);
+  --on-accent:#0A080A;
+}
+
+/* AZURE — dark azure, lifted off the brand gradient to clear AA.
+   Palette: #000000  #004A6B  #00638E  #8CB9CC  #BFD8E3  #2B2B2B */
+[data-theme=azure]{
+  color-scheme:dark;
+  /* Ground relLum 0.0069 — a shade of black, never pure black. */
+  --bg:#121416;--bg-deep:#0A0B0C;
+  --s1:#1A1F22;--s2:#222829;--s3:#2B2F33;
+  --line:rgba(242,245,247,0.1);--line-2:rgba(242,245,247,0.18);
+  --fg:#F2F5F7;--fg-2:#BFD8E3;--fg-3:#8CB9CC;
+  /* ONE accent, so colour means something when it appears. The label on an
+     accent fill stays the quiet half: deep ink on a light accent, porcelain on
+     a dark one. */
+  --accent:#5496B3;--accent-fg:#0A080A;--accent-soft:rgba(84,150,179,0.16);
+  --ok:#A8C079;--warn:#E5B94E;--bad:#CD8070;
+  --ok-soft:rgba(168,192,121,0.14);--warn-soft:rgba(229,185,78,0.13);--bad-soft:rgba(205,128,112,0.14);
+  --accent-2:#42758C;--accent-3:#87B6CA;
+  --sb:#5A5D60;
+  /* Real depth. A 1px ring alone cannot describe "this floats above that" on a
+     near-black ground; these pair a tight contact shadow with a wide ambient
+     one. On paper, depth comes from the contact shadow under a crisp ring. */
+  --shadow-1:0 0 0 1px var(--line);
+  --shadow-2:0 1px 2px rgba(0,0,0,0.5),0 0 0 1px var(--line);
+  --shadow-3:0 2px 4px rgba(0,0,0,0.35),0 10px 24px -12px rgba(0,0,0,0.5),0 0 0 1px var(--line);
+  --shadow-4:0 8px 20px rgba(0,0,0,0.85),0 28px 56px -22px rgba(0,0,0,0.5),0 0 0 1px var(--line-2);
+  --glass:rgba(14,15,17,0.72);
+  --on-accent:#0A080A;
+}
+
+/* PLATINUM — platinum ground, french gray steps, gunmetal accent.
+   Palette: #D3D0D5  #A4A2AB  #292B39 */
+[data-theme=platinum]{
+  color-scheme:light;
+  /* Ground relLum 0.6376 — light, never screen-white. */
+  --bg:#D3D0D5;--bg-deep:#b2b0b3;
+  --s1:#E6E4E9;--s2:#DAD8DE;--s3:#C6C3CA;
+  --line:rgba(41,43,57,0.14);--line-2:rgba(41,43,57,0.24);
+  --fg:#292B39;--fg-2:#41424f;--fg-3:#4b4d58;
+  /* ONE accent, so colour means something when it appears. The label on an
+     accent fill stays the quiet half: deep ink on a light accent, porcelain on
+     a dark one. */
+  --accent:#292B39;--accent-fg:#F7F4EE;--accent-soft:rgba(41,43,57,0.1);
+  /* 20.2 — .pill.ok/.warn/.bad are 10.5px uppercase mono, so NORMAL-SIZE text
+     under SC 1.4.3 and the bar is 4.5:1, not 3:1. On their own washes over the
+     ground these were 3.80 / 3.86 / 4.03:1. Darkened in step with the shell
+     sheet's copy of the same tokens and with --fg-3 (4.54 -> 5.00:1); the
+     washes keep their original lighter rgb, which is what gives the darker ink
+     its room. Now 5.33 / 5.36 / 5.24:1. */
+  --ok:#3B4921;--warn:#5D3E15;--bad:#732F23;
+  --ok-soft:rgba(78,96,43,0.14);--warn-soft:rgba(121,81,27,0.13);--bad-soft:rgba(143,58,44,0.14);
+  --accent-2:#50515D;--accent-3:#20222C;
+  --sb:#737175;
+  /* Real depth. A 1px ring alone cannot describe "this floats above that" on a
+     near-black ground; these pair a tight contact shadow with a wide ambient
+     one.  */
+  --shadow-1:0 0 0 1px var(--line);
+  --shadow-2:0 1px 2px rgba(41,43,57,0.07),0 0 0 1px var(--line);
+  --shadow-3:0 2px 4px rgba(41,43,57,0.06),0 10px 24px -12px rgba(41,43,57,0.16),0 0 0 1px var(--line);
+  --shadow-4:0 8px 20px rgba(41,43,57,0.1),0 28px 56px -22px rgba(41,43,57,0.22),0 0 0 1px var(--line-2);
+  --glass:rgba(240,239,240,0.82);
+  --on-accent:#F7F4EE;
+}
+
+/* TITANIUM — midnight black, steel blue steps, champagne gold accent.
+   Palette: #0D0D0D  #B8BD91  #2C3946  #C2A472 */
+[data-theme=titanium]{
+  color-scheme:dark;
+  /* Ground relLum 0.0040 — a shade of black, never pure black. */
+  --bg:#0D0D0D;--bg-deep:#070707;
+  --s1:#1A2128;--s2:#232C34;--s3:#2C3946;
+  --line:rgba(237,233,226,0.1);--line-2:rgba(237,233,226,0.18);
+  --fg:#EDE9E2;--fg-2:#B8BD91;--fg-3:#a4a791;
+  /* ONE accent, so colour means something when it appears. The label on an
+     accent fill stays the quiet half: deep ink on a light accent, porcelain on
+     a dark one. */
+  --accent:#C2A472;--accent-fg:#0A080A;--accent-soft:rgba(194,164,114,0.16);
+  --ok:#A8C079;--warn:#E5B94E;--bad:#CD8070;
+  --ok-soft:rgba(168,192,121,0.14);--warn-soft:rgba(229,185,78,0.13);--bad-soft:rgba(205,128,112,0.14);
+  --accent-2:#978059;--accent-3:#D4BF9C;
+  --sb:#5A656F;
+  /* Real depth. A 1px ring alone cannot describe "this floats above that" on a
+     near-black ground; these pair a tight contact shadow with a wide ambient
+     one. On paper, depth comes from the contact shadow under a crisp ring. */
+  --shadow-1:0 0 0 1px var(--line);
+  --shadow-2:0 1px 2px rgba(0,0,0,0.5),0 0 0 1px var(--line);
+  --shadow-3:0 2px 4px rgba(0,0,0,0.35),0 10px 24px -12px rgba(0,0,0,0.5),0 0 0 1px var(--line);
+  --shadow-4:0 8px 20px rgba(0,0,0,0.85),0 28px 56px -22px rgba(0,0,0,0.5),0 0 0 1px var(--line-2);
+  --glass:rgba(10,10,10,0.72);
+  --on-accent:#0A080A;
+}
+
+/* AKAROA — white rock ground, akaroa steps, barley corn accent.
+   Palette: #2D2D2D  #D7C9AE  #A68763  #EAE0D2 */
+[data-theme=akaroa]{
+  color-scheme:light;
+  /* Ground relLum 0.7385 — light, never screen-white. */
+  --bg:#E8DECE;--bg-deep:#BEB6A9;
+  --s1:#F4EEE2;--s2:#E0D4BF;--s3:#D2C3A8;
+  --line:rgba(45,45,45,0.14);--line-2:rgba(45,45,45,0.24);
+  --fg:#2D2D2D;--fg-2:#4b4439;--fg-3:#544d41;
+  /* ONE accent, so colour means something when it appears. The label on an
+     accent fill stays the quiet half: deep ink on a light accent, porcelain on
+     a dark one. */
+  --accent:#67533d;--accent-fg:#F7F4EE;--accent-soft:rgba(110,89,65,0.1);
+  /* 20.2 — same repair as platinum, same values: 4.31 / 4.43 / 4.59:1 became
+     6.04 / 6.14 / 5.97:1. */
+  --ok:#3B4921;--warn:#5D3E15;--bad:#732F23;
+  --ok-soft:rgba(78,96,43,0.14);--warn-soft:rgba(121,81,27,0.13);--bad-soft:rgba(143,58,44,0.14);
+  --accent-2:#887763;--accent-3:#554533;
+  --sb:#7A7161;
+  /* Real depth. A 1px ring alone cannot describe "this floats above that" on a
+     near-black ground; these pair a tight contact shadow with a wide ambient
+     one.  */
+  --shadow-1:0 0 0 1px var(--line);
+  --shadow-2:0 1px 2px rgba(45,45,45,0.07),0 0 0 1px var(--line);
+  --shadow-3:0 2px 4px rgba(45,45,45,0.06),0 10px 24px -12px rgba(45,45,45,0.16),0 0 0 1px var(--line);
+  --shadow-4:0 8px 20px rgba(45,45,45,0.1),0 28px 56px -22px rgba(45,45,45,0.22),0 0 0 1px var(--line-2);
+  --glass:rgba(247,243,238,0.82);
+  --on-accent:#F7F4EE;
+}
+
+/* CAESAR — black ground carrying a true burgundy.
+   Palette: #000000  #6D001A  #FFFFFF */
+[data-theme=caesar]{
+  color-scheme:dark;
+  /* Ground relLum 0.0029 — a shade of black, never pure black. */
+  --bg:#0E0809;--bg-deep:#080405;
+  --s1:#171012;--s2:#1F1618;--s3:#2A1E20;
+  --line:rgba(247,242,243,0.1);--line-2:rgba(247,242,243,0.18);
+  --fg:#F7F2F3;--fg-2:#C4B4B8;--fg-3:#96868A;
+  /* ONE accent, so colour means something when it appears. The label on an
+     accent fill stays the quiet half: deep ink on a light accent, porcelain on
+     a dark one. */
+  --accent:#b27987;--accent-fg:#0A080A;--accent-soft:rgba(173,112,127,0.16);
+  --ok:#A8C079;--warn:#E5B94E;--bad:#CD8070;
+  --ok-soft:rgba(168,192,121,0.14);--warn-soft:rgba(229,185,78,0.13);--bad-soft:rgba(205,128,112,0.14);
+  --accent-2:#875863;--accent-3:#C69BA5;
+  --sb:#595051;
+  /* Real depth. A 1px ring alone cannot describe "this floats above that" on a
+     near-black ground; these pair a tight contact shadow with a wide ambient
+     one. On paper, depth comes from the contact shadow under a crisp ring. */
+  --shadow-1:0 0 0 1px var(--line);
+  --shadow-2:0 1px 2px rgba(0,0,0,0.5),0 0 0 1px var(--line);
+  --shadow-3:0 2px 4px rgba(0,0,0,0.35),0 10px 24px -12px rgba(0,0,0,0.5),0 0 0 1px var(--line);
+  --shadow-4:0 8px 20px rgba(0,0,0,0.85),0 28px 56px -22px rgba(0,0,0,0.5),0 0 0 1px var(--line-2);
+  --glass:rgba(11,6,7,0.72);
+  --on-accent:#0A080A;
+}
+
+/* STRATOS — black ground carrying vibe purple.
+   Palette: #000000  #AC58E9  #FFFFFF */
+[data-theme=stratos]{
+  color-scheme:dark;
+  /* Ground relLum 0.0035 — a shade of black, never pure black. */
+  --bg:#0D0A12;--bg-deep:#07060A;
+  --s1:#16121F;--s2:#1E1929;--s3:#281F36;
+  --line:rgba(246,242,250,0.1);--line-2:rgba(246,242,250,0.18);
+  --fg:#F6F2FA;--fg-2:#CFC2DE;--fg-3:#9C8FB0;
+  /* ONE accent, so colour means something when it appears. The label on an
+     accent fill stays the quiet half: deep ink on a light accent, porcelain on
+     a dark one. */
+  --accent:#b367eb;--accent-fg:#0A080A;--accent-soft:rgba(174,93,234,0.16);
+  --ok:#A8C079;--warn:#E5B94E;--bad:#CD8070;
+  --ok-soft:rgba(168,192,121,0.14);--warn-soft:rgba(229,185,78,0.13);--bad-soft:rgba(205,128,112,0.14);
+  --accent-2:#8849B6;--accent-3:#C78EF0;
+  --sb:#575062;
+  /* Real depth. A 1px ring alone cannot describe "this floats above that" on a
+     near-black ground; these pair a tight contact shadow with a wide ambient
+     one. On paper, depth comes from the contact shadow under a crisp ring. */
+  --shadow-1:0 0 0 1px var(--line);
+  --shadow-2:0 1px 2px rgba(0,0,0,0.5),0 0 0 1px var(--line);
+  --shadow-3:0 2px 4px rgba(0,0,0,0.35),0 10px 24px -12px rgba(0,0,0,0.5),0 0 0 1px var(--line);
+  --shadow-4:0 8px 20px rgba(0,0,0,0.85),0 28px 56px -22px rgba(0,0,0,0.5),0 0 0 1px var(--line-2);
+  --glass:rgba(10,8,14,0.72);
+  --on-accent:#0A080A;
 }
 
 *{box-sizing:border-box;margin:0}
 html,body,#root{height:100%}
 body{font:400 14.5px/1.58 var(--font);color:var(--fg);background:var(--bg);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;letter-spacing:-.005em;overflow:hidden}
-html[data-theme="dark"] body{font-weight:400}
+/* Body stays light in every finish. This was scoped to the single dark theme it
+   was written for; it now lists the six dark ids so adding a finish cannot
+   silently drop it. `color-scheme` already scopes the UA widgets. */
+html[data-theme=holst] body,
+html[data-theme=obsidian] body,
+html[data-theme=azure] body,
+html[data-theme=titanium] body,
+html[data-theme=caesar] body,
+html[data-theme=stratos] body{font-weight:400}
 b,strong{font-weight:500}
 button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;text-align:left}
 button:disabled{opacity:.4;cursor:not-allowed}
@@ -262,7 +434,15 @@ h3{font-size:14px;font-weight:500;letter-spacing:-.006em;line-height:1.4}
 .switch:has(input:checked){background:none;box-shadow:none}
 .switch>span{font-size:12.5px;color:var(--fg-2);white-space:nowrap}
 .seg{display:inline-flex;background:var(--s3);border-radius:var(--r2);padding:2px;box-shadow:inset 0 0 0 1px var(--line)}
-.seg button{padding:5px 11px;border-radius:6px;font-size:12.5px;color:var(--fg-2)}
+/* 19.7.14 — 7px of vertical padding, not 5px. Every button in a `.seg` measured
+   29px tall in the live DOM, which is under the 32px comfortable-target floor,
+   and a segmented control is exactly where a mis-tap costs the user something:
+   these switch the whole view underneath (Tool pack / Crew / Specialists, the
+   design-system tabs, the 25 domain tabs), so a stray hit swaps the entire
+   screen rather than nudging a value. The row grows by 2px; the type and the
+   horizontal rhythm are untouched, so the control still reads as a compact
+   segmented bar rather than a row of big buttons. */
+.seg button{padding:7px 11px;border-radius:6px;font-size:12.5px;color:var(--fg-2)}
 .seg button[aria-pressed=true]{background:var(--s1);color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.2),0 0 0 1px var(--line)}
 .input{background:var(--s3);border-radius:var(--r2);padding:8px 11px;font-size:13px;color:var(--fg);box-shadow:inset 0 0 0 1px var(--line);width:100%;border:0;outline:0;font-family:var(--font)}
 .input::placeholder{color:var(--fg-3)}
@@ -332,7 +512,12 @@ select.input{appearance:none}
 .composer textarea{width:100%;background:none;border:0;outline:0;resize:none;color:var(--fg);font:16px/1.55 var(--font);height:48px;min-height:48px;letter-spacing:-.005em;padding:2px 4px}
 .composer textarea::placeholder{color:var(--fg-3)}
 .composer .bar{display:flex;align-items:center;gap:4px;margin-top:8px}
-.composer .attach{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--fg-3);transition:background var(--t),color var(--t)}
+/* 19.7.14 — 32px, not 30px. The attach control measured 30x30 in the live DOM,
+   under the 32px minimum comfortable target, and it is now the ONLY control in
+ * that bar — the five chips and the folder button that used to share the row
+ * are gone — so it can afford the extra two pixels without crowding anything.
+ * The visual glyph is unchanged; only the hit area grows. */
+.composer .attach{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;color:var(--fg-3);transition:background var(--t),color var(--t)}
 .composer .attach:hover{background:var(--s2);color:var(--fg-2)}
 .composer .pick{font-size:12px;color:var(--fg-3);padding:0 6px}
 .composer .send{margin-left:auto;width:32px;height:32px;border-radius:9px;background:var(--accent);color:var(--accent-fg);display:grid;place-items:center;transition:filter var(--t),transform var(--t);box-shadow:0 1px 2px rgba(0,0,0,.2)}
@@ -656,12 +841,14 @@ select.input{appearance:none}
 .sgroup>.lead{color:var(--fg-2);font-size:13.5px;margin:0 0 14px 2px;max-width:60ch}
 .btn.danger{color:var(--bad)}.btn.danger:not(.ghost){background:var(--bad-soft)}
 .btn:disabled{opacity:.45;pointer-events:none}
-.themes{display:flex;gap:12px}
+.themes{display:flex;gap:12px;flex-wrap:wrap}
 .themes button{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:10px;border-radius:var(--r);background:var(--s1);box-shadow:var(--shadow-1);width:150px;font-size:13px}
 .themes button[aria-pressed=true]{box-shadow:0 0 0 2px var(--accent)}
 .themes b{font-weight:450}.themes small{color:var(--fg-3);font:10.5px var(--pixel);letter-spacing:.06em;text-transform:uppercase;margin-top:-4px}
 .themes .sw{width:100%;height:56px;border-radius:8px;box-shadow:inset 0 0 0 1px var(--line-2)}
-.themes .sw.dark{background:linear-gradient(160deg,#1C1C1F,#000000)}.themes .sw.light{background:linear-gradient(160deg,#FFFFFF,#F7F7F5)}
+/* Each picker swatch previews its own finish: the surface step at the top-left
+   falling to the ground, so the eight read as eight materials. */
+.themes .sw.holst{background:linear-gradient(160deg,#263853,#0D1B2A)}.themes .sw.obsidian{background:linear-gradient(160deg,#262B2F,#0A0A0A)}.themes .sw.azure{background:linear-gradient(160deg,#2B2F33,#121416)}.themes .sw.platinum{background:linear-gradient(160deg,#D3D0D5,#A4A2AB)}.themes .sw.titanium{background:linear-gradient(160deg,#2C3946,#0D0D0D)}.themes .sw.akaroa{background:linear-gradient(160deg,#EAE0D2,#A68763)}.themes .sw.caesar{background:linear-gradient(160deg,#2A1E20,#0E0809)}.themes .sw.stratos{background:linear-gradient(160deg,#281F36,#0D0A12)}
 .klist.about span:last-child{font-family:var(--font);font-size:12.5px;color:var(--fg-2);text-align:right;max-width:34ch;flex:1}
 .tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:10px}
 .tags span{font:11px var(--mono);padding:2px 7px;border-radius:999px;background:var(--s3);color:var(--fg-2)}
@@ -713,17 +900,11 @@ label.switch input:focus-visible+i{box-shadow:0 0 0 2px var(--accent),inset 0 0 
 .chip b{font-weight:500;color:var(--fg);font-size:13px}
 .chip span{font-size:11.5px;color:var(--fg-3);line-height:1.35}
 /* calm, themed scrollbars */
-*{scrollbar-width:thin;scrollbar-color:var(--s3) transparent}
+*{scrollbar-width:thin;scrollbar-color:var(--sb) transparent}
 *::-webkit-scrollbar{width:9px;height:9px}
-*::-webkit-scrollbar-thumb{background:var(--s3);border-radius:8px;border:2px solid var(--bg)}
+*::-webkit-scrollbar-thumb{background:var(--sb);border-radius:8px;border:2px solid var(--bg)}
 *::-webkit-scrollbar-thumb:hover{background:var(--fg-3)}
 *::-webkit-scrollbar-track{background:transparent}
-/* LIGHT FINISH — the surface step (#E3E3DE) is a CARD colour; as a thumb on
-   paper it measured ~1.1:1 against the ground and read as a white smear.
-   A dedicated thumb ink keeps the same quietness with a grabbable edge. */
-[data-theme=light] *{scrollbar-color:#C6C5BD transparent}
-[data-theme=light] *::-webkit-scrollbar-thumb{background:#C6C5BD}
-[data-theme=light] *::-webkit-scrollbar-thumb:hover{background:var(--fg-3)}
 /* buttons: visible keyboard focus + gentler motion */
 .btn{will-change:transform}
 .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -830,14 +1011,16 @@ label.switch input:focus-visible+i{box-shadow:0 0 0 2px var(--accent),inset 0 0 
 .ic-f-sheet{--m:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='4' width='16' height='16' rx='1.5'/%3E%3Cpath d='M4 9.5h16M4 15h16M9.5 4v16M15 4v16'/%3E%3C/svg%3E")}
 .ic-f-slides{--m:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3.5' y='4' width='17' height='12' rx='1.5'/%3E%3Cpath d='M7.5 8h6M7.5 11.5h9'/%3E%3Cpath d='M12 16v3M8.5 21l3.5-2 3.5 2'/%3E%3C/svg%3E")}
 .ic-f-zip{--m:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='3.5' width='14' height='17' rx='1.5'/%3E%3Cpath d='M12 3.5v2.5M12 8.5v2M12 13v2M12 17.5v3'/%3E%3C/svg%3E")}
-/* The share row itself: monochrome, tight, hidden rather than wrapped when the
-   composer narrows — the clip button is the real door, this is its caption. */
-.composer .ftypes{display:inline-flex;align-items:center;gap:9px;min-width:0;overflow:hidden}
-.composer .ftype{display:inline-flex;align-items:center;gap:4px;font:10px var(--pixel);letter-spacing:.07em;color:var(--fg-3);cursor:default;transition:color var(--t)}
-.composer .ftype:hover{color:var(--fg-2)}
-.composer .ftype .ic{stroke:currentColor;fill:none}
-@media (max-width:900px){.composer .ftypes{display:none}}
-.folder{display:inline-flex;align-items:center;gap:6px;color:var(--fg-2);font-size:12.5px}
+/* 19.7.14 — THE SHARE ROW IS DEAD CSS, removed with the row it styled.
+ * `.composer .ftypes` / `.ftype` styled the five PDF/DOCX/XLSX/PPTX/ZIP chips
+ * and `.folder` styled the separate folder button. None of those elements are
+ * rendered any more: the composer has ONE attach control (a paperclip, with
+ * right-click for a folder) and the accepted formats live in its tooltip.
+ *
+ * The five `.ic-f-*` glyphs above went with them. They are masks defined only
+ * by these classes, so nothing else could have been using them — leaving them
+ * would be ~2 kB of data-URI SVG in the shipped stylesheet describing icons no
+ * user can see. `.ic-clip` is KEPT: it is the paperclip that replaced them. */
 
 @media (max-width:720px){
   .si-screen{padding:var(--s5) var(--s4) var(--s7)}

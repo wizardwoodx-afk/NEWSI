@@ -47,7 +47,7 @@ function launchHost(extra: string[] = []): Launched {
     "--selfimpulse", "LIFECYCLE-PROBE",
     "--port", "0",
     ...extra,
-  ], { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"] }) as ChildProcessWithoutNullStreams;
+  ], { env: { ...process.env, SI_OWNER_SECRET: "probe-owner-passphrase" }, cwd: ROOT, stdio: ["ignore", "pipe", "pipe"] }) as ChildProcessWithoutNullStreams;
 
   const state: Launched = { child, ready: null, readyAt: null, stdout: "", stderr: "", exited: null };
   child.stdout.setEncoding("utf8");

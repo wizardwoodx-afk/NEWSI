@@ -12,8 +12,10 @@ var __export = (target, all) => {
 // src/engine/tokenOptim.ts
 var tokenOptim_exports = {};
 __export(tokenOptim_exports, {
+  CONVERSATION_BUDGET: () => CONVERSATION_BUDGET,
   PROMPT_BUDGET: () => PROMPT_BUDGET,
   WIRE_BUDGET: () => WIRE_BUDGET,
+  budgetConversation: () => budgetConversation,
   clearTokenLedger: () => clearTokenLedger,
   collapseRepeatedLines: () => collapseRepeatedLines,
   estimateTokens: () => estimateTokens,
@@ -90,6 +92,83 @@ function collapseRepeatedLines(text, tolerance = 2) {
     }
   }
   return { text: kept.join("\n"), collapsed };
+}
+function clipMarked(text, maxChars) {
+  const marker = "\n[\u2026 the middle of this tool output was elided to fit the context budget \u2026]\n";
+  if (maxChars <= marker.length) return marker.trim();
+  if (text.length <= maxChars) return text;
+  const room = maxChars - marker.length;
+  const head = Math.floor(room * 0.6);
+  return `${text.slice(0, head)}${marker}${text.slice(text.length - (room - head))}`;
+}
+function budgetConversation(head, segments, tail, budgetTokens = CONVERSATION_BUDGET) {
+  const assemble = (parts) => [head, ...parts, tail].filter((p) => p.length > 0).join("\n\n");
+  const full = assemble(segments.map((s) => s.text));
+  const fullTokens = estimateTokens(full);
+  if (fullTokens <= budgetTokens) {
+    return { text: full, trimmed: false, savedTokens: 0, kept: segments.length, clipped: 0, elided: 0, floorLimited: false, est: true };
+  }
+  const clean = (s) => collapseRepeatedLines(normalizeWhitespace(s).text).text;
+  const nHead = clean(head);
+  const nTail = clean(tail);
+  const nSegs = segments.map((s) => ({ label: s.label, text: clean(s.text) }));
+  const deduped = assemble(nSegs.map((s) => s.text));
+  if (estimateTokens(deduped) <= budgetTokens) {
+    return {
+      text: deduped,
+      trimmed: true,
+      savedTokens: fullTokens - estimateTokens(deduped),
+      kept: nSegs.length,
+      clipped: 0,
+      elided: 0,
+      floorLimited: false,
+      est: true
+    };
+  }
+  let remaining = budgetTokens - estimateTokens(nHead) - estimateTokens(nTail);
+  const bodies = new Array(nSegs.length);
+  const elidedLabels = [];
+  let kept = 0;
+  let clipped = 0;
+  for (let i = nSegs.length - 1; i >= 0; i--) {
+    const seg = nSegs[i];
+    const tokens = estimateTokens(seg.text);
+    if (tokens <= remaining) {
+      bodies[i] = seg.text;
+      kept++;
+      remaining -= tokens;
+      continue;
+    }
+    if (remaining > 0) {
+      bodies[i] = clipMarked(seg.text, Math.floor(remaining * 4));
+      clipped++;
+      remaining = 0;
+      continue;
+    }
+    elidedLabels.unshift(seg.label);
+    bodies[i] = "";
+  }
+  const notices = [];
+  if (clipped > 0 || elidedLabels.length > 0) {
+    notices.push(
+      `[loop context note] This conversation was held to a ${budgetTokens}-token budget. ${kept} result block(s) are complete, ${clipped} were shortened (each says so inline), and ${elidedLabels.length > 0 ? `${elidedLabels.length} \u2014 ${elidedLabels.join(", ")} \u2014 were left out.` : "none were left out."} An elided result did NOT come back empty and no tool failed: its output simply did not fit. Re-run that tool if you need it. The most recent turn is complete.`
+    );
+  }
+  let out = assemble([...notices, ...bodies.filter((b) => b.length > 0)]);
+  if (estimateTokens(out) > budgetTokens) {
+    out = fitToBudget(out, budgetTokens).text;
+  }
+  const after = estimateTokens(out);
+  return {
+    text: out,
+    trimmed: true,
+    savedTokens: Math.max(0, fullTokens - after),
+    kept,
+    clipped,
+    elided: elidedLabels.length,
+    floorLimited: after > budgetTokens,
+    est: true
+  };
 }
 function recordEvent(e) {
   wireEvents.push(e);
@@ -259,7 +338,7 @@ function usageReport() {
 function clearTokenLedger() {
   storage()?.removeItem(LEDGER_KEY);
 }
-var LEDGER_KEY, LEDGER_CAP, PROMPT_BUDGET, WIRE_BUDGET, EVENT_CAP, wireEvents, wireSeq, lastPrefix;
+var LEDGER_KEY, LEDGER_CAP, PROMPT_BUDGET, WIRE_BUDGET, CONVERSATION_BUDGET, EVENT_CAP, wireEvents, wireSeq, lastPrefix;
 var init_tokenOptim = __esm({
   "src/engine/tokenOptim.ts"() {
     "use strict";
@@ -267,6 +346,7 @@ var init_tokenOptim = __esm({
     LEDGER_CAP = 500;
     PROMPT_BUDGET = 6e3;
     WIRE_BUDGET = 24e3;
+    CONVERSATION_BUDGET = 6e3;
     EVENT_CAP = 400;
     wireEvents = [];
     wireSeq = 0;

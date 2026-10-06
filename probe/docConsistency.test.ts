@@ -45,6 +45,7 @@ function liveDocs(): string[] {
       const r = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) {
         if (r === "docs/history") continue; // a release log, not live documentation
+        if (r === "docs/internal") continue; // engineering records (limits, compat, gap audits) — snapshot documents, not live claims
         walk(`${dir}/${e.name}`, r);
       } else if (e.name.endsWith(".md")) {
         out.push(r);
@@ -98,7 +99,7 @@ section("2. the release header names the engine that actually ships");
   const engine = version.match(/ENGINE_VERSION\s*=\s*"([^"]+)"/)?.[1] ?? "";
   const short = engine.split(".").slice(0, 2).join(".");
   ok("ENGINE_VERSION is readable from src/version.ts", /^\d+\.\d+\.\d+$/.test(engine), engine);
-  const gap = read("docs/IMPLEMENTATION-GAP.md");
+  const gap = read("docs/internal/IMPLEMENTATION-GAP.md");
   const header = gap.split("\n")[0];
   ok("IMPLEMENTATION-GAP.md does not name a version that does not ship",
     !/\b\d+\.\d+\b(?![\d.])/.test(header.replace(/^#\s*/, "")) || header.includes(short),

@@ -62,11 +62,12 @@ function constantTimeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 import { secureId } from "../security/guardrail";
-import { addTeammate, createTeam, delegateViaA2A, selfimpulseCardForTeamV10, makeDelegationHandler, type DeclaredAuthority, type DelegationOutcome, type SelfImpulseTeam, type HumanGate, type ReceiverRiskMode, type RiskTier } from "./selfimpulseTeams";
+import { addTeammate, createTeam, delegateViaA2A, selfimpulseCardForTeamV10, makeDelegationHandler, MAX_FEDERATION_HOPS, type DeclaredAuthority, type DelegationOutcome, type SettledChain, type SelfImpulseTeam, type HumanGate, type ReceiverRiskMode, type RiskTier } from "./selfimpulseTeams";
 import { createA2AServer, type A2AServerHandle } from "./a2aServer";
 import { AlterSendStore } from "./altersend";
 import { signAgentCardV10, type AgentCardV10, type CardSigningIdentityV10 } from "./a2aV10";
 import type { BridgeConfig } from "./a2aBridge";
+import { inboundCapsFor } from "./a2aBridge";
 import { ENGINE_VERSION } from "../version";
 import type { CliResult, TeamRunnerDeps } from "./teamExecutor";
 import { scrubEnv } from "./sandbox";
@@ -413,6 +414,17 @@ export interface RuntimeDescriptor {
     receiverRiskMode: ReceiverRiskMode;
     riskyGate: "deny" | "approve" | "custom";
     guardrail: "inbound scan + egress check + replay window";
+    /**
+     * How many hosts will execute ONE delegation chain. Reported so an operator
+     * can see the bound that is actually mounted rather than having to know it.
+     */
+    maxFederationHops: number;
+    /**
+     * The ceiling every inbound delegation runs under: dollars, turns, seat
+     * invocations and wall clock. A host may narrow these in
+     * `bridge.inboundCaps`; nothing can widen them.
+     */
+    inboundCaps: { maxCostUsd: number; maxTurns: number; maxInvocations: number; maxWallClockMs: number };
   };
   bridge: {
     executable: boolean;
@@ -461,6 +473,14 @@ export interface A2ARuntime {
     authority: DeclaredAuthority;
     authorization?: string;
     senderGate?: HumanGate;
+    /**
+     * The chain this delegation continues, as the peer reported it. Pass the
+     * `chain` from the previous settlement when FORWARDING work; omit it to
+     * start a new chain. Either way the depth limit is enforced here — by this
+     * host before it transmits, and by the receiver when the packet lands — so a
+     * peer cannot spend this machine by asking it to keep re-delegating.
+     */
+    chain?: Partial<SettledChain>;
   }): Promise<DelegationOutcome>;
   stop(): Promise<void>;
 }
@@ -738,6 +758,12 @@ export async function startA2ARuntime(opts: A2ARuntimeOptions): Promise<A2ARunti
   }
   if (!bridge.repoRoot) missing.push("no repository bound");
 
+  /* What every inbound delegation on this listener is allowed to spend. Computed
+     once here so `describe()` reports the real numbers the bridge will enforce —
+     a descriptor that said "bounded" without saying by how much would be the same
+     kind of claim this codebase refuses elsewhere. */
+  const inboundCaps = inboundCapsFor(bridge.inboundCaps);
+
   const describe = (): RuntimeDescriptor => ({
     files: {
       enabled: files !== null,
@@ -767,6 +793,13 @@ export async function startA2ARuntime(opts: A2ARuntimeOptions): Promise<A2ARunti
       receiverRiskMode: opts.receiverRiskMode ?? "high-and-critical",
       riskyGate: typeof riskyGate === "function" ? "custom" : riskyGate,
       guardrail: "inbound scan + egress check + replay window",
+      maxFederationHops: MAX_FEDERATION_HOPS,
+      inboundCaps: {
+        maxCostUsd: inboundCaps.maxCostUsd ?? 0,
+        maxTurns: inboundCaps.maxTurns ?? 0,
+        maxInvocations: inboundCaps.maxInvocations ?? 0,
+        maxWallClockMs: inboundCaps.maxWallClockMs ?? 0,
+      },
     },
     bridge: {
       executable: missing.length === 0,
@@ -804,6 +837,7 @@ export async function startA2ARuntime(opts: A2ARuntimeOptions): Promise<A2ARunti
         authority: o.authority,
         authorization: o.authorization,
         senderGate: o.senderGate,
+        chain: o.chain,
       }),
     stop: async () => {
       await server.stop();

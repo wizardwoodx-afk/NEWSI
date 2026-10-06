@@ -1,5 +1,8 @@
 import { createRequire as __mjCreateRequire } from "node:module"; const require = __mjCreateRequire(import.meta.url);
 
+// probe/wiring.test.ts
+import assert from "node:assert/strict";
+
 // src/domain/rolePacks.ts
 var ROLE_PACKS = [
   { slug: "backend-engineer", title: "Backend Engineer", industry: "engineering", icon: "code", mission: "Design and implement reliable services, APIs, and data stores." },
@@ -1694,6 +1697,17 @@ function topoSort(nodes, conns) {
 
 // probe/wiring.test.ts
 var dropped = [];
+var pass = 0;
+var fail = 0;
+var ok = (label, cond, detail = "") => {
+  if (cond) {
+    pass += 1;
+    console.log(`  ok   ${label}`);
+  } else {
+    fail += 1;
+    console.log(`  FAIL ${label}${detail ? ` \u2014 ${detail}` : ""}`);
+  }
+};
 function materialise(nodes, wires, label) {
   const byKey = new Map(nodes.map((n) => [n.templateKey, n]));
   const out = [];
@@ -1726,6 +1740,7 @@ function materialise(nodes, wires, label) {
 console.log("== templates: declared wires vs wires that survive ==");
 var dT = 0;
 var kT = 0;
+var templateCensus = [];
 for (const tpl of WORKFLOW_TEMPLATES) {
   const { instances, wires } = loadTemplate(tpl.id);
   const conns = materialise(instances, wires, tpl.name);
@@ -1738,21 +1753,57 @@ for (const tpl of WORKFLOW_TEMPLATES) {
   } catch {
     order = [];
   }
+  templateCensus.push({ name: tpl.name, declared: wires.length, kept: conns.length, errors: errs.length, order: order.length, nodes: instances.length });
   console.log(`  ${tpl.name.padEnd(38)} declared=${wires.length} kept=${conns.length} errors=${errs.length} topo=${order.length}/${instances.length}${errs.length ? `  e.g. "${errs[0].message}"` : ""}`);
 }
 console.log(`  TOTAL declared=${dT} kept=${kT} dropped=${dT - kT}`);
 console.log("\n== frameworks -> teams: declared wires vs wires that survive ==");
 var dF = 0;
 var kF = 0;
+var frameworkDrops = [];
 for (const fw of AGENT_FRAMEWORKS) {
   const { nodes, wires } = instantiateTeam(teamFromFramework(fw), "task");
   const conns = materialise(nodes, wires, fw.id);
   dF += wires.length;
   kF += conns.length;
-  if (conns.length !== wires.length) console.log(`  ${fw.id.padEnd(24)} declared=${wires.length} kept=${conns.length}`);
+  if (conns.length !== wires.length) {
+    console.log(`  ${fw.id.padEnd(24)} declared=${wires.length} kept=${conns.length}`);
+    frameworkDrops.push({ id: fw.id, declared: wires.length, kept: conns.length });
+  }
 }
 console.log(`  TOTAL declared=${dF} kept=${kF} dropped=${dF - kF}`);
 console.log(`
 == every dropped wire (${dropped.length}) ==`);
 for (const d of [...new Set(dropped)].slice(0, 12)) console.log("  " + d);
 console.log(`  distinct drop reasons: ${new Set(dropped.map((s) => s.split(": ")[1])).size}`);
+console.log("\n== the gate itself ==");
+ok("templates were actually enumerated", templateCensus.length > 0, `${templateCensus.length}`);
+ok("frameworks were actually enumerated", AGENT_FRAMEWORKS.length > 0, `${AGENT_FRAMEWORKS.length}`);
+var withWires = templateCensus.filter((t) => t.declared > 0);
+ok("some templates declare wires (the census is not vacuous)", withWires.length > 0, `${withWires.length}`);
+var lossy = templateCensus.filter((t) => t.kept !== t.declared);
+ok(
+  "every template wire survives the app's own resolution rule",
+  lossy.length === 0,
+  lossy.map((t) => `${t.name}: ${t.kept}/${t.declared}`).join("; ")
+);
+var invalid = templateCensus.filter((t) => t.errors > 0);
+ok(
+  "every template validates with zero errors",
+  invalid.length === 0,
+  invalid.map((t) => `${t.name}: ${t.errors}`).join("; ")
+);
+var unsortable = templateCensus.filter((t) => t.order !== t.nodes);
+ok(
+  "every template's nodes are topologically orderable",
+  unsortable.length === 0,
+  unsortable.map((t) => `${t.name}: ${t.order}/${t.nodes}`).join("; ")
+);
+ok(
+  "every framework's declared wires survive too",
+  frameworkDrops.length === 0,
+  frameworkDrops.map((f) => `${f.id}: ${f.kept}/${f.declared}`).join("; ")
+);
+console.log(`
+wiring: ${pass} passed, ${fail} failed`);
+assert.equal(fail, 0, `${fail} wiring assertion(s) failed \u2014 a template or framework is losing wires or does not validate`);

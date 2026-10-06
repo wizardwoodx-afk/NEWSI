@@ -35,17 +35,31 @@ ok("the Captain rename is real (Settings \u2192 Captain, through the store)", se
 ok("the crew never faces the user by name", !/specialist\.name|sp\.name|\.name\}/.test(read("src/ui/screens/Work.tsx")) && /AGENT/.test(read("src/ui/screens/Work.tsx")));
 ok("no demo/simulated wording on the surface", !consoleSrc.includes("labelled demo") && !consoleSrc.includes("demo mission") && !/simulat/i.test(consoleSrc));
 console.log("== the theme system ==");
-var lightBlock = css.match(/\[data-theme=light\]\s*\{([\s\S]*?)\n\}/m)?.[1] ?? "";
+var THEME_IDS = [...css.matchAll(/\[data-theme=([a-z0-9-]+)\]/g)].map((m) => m[1]).filter((v, i, a) => a.indexOf(v) === i);
 var LIGHT_MUST_OWN = ["bg", "bg-deep", "s1", "s2", "s3", "line", "line-2", "fg", "fg-2", "fg-3", "accent", "accent-fg", "accent-soft", "ok", "warn", "bad", "shadow-1", "shadow-4", "glass"];
-var lightMissing = LIGHT_MUST_OWN.filter((t) => !new RegExp(`--${t}:`).test(lightBlock));
+var incompleteFinish = THEME_IDS.filter((id) => {
+  const block = css.match(new RegExp(`\\[data-theme=${id}\\]\\s*\\{([\\s\\S]*?)\\n\\}`, "m"))?.[1] ?? "";
+  return LIGHT_MUST_OWN.some((t) => !new RegExp(`--${t}:`).test(block));
+});
 ok(
-  "the light theme ships as full token overrides",
-  lightMissing.length === 0,
-  `light block is missing: ${lightMissing.join(", ") || "none"}`
+  "every finish ships full token overrides \u2014 none inherits a missing value from another",
+  incompleteFinish.length === 0,
+  incompleteFinish.join(", ") || "all eight complete"
 );
-ok("the theme applies before first paint", main.includes("vh.theme.v2") && main.includes('dataset.theme = "light"'));
-ok("Settings carries the switch", settingsSrc.includes('setTheme("dark")') && settingsSrc.includes('setTheme("light")'));
-ok("no blue anywhere in the design system", !/#[0-9a-f]{0,2}[0-4][0-9a-f][0-9a-f]?[89a-f][0-9a-f]\b/i.test("") && !/\b(blue|indigo|#2563eb|#3b82f6|#1e40af)\b/i.test(css));
+ok(
+  "the theme applies before first paint, validated against THEMES",
+  main.includes("vh.theme.v2") && main.includes("THEMES.some(") && main.includes("dataset.theme")
+);
+ok(
+  "Settings carries the switch \u2014 one picker, driven by THEMES",
+  /THEMES\.map\(/.test(settingsSrc) && /setTheme\(id\)/.test(settingsSrc),
+  "the picker must render from the store, not from a private id list"
+);
+ok(
+  "no default-blue as a colour value anywhere in the design system",
+  !/#2563eb|#3b82f6|#1e40af|#1d4ed8|#60a5fa|#93c5fd/i.test(css) && !/:\s*(blue|indigo|rebeccapurple)\b/i.test(css),
+  "agent-tool default blues are banned as values; a palette may lean blue"
+);
 console.log("== provider semantics are exact ==");
 ok("session-only never seals (persist=false returns before any vault call)", /if \(!persist\) return \{ ok: true, note: "key kept in memory for this session only" \};/.test(storeSrc));
 ok("remember-on-this-machine REQUIRES an unlocked vault", /const v = vaultStatus\(\);\s*if \(v\.status !== "unlocked"\) return/.test(storeSrc));

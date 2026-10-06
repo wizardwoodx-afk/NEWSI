@@ -16,8 +16,9 @@
 import { composeNodePrompt } from "../domain/composer";
 import {
   addNode, governStep, startSession,
-  type AuthorityEnvelope, type RiskClass,
+  type AuthorityEnvelope,
 } from "../security/actionGraph";
+import { envelopeFromMandate, sovereign } from "../security/sovereign";
 import { DEFAULT_POLICY, evaluate as evaluatePolicy, resolveRole } from "../security/policy";
 import { buildDecisionReceipt, evidencePackDigest } from "../security/decisionReceipt";
 import { NO_EVIDENCE, NO_GRANT } from "../security/authority";
@@ -153,20 +154,30 @@ function parseTool(text: string): { name: string; args: Record<string, unknown> 
  *  node that says nothing about the network does not get the network. The
  *  envelope is read fresh on every run, which is what makes attenuation between
  *  runs observable (see detectDrift). */
-function authorityFor(node: NodeInstance): AuthorityEnvelope {
-  const cfg = (node.config ?? {}) as Record<string, unknown>;
-  const bool = (k: string, dflt: boolean): boolean => (typeof cfg[k] === "boolean" ? (cfg[k] as boolean) : dflt);
-  const riskRaw = String(cfg.maxRisk ?? "low").toLowerCase();
-  const maxRisk: RiskClass =
-    riskRaw === "critical" || riskRaw === "high" || riskRaw === "medium" ? riskRaw : "low";
-  return {
-    allowWrite: bool("allowWrite", false),
-    allowShell: bool("allowShell", false),
-    allowNetwork: bool("allowNetwork", false),
-    root: String(cfg.workspaceRoot ?? process.cwd()),
-    budgetCeiling: Number(cfg.budgetCeiling ?? 0),
-    maxRisk,
-  };
+/** The authority a node runs under — THE SOVEREIGN PATH.
+ *
+ *  v1.1.0 read this straight from `node.config`, which said "a seat's
+ *  configuration is its authority." That is no longer true. The config is a
+ *  REQUESTED profile; `sovereign.mandateFor` signs it into a mandate bound
+ *  to its digest, and only the VERIFIED mandate produces the envelope the
+ *  loop runs under. A seat whose mandate cannot be issued or verified gets
+ *  nothing — the caller refuses the run instead of guessing an envelope. */
+function authorityFor(node: NodeInstance): { env: AuthorityEnvelope; mandateIssued: boolean; signerId: string } {
+  const claim = sovereign.mandateFor(node);
+  if (!claim.ok) {
+    throw new Error(
+      `${node.title} has no owner mandate (${claim.reason}: ${claim.detail}). Config alone issues no authority — nothing was executed.`,
+    );
+  }
+  // The render verifies too, so a mandate that somehow stopped verifying between
+  // issuance and use fails here instead of handing the governed loop an envelope.
+  const env = envelopeFromMandate(claim.mandate, sovereign.currentRootSigner());
+  if (!env) {
+    throw new Error(
+      `${node.title}'s mandate does not verify against the root key ${claim.signerId} — nothing was executed.`,
+    );
+  }
+  return { env, mandateIssued: claim.issued, signerId: claim.signerId };
 }
 
 /** The most recent node of a kind, so a new edge attaches to what just happened
@@ -217,8 +228,24 @@ export async function runHermesNode(
    * journal entry. A trip STOPS the run and says why — it does not warn and
    * continue, because a run that has been shown to want something outside its
    * envelope is not a run worth finishing. */
-  const env = authorityFor(node);
-  const session = startSession(env, `${composed.user}\n\n${toolCatalog(node)}`);
+  const authority = authorityFor(node);
+  const env = authority.env;
+  /* THE LIVE SOURCE. Every governed step re-reads the seat's authority from
+   * the sovereign: the mandate is re-verified and its profile digest is
+   * re-measured against the seat's configuration AS IT IS NOW. Config drift,
+   * expiry or tampering read as null, and the loop fail-closes mid-run
+   * instead of finishing under authority it no longer holds. */
+  const session = startSession(env, `${composed.user}\n\n${toolCatalog(node)}`, {
+    source: () => sovereign.read(node),
+  });
+  session.journal.append({
+    stage: "authorize",
+    decision: authority.mandateIssued
+      ? `owner mandate issued over the seat's requested profile (key ${authority.signerId})`
+      : `owner mandate re-verified (key ${authority.signerId})`,
+    outcome: "allowed",
+    evidence: { signerId: authority.signerId, mandateIssued: authority.mandateIssued, maxRisk: env.maxRisk },
+  });
   const seq = { n: 1 }; // 0 is the prompt node
   const repeatCounts = new Map<string, number>();
   let failureStreak = 0;

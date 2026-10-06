@@ -70,16 +70,22 @@ if (bad) process.exit(1);
 console.log("all tests pass");
 `;
 
-function sh(args: string[], cwd: string): { code: number | null; out: string } {
+function sh(args: string[], cwd: string): { code: number | null; out: string; killed: boolean } {
   try {
     const out = execFileSync(args[0], args.slice(1), {
       cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_TEMPLATE_DIR: "" },
     });
-    return { code: 0, out };
+    return { code: 0, out, killed: false };
   } catch (e) {
-    const err = e as { status?: number | null; stdout?: string; stderr?: string };
-    return { code: err.status ?? null, out: `${err.stdout ?? ""}${err.stderr ?? ""}` };
+    const err = e as { status?: number | null; stdout?: string; stderr?: string; signal?: string | null };
+    /* A child that died by SIGNAL was never measured — the repo's test did
+     * not fail; the RUNNER killed it (this sandbox OOM-kills children when
+     * the whole gate runs at once). code null = unmeasured, by the engine's
+     * own contract. Recording it as exit 1 was the flake: the fixture told
+     * the bridge "verification failed" for a run that never got a verdict. */
+    const killed = err.status === null || err.status === 137 || err.signal != null;
+    return { code: err.status ?? null, out: `${err.stdout ?? ""}${err.stderr ?? ""}`, killed };
   }
 }
 
@@ -158,10 +164,19 @@ function bridgeDeps(fixes: boolean): TeamRunnerDeps {
       fs.mkdirSync(path.dirname(p), { recursive: true });
       fs.writeFileSync(p, contents);
     },
-    /* THE VERDICT IS THE REPOSITORY'S, not the seat's and not ours. */
+    /* THE VERDICT IS THE REPOSITORY'S, not the seat's and not ours.
+     *
+     * A child killed by a SIGNAL is an environment event, not a verdict: the
+     * fixture re-runs the check once (same command, same tree — the MAST
+     * repair idea of changing the situation, not a blind retry), and if it is
+     * killed again the run is reported UNMEASURED (exitCode null), which the
+     * engine already treats as unverified-not-failed. A REAL test failure
+     * (the process ran and exited non-zero) is never retried and never
+     * softened — the anti-cheat depends on it. */
     verify: async (cwd) => {
-      const r = sh(["node", "test.js"], cwd);
-      return { exitCode: r.code ?? 1, stdout: r.out, stderr: "", durationMs: 5, timedOut: false };
+      let r = sh(["node", "test.js"], cwd);
+      if (r.killed) r = sh(["node", "test.js"], cwd);
+      return { exitCode: r.code, stdout: r.out, stderr: "", durationMs: 5, timedOut: false };
     },
     arenaRunner: async (now) => ({
       gate: "PASS", ranAt: now, total: 11, defended: 11, breached: 0, results: [],

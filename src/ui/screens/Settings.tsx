@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useVh } from "../store";
+import { useVh , THEMES } from "../store";
 import { ipc, useTauri } from "../../ipc/client";
 import { saveNativeProvider } from "../../engine/nativeProvider";
 import { Mcp } from "./Mcp";
@@ -25,8 +25,18 @@ import type { DelegationCapability } from "../../engine/reach/delegationGrant";
 import { setOwnerDisplay, dataClass, setDataClass, identityProvider, type DataClass } from "../../security/identity";
 import { readCrashes, verifyCrashChain, lastCrash, exportCrashReport, clearCrashes, chainAssurance } from "../../security/crashLedger";
 import { toast } from "../../panels/Toast";
+import { APP_CONNECTORS, connectorState, setConnectorConnected } from "../../engine/connectors";
+import { CHANNELS, channelState, firesInLastDay, setChannelEnabled } from "../../engine/channels";
+/* The books: Agent FinOps, the fleet roster, and the live assurance score —
+   the same rows the executor settles, the same authority the sovereign signs. */
+import { chargebackCsv, ledgerDigest, summary } from "../../engine/finops";
+import { roster, exportRoster } from "../../engine/iamLedger";
+import { scoreFromLedger } from "../../engine/assuranceLive";
+/* The proactive crew: schedules, signed webhooks and named events that start
+   governed runs — a trigger is a doorbell, not a key. */
+import { listTriggers, addTrigger, removeTrigger, setTriggerEnabled, type Trigger } from "../../engine/intakeTriggers";
 
-type Sect = "provider" | "vault" | "autonomy" | "mcp" | "permissions" | "federation" | "appearance" | "identity" | "about" | "crew";
+type Sect = "provider" | "vault" | "autonomy" | "mcp" | "permissions" | "federation" | "appearance" | "identity" | "about" | "crew" | "connectors" | "channels" | "ledgers" | "triggers";
 /* Each sub-page carries a one-line PLAIN description under its label — the
  * whole point of the sub-page nav is that a first-time reader can see where
  * they are going before they click. Labels are the product's own words; the
@@ -37,9 +47,13 @@ const SECTS: Array<[Sect, string, string]> = [
   ["autonomy", "Independence", "how far the Captain may act"],
   ["mcp", "Tools (MCP)", "governed external tools"],
   ["permissions", "Permissions", "what may run & where keys go"],
+  ["ledgers", "Ledgers", "spend, fleet & assurance"],
+  ["triggers", "Triggers", "schedules & events that start work"],
   ["crew", "Crew", "which desks are on shift"],
   ["federation", "Federation", "work across owners"],
   ["appearance", "Appearance", "finish & handle"],
+  ["connectors", "Connect", "mail, calendar, repos, docs"],
+  ["channels", "Channels", "impulse, intake, inbox"],
   ["identity", "Identity", "subject, data class, crashes"],
   ["about", "About", "limits, receipts & runtime"],
 ];
@@ -56,8 +70,16 @@ export function Settings(): React.ReactElement {
   const [sect, setSect] = useState<Sect>("provider");
   return (
     <>
-      <header className="top"><h2>Settings</h2></header>
-      <div className="scroll"><div className="settings">
+      {/* The id is the anchor for this door's landmark below, and the section IS that
+          landmark. Settings and the sign-in door are two independent multi-section
+          documents rendered into one scroll region (see si/SiShell.tsx), and
+          without this they were a single anonymous run of content: no landmark
+          list entry, no heading to jump to, and no way to reach the second door
+          without reading past all fourteen sections of the first.
+          The wrapper is a plain block around a CSS grid that was already an
+          auto-height flex item, so nothing about the layout moves. */}
+      <header className="top"><h2 id="door-settings">Settings</h2></header>
+      <div className="scroll"><section aria-labelledby="door-settings"><div className="settings">
         <nav className="snav" aria-label="Settings sections">
           <small className="snav-group">Everyday</small>
           {SECTS.filter(([k]) => ["provider", "appearance", "autonomy", "crew"].includes(k)).map(([k, l, d]) => (
@@ -66,13 +88,13 @@ export function Settings(): React.ReactElement {
             </button>
           ))}
           <small className="snav-group">Security</small>
-          {SECTS.filter(([k]) => ["vault", "permissions", "identity"].includes(k)).map(([k, l, d]) => (
+          {SECTS.filter(([k]) => ["vault", "permissions", "ledgers", "identity"].includes(k)).map(([k, l, d]) => (
             <button key={k} aria-current={sect === k ? "page" : undefined} onClick={() => setSect(k)}>
               <span>{l}</span><small>{d}</small>
             </button>
           ))}
           <small className="snav-group">Advanced</small>
-          {SECTS.filter(([k]) => ["mcp", "federation", "about"].includes(k)).map(([k, l, d]) => (
+          {SECTS.filter(([k]) => ["mcp", "federation", "triggers", "about"].includes(k)).map(([k, l, d]) => (
             <button key={k} aria-current={sect === k ? "page" : undefined} onClick={() => setSect(k)}>
               <span>{l}</span><small>{d}</small>
             </button>
@@ -87,10 +109,14 @@ export function Settings(): React.ReactElement {
           {sect === "crew" && <Crew />}
           {sect === "federation" && <Federation />}
           {sect === "appearance" && <Appearance />}
+          {sect === "connectors" && <Connectors />}
+          {sect === "channels" && <Channels />}
+          {sect === "ledgers" && <Ledgers />}
+          {sect === "triggers" && <TriggersPane />}
           {sect === "identity" && <Identity />}
           {sect === "about" && <About />}
         </div>
-      </div></div>
+      </div></section></div>
     </>
   );
 }
@@ -151,10 +177,13 @@ function Provider() {
       <div className="keyholder">
         <label className="field"><span>API key</span>
           <div className="keyrow">
-            <input className="input keyinput" type={showKey ? "text" : "password"} autoComplete="off" spellCheck={false} placeholder={provider ? (native && provider.secretRef ? "••••••••••••  (stored in your OS keychain — leave blank to keep it)" : "••••••••••••  (leave blank to keep the saved key)") : "paste your key here"} value={key} onChange={(e) => setKey(e.target.value)} />
+            <input className="input keyinput" type={showKey ? "text" : "password"} autoComplete="off" spellCheck={false} aria-describedby="set-key-hint" placeholder={provider ? (native && provider.secretRef ? "••••••••••••  (stored in your OS keychain — leave blank to keep it)" : "••••••••••••  (leave blank to keep the saved key)") : "paste your key here"} value={key} onChange={(e) => setKey(e.target.value)} />
             <button type="button" className="btn sm ghost" onClick={() => setShowKey(!showKey)}>{showKey ? "Hide" : "Show"}</button>
           </div>
-          <small className="hint">{KEY_HINT[kind]}</small>
+          {/* The hint was already on screen and already true — it was just never
+              connected to the field, so the one sentence that tells a person what
+              their key should look like was unreachable from the keyboard. */}
+          <small className="hint" id="set-key-hint">{KEY_HINT[kind]}</small>
         </label>
         <label className="field"><span>Model</span><input className="input" placeholder={MODEL_HINT[kind]} value={model} onChange={(e) => setModel(e.target.value)} /></label>
         <label className="field"><span>URL</span><input className="input" value={baseUrl} onChange={(e) => setBase(e.target.value)} /></label>
@@ -164,7 +193,10 @@ function Provider() {
       </div>
       {native ? <p className="hint">The key is held by your OS keychain, so it survives restarts. A custom endpoint is approved at a native dialog before the key can be sent there.</p> : <label className="check"><input type="checkbox" checked={persist} onChange={(e) => setPersist(e.target.checked)} /><span>Remember on this device <small>{vault.status === "unlocked" ? "Encrypted in your vault (AES-256-GCM). Nothing is ever uploaded." : "Needs an unlocked Key vault — otherwise the key stays in memory for this session only and is forgotten when you close the app."}</small></span></label>}
       <p className="hint">Prefer the terminal? Set <code>HANDLE_OPENAI_API_KEY</code>, <code>HANDLE_ANTHROPIC_API_KEY</code> or <code>HANDLE_GEMINI_API_KEY</code> in your environment and the app picks it up — no paste needed.</p>
-      <div className="acts"><button className="btn primary" disabled={!key.trim() && !provider} onClick={() => void save()}>{provider ? "Update" : "Connect"}</button>{note && <span className="hint">{note}</span>}</div>
+      {/* The outcome of a save was already printed here and never spoken. It is a
+          status about the form, not an error attached to one field, so it is a
+          live region rather than an aria-describedby target. */}
+      <div className="acts"><button className="btn primary" disabled={!key.trim() && !provider} onClick={() => void save()}>{provider ? "Update" : "Connect"}</button>{note && <span className="hint" role="status">{note}</span>}</div>
     </section>
   );
 }
@@ -283,17 +315,22 @@ function Permissions() {
 
 function Vault() {
   const { vault, createVault, unlockVault, lock } = useVh();
-  const [pass, setPass] = useState(""); const [note, setNote] = useState<string | null>(null);
-  const act = async () => { const r = vault.status === "no-passphrase" ? await createVault(pass) : await unlockVault(pass); setNote(r.note); if (r.ok) setPass(""); };
+  const [pass, setPass] = useState("");
+  /* `ok` is kept beside `note` so the field can be marked invalid on a REFUSED
+     attempt. It used to be thrown away, which left the one error state in this
+     section impossible to detect without guessing at the note's wording. */
+  const [note, setNote] = useState<string | null>(null);
+  const [refused, setRefused] = useState(false);
+  const act = async () => { const r = vault.status === "no-passphrase" ? await createVault(pass) : await unlockVault(pass); setNote(r.note); setRefused(!r.ok); if (r.ok) setPass(""); };
   return (
     <section className="sgroup">
       <h3>Vault</h3><p className="lead">One passphrase seals your provider key and memory at rest. There is no recovery — length is the only strength no one can take from you.</p>
       <div className="row"><span className={`led ${vault.status === "unlocked" ? "ok" : vault.status === "sealed-locked" ? "warn" : ""}`} /><b>{vault.status === "unlocked" ? "Unlocked" : vault.status === "sealed-locked" ? "Locked" : "Not created"}</b>{vault.kdf && <span className="faint mono">{vault.kdf} · {vault.iterations?.toLocaleString()} rounds</span>}{vault.status === "unlocked" && <button className="btn sm ghost" style={{ marginLeft: "auto" }} onClick={lock}>Lock now</button>}</div>
       {vault.status !== "unlocked" && <>
-        <label className="field"><span>Passphrase</span><input className="input" type="password" autoComplete="off" value={pass} onChange={(e) => setPass(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void act(); }} /></label>
-        <div className="acts"><button className="btn primary" disabled={pass.length < 8} onClick={() => void act()}>{vault.status === "no-passphrase" ? "Create vault" : "Unlock"}</button><span className="hint">{note ?? "at least 8 characters"}</span></div>
+        <label className="field"><span>Passphrase</span><input className="input" type="password" autoComplete="off" aria-invalid={refused || undefined} aria-describedby="set-vault-note" value={pass} onChange={(e) => setPass(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void act(); }} /></label>
+        <div className="acts"><button className="btn primary" disabled={pass.length < 8} onClick={() => void act()}>{vault.status === "no-passphrase" ? "Create vault" : "Unlock"}</button><span className="hint" id="set-vault-note">{note ?? "at least 8 characters"}</span></div>
       </>}
-      {vault.status === "unlocked" && note && <span className="hint">{note}</span>}
+      {vault.status === "unlocked" && note && <span className="hint" role="status">{note}</span>}
     </section>
   );
 }
@@ -311,7 +348,7 @@ function Autonomy() {
       </section>
       <section className="sgroup">
         <h3>Captain</h3><p className="lead">The name your Captain answers to.</p>
-        <div className="acts"><input className="input" style={{ maxWidth: 260 }} value={name} onChange={(e) => setName(e.target.value)} /><button className="btn" disabled={!name.trim() || name === stewardName} onClick={() => renameSteward(name.trim())}>Rename</button></div>
+        <div className="acts"><input className="input" style={{ maxWidth: 260 }} aria-label="Captain's name" value={name} onChange={(e) => setName(e.target.value)} /><button className="btn" disabled={!name.trim() || name === stewardName} onClick={() => renameSteward(name.trim())}>Rename</button></div>
       </section>
       <section className="sgroup">
         <h3>Tools</h3><p className="lead">{mcp.length ? `${mcp.length} governed MCP tool${mcp.length === 1 ? "" : "s"} available to the crew.` : "No external MCP tools enabled — the crew uses its built-in, receipted tools."}</p>
@@ -346,9 +383,14 @@ function Federation() {
         <h3>Standing grant</h3>
         <p className="lead">Two named humans, an enumerated capability list, a crossing budget and an expiry. Nothing crosses without one.</p>
         <div className="acts">
-          <input className="input" style={{ maxWidth: 140 }} value={ownerA} onChange={(e) => setOwnerA(e.target.value)} placeholder="you" />
-          <input className="input" style={{ maxWidth: 140 }} value={ownerB} onChange={(e) => setOwnerB(e.target.value)} placeholder="peer" />
-          <input className="input" style={{ maxWidth: 90 }} type="number" min={1} value={days} onChange={(e) => setDays(Number(e.target.value) || 1)} title="days" />
+          {/* These four fields were identified only by their placeholder or their
+              `title` — neither of which is a reliable accessible name (a
+              placeholder disappears on the first keystroke, and `title` is the
+              last-resort fallback the accname algorithm reaches for). Each carries
+              its name now; the words are the section's own, not new copy. */}
+          <input className="input" style={{ maxWidth: 140 }} aria-label="Initiating owner" value={ownerA} onChange={(e) => setOwnerA(e.target.value)} placeholder="you" />
+          <input className="input" style={{ maxWidth: 140 }} aria-label="Responding peer owner" value={ownerB} onChange={(e) => setOwnerB(e.target.value)} placeholder="peer" />
+          <input className="input" style={{ maxWidth: 90 }} type="number" min={1} aria-label="Grant lifetime in days" value={days} onChange={(e) => setDays(Number(e.target.value) || 1)} title="days" />
           {!grant
             ? <button className="btn" disabled={busy || !ownerA.trim() || !ownerB.trim()} onClick={() => void run(async () => { const r = await issueLiveGrant({ capabilities: [cap], maxCrossings: 5, windowMs: 24 * 3600 * 1000, windowMax: 2, expiresInMs: days * 24 * 3600 * 1000, initiatorHuman: ownerA.trim(), responderHuman: ownerB.trim() }); return r.ok ? "grant issued — both sides signed" : (r.refusal ?? "grant refused"); })}>Issue grant</button>
             : <button className="btn ghost" disabled={busy} onClick={() => void run(async () => { revokeLiveGrant("initiator", ownerA.trim(), "owner revoked in Settings"); return "grant revoked"; })}>Revoke</button>}
@@ -359,8 +401,8 @@ function Federation() {
         <h3>Crossing</h3>
         <p className="lead">One task rides one capability across the pair. Refusals are written in words and receipted like successes.</p>
         <div className="acts">
-          <select className="input" value={cap} onChange={(e) => setCap(e.target.value as DelegationCapability)}>{DELEGATION_CAPABILITIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
-          <input className="input" style={{ flex: 1, minWidth: 200 }} value={task} onChange={(e) => setTask(e.target.value)} />
+          <select className="input" aria-label="Capability to cross with" value={cap} onChange={(e) => setCap(e.target.value as DelegationCapability)}>{DELEGATION_CAPABILITIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+          <input className="input" style={{ flex: 1, minWidth: 200 }} aria-label="Task to cross with" value={task} onChange={(e) => setTask(e.target.value)} />
           <button className="btn" disabled={busy || !task.trim()} onClick={() => void run(async () => { const r = await runLiveCrossing({ capability: cap, task: task.trim(), ownerA: ownerA.trim(), ownerB: ownerB.trim() }); return `${r.outcome.status}: ${r.outcome.detail}`; })}>Run crossing</button>
         </div>
       </section>
@@ -373,13 +415,13 @@ function Federation() {
         <h3>Regulated bench</h3>
         <p className="lead">Regulated specialists route only under a signed activation — a named person, a jurisdiction, a context, a renew-by date.</p>
         <div className="acts">
-          <select className="input" value={regDomain} onChange={(e) => setRegDomain(e.target.value)}>{REGULATED_DOMAIN_SLUGS.map((d) => <option key={d} value={d}>{d}</option>)}</select>
-          <input className="input" style={{ maxWidth: 180 }} value={regBy} onChange={(e) => setRegBy(e.target.value)} placeholder="enabled by (your name)" />
+          <select className="input" aria-label="Regulated domain" value={regDomain} onChange={(e) => setRegDomain(e.target.value)}>{REGULATED_DOMAIN_SLUGS.map((d) => <option key={d} value={d}>{d}</option>)}</select>
+          <input className="input" style={{ maxWidth: 180 }} aria-label="Enabled by" value={regBy} onChange={(e) => setRegBy(e.target.value)} placeholder="enabled by (your name)" />
           <button className="btn" disabled={busy || !regBy.trim()} onClick={() => void run(async () => { const r = await enableRegulatedBench({ domains: [regDomain], enabledBy: regBy.trim(), jurisdiction: "IN", context: "preparer", renewBy: Date.now() + 90 * 24 * 3600 * 1000 }); return r.ok ? "regulated bench enabled — signed" : (r.refusal ?? "activation refused"); })}>Enable</button>
         </div>
         {activation && <p className="lead" style={{ marginTop: 10 }}>Active: {activation.domains.join(", ")} · by {activation.enabledBy} · {activation.jurisdiction} · {activation.context}</p>}
       </section>
-      {note && <p className="lead" style={{ color: "var(--accent)" }}>{note}</p>}
+      {note && <p className="lead" style={{ color: "var(--accent)" }} role="status">{note}</p>}
     </>
   );
 }
@@ -389,13 +431,14 @@ function Appearance() {
   const [h, setH] = useState(ownerHandle);
   return (
     <section className="sgroup">
-      <h3>Appearance</h3><p className="lead">Two finishes. Both keep the same contrast and the same accent.</p>
+      <h3>Appearance</h3><p className="lead">Eight finishes. A shade, never an extreme — every one is checked against WCAG AA.</p>
       <div className="themes">
-        <button aria-pressed={theme === "dark"} onClick={() => setTheme("dark")}><span className="sw dark" /><b>Charcoal</b><small>dark</small></button>
-        <button aria-pressed={theme === "light"} onClick={() => setTheme("light")}><span className="sw light" /><b>Bone</b><small>light</small></button>
+        {THEMES.map(({ id, name, kind }) => (
+          <button key={id} aria-pressed={theme === id} onClick={() => setTheme(id)}><span className={`sw ${id}`} /><b>{name}</b><small>{kind}</small></button>
+        ))}
       </div>
       <h3 style={{ marginTop: 28 }}>You</h3>
-      <div className="acts"><input className="input" style={{ maxWidth: 260 }} value={h} onChange={(e) => setH(e.target.value)} placeholder="your handle" /><button className="btn" disabled={!h.trim() || h === ownerHandle} onClick={() => { const r = setOwnerDisplay(h); if (r.ok) { useVh.setState({ ownerHandle: h.trim() }); toast(`Handle saved — receipts are attributed to subject ${r.subject.slice(0, 20)}…`, "ok"); } }}>Save</button></div>
+      <div className="acts"><input className="input" style={{ maxWidth: 260 }} aria-label="Your handle" value={h} onChange={(e) => setH(e.target.value)} placeholder="your handle" /><button className="btn" disabled={!h.trim() || h === ownerHandle} onClick={() => { const r = setOwnerDisplay(h); if (r.ok) { useVh.setState({ ownerHandle: h.trim() }); toast(`Handle saved — receipts are attributed to subject ${r.subject.slice(0, 20)}…`, "ok"); } }}>Save</button></div>
       <p className="lead" style={{ marginTop: 8 }}>
         Your handle is the name on receipts and audit rows. The subject id behind it is stable and is what the audit log attributes actions to.
       </p>
@@ -549,5 +592,253 @@ function About() {
         <ul className="rails">{GUARDRAILS.map(([t, tag]) => <li key={t}><span>{t}</span><small>{tag}</small></li>)}</ul>
       </section>
     </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Connect — the declared intake points.                               */
+/*                                                                     */
+/* A connector is a policy object, not a silent OAuth box: one sentence */
+/* of purpose, one egress prefix, declared scopes, and mutations that   */
+/* still ride the human gate. Connecting contributes a generated skill  */
+/* to the relevant benches; it never adds a tool. Disconnect revokes.   */
+function Connectors() {
+  const [, setTick] = useState(0);
+  const refresh = () => setTick((n) => n + 1);
+  const list = APP_CONNECTORS.map((c) => ({ c, st: connectorState(c.id) }));
+  const live = list.filter(({ st }) => st.connected).length;
+  return (
+    <section className="sgroup">
+      <h3>Connect</h3>
+      <p className="lead">
+        {live === 0
+          ? "Nothing connected. A connection teaches the crew where it may go — it never adds a tool."
+          : `${live} connected. Every call still pauses at the gate.`}
+      </p>
+      <div className="acts" style={{ flexDirection: "column", alignItems: "stretch", gap: 10 }}>
+        {list.map(({ c, st }) => (
+          <div key={c.id} className="card" style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "12px 14px" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+                <b>{c.name}</b>
+                <span className="faint sm">{c.vendor}</span>
+                {st.connected && <span className="lbl" style={{ color: "var(--ok)" }}>connected</span>}
+              </div>
+              <div className="sm muted" style={{ marginTop: 2 }}>{c.purpose}</div>
+              <div className="sm faint" style={{ marginTop: 4 }}>{c.scopes.join(" · ")}</div>
+            </div>
+            <button
+              className={st.connected ? "btn" : "btn"}
+              onClick={() => { setConnectorConnected(c.id, !st.connected); refresh(); toast(st.connected ? `${c.name} disconnected` : `${c.name} connected — its skill joins the benches it names`, st.connected ? "info" : "ok"); }}
+            >
+              {st.connected ? "Disconnect" : "Connect"}
+            </button>
+          </div>
+        ))}
+      </div>
+      <p className="sm faint" style={{ marginTop: 10 }}>
+        Connection is declared, inspectable and revocable. Mutations stay gated; reads stay SSRF-guarded.
+      </p>
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Channels — the declared communication planes.                       */
+/*                                                                     */
+/* The cadence, the intake point, the peer inbox: the core powers of a */
+/* standing agent, shipped as declared, capped, receipted planes.      */
+/* Everything is off until the owner turns it on, and a fire that      */
+/* would exceed its cap is refused in words.                           */
+function Channels() {
+  const [, setTick] = useState(0);
+  const refresh = () => setTick((n) => n + 1);
+  const now = Date.now();
+  return (
+    <section className="sgroup">
+      <h3>Channels</h3>
+      <p className="lead">
+        The standing powers: a cadence, an intake point, a peer inbox. Off until you turn one on; capped once you do.
+      </p>
+      <div className="acts" style={{ flexDirection: "column", alignItems: "stretch", gap: 10 }}>
+        {CHANNELS.map((c) => {
+          const st = channelState(c.id);
+          return (
+            <div key={c.id} className="card" style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "12px 14px" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+                  <b>{c.name}</b>
+                  <span className="faint sm">{c.kind}</span>
+                  {st.enabled && <span className="lbl" style={{ color: "var(--ok)" }}>on</span>}
+                </div>
+                <div className="sm muted" style={{ marginTop: 2 }}>{c.purpose}</div>
+                <div className="sm faint" style={{ marginTop: 4 }}>
+                  cap {c.caps.maxPerDay}/day · every fire receipted
+                  {c.kind === "impulse" && c.everyMs ? ` · cadence ${Math.round(c.everyMs / 60000)} min` : ""}
+                  {c.bind ? ` · binds ${c.bind} only` : ""}
+                  {st.enabled ? ` · ${firesInLastDay(c.id, now)} fires today` : ""}
+                </div>
+              </div>
+              <button
+                className="btn"
+                onClick={() => { setChannelEnabled(c.id, !st.enabled); refresh(); toast(st.enabled ? `${c.name} off` : `${c.name} on — capped at ${c.caps.maxPerDay}/day`, st.enabled ? "info" : "ok"); }}
+              >
+                {st.enabled ? "Turn off" : "Turn on"}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <p className="sm faint" style={{ marginTop: 10 }}>
+        A channel asks for the work; the governed path decides. No fire carries its own authority.
+      </p>
+    </section>
+  );
+}
+
+/* ── Ledgers — the books a fleet is asked to open ─────────────────────────
+ * Agent FinOps (spend, dollar-honest), the fleet roster (owned, not
+ * assigned, revocable), and the assurance score those books can honestly
+ * support. Exports carry identity and money data only — never keys. */
+function downloadText(text: string, name: string, mime: string): void {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function Ledgers(): React.ReactElement {
+  const sum = summary();
+  const s = scoreFromLedger();
+  const fleet = roster();
+  return (
+    <div>
+      <h3>Ledgers</h3>
+      <p>What the fleet actually spent, who owns every seat, and the assurance the records can support — kept from the same settled facts, never typed in by hand.</p>
+      <div className="kv">
+        <div><span>Seat runs settled</span><span>{sum.runs}</span></div>
+        <div><span>Spend (measured)</span><span>${sum.usdKnown.toFixed(2)}</span></div>
+        <div><span>Spend unmeasured</span><span>{sum.usdUnknownRuns === 0 ? "none" : `${sum.usdUnknownRuns} run(s) reported tokens only`}</span></div>
+        <div><span>Verified share</span><span>{sum.verifiedShare === null ? "not measurable yet" : `${Math.round(sum.verifiedShare * 100)}%`}</span></div>
+      </div>
+      <div className="acts" style={{ marginTop: 10 }}>
+        <button className="btn" onClick={() => {
+          downloadText(chargebackCsv(), "selfimpulse-chargeback.csv", "text/csv");
+          toast("Chargeback exported. Measured and unmeasured spend stay in their own columns.", "ok");
+        }}>Export chargeback (CSV)</button>
+      </div>
+      <h3 style={{ marginTop: 18 }}>Fleet</h3>
+      <div className="kv">
+        <div><span>Seats on roster</span><span>{fleet.length}</span></div>
+        <div><span>Authority root</span><span>{fleet[0]?.issuerRoot ?? "bootstrap"}</span></div>
+        <div><span>Revoked</span><span>{fleet.filter((f) => f.revoked).length}</span></div>
+      </div>
+      <div className="acts" style={{ marginTop: 10 }}>
+        <button className="btn" onClick={() => {
+          downloadText(JSON.stringify(exportRoster(), null, 2), "selfimpulse-fleet-roster.json", "application/json");
+          toast("Roster exported. Identity data only — no signatures, no keys.", "ok");
+        }}>Export roster (JSON)</button>
+      </div>
+      <h3 style={{ marginTop: 18 }}>Assurance</h3>
+      {s.status === "evaluated" ? (
+        <div className="kv">
+          <div><span>Score</span><span>{s.score} · band {s.band}</span></div>
+          <div><span>Evidence coverage</span><span>{Math.round((s.evidenceCoverage ?? 0) * 100)}% measured</span></div>
+          <div><span>Ledger digest</span><span>{ledgerDigest()}</span></div>
+        </div>
+      ) : (
+        <p>{s.unevaluatedReason}</p>
+      )}
+    </div>
+  );
+}
+
+/* ── Triggers — when the crew starts work ───────────────────────────────── */
+function TriggersPane(): React.ReactElement {
+  const [rows, setRows] = useState<Trigger[]>(() => listTriggers());
+  const [name, setName] = useState("");
+  const [tool, setTool] = useState("calculator");
+  const [arg, setArg] = useState("");
+  const [minutes, setMinutes] = useState("30");
+  const [note, setNote] = useState<string | null>(null);
+  /* WHICH FIELD the current note belongs to. The form can refuse two different
+     inputs, and marking both invalid would be a lie; marking neither would be the
+     defect. An exception from the engine is not attributable to either field, so
+     `bad` stays null and the note is still associated with both via
+     aria-describedby. */
+  const [bad, setBad] = useState<"name" | "arg" | null>(null);
+
+  const refresh = () => setRows(listTriggers());
+  const create = () => {
+    try {
+      if (name.trim().length < 2) { setBad("name"); setNote("Give the trigger a name."); return; }
+      if (arg.trim().length === 0) { setBad("arg"); setNote(tool === "dispatch_mission" ? "Write the objective to dispatch." : "Enter the input (for example 12*12)."); return; }
+      const mins = Math.max(1, Number.parseInt(minutes, 10) || 30);
+      addTrigger({
+        name: name.trim(),
+        kind: "schedule",
+        intervalMs: mins * 60_000,
+        target: tool === "dispatch_mission"
+          ? { tool: "dispatch_mission", args: { objective: arg.trim() } }
+          : { tool, args: tool === "calculator" ? { expression: arg.trim() } : {} },
+        maxPerHour: Math.max(1, Math.floor(60 / mins)),
+      });
+      setName(""); setArg(""); setNote(null); setBad(null);
+      refresh();
+      toast("Trigger armed. It fires through the governed pipeline — risky work still waits for you.", "ok");
+    } catch (e) {
+      setBad(null);
+      setNote(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  return (
+    <div>
+      <h3>Triggers</h3>
+      <p>Schedules that start runs for you. Everything they start goes through the same gate as your own requests — a trigger is a doorbell, not a key.</p>
+      {rows.length === 0 ? (
+        <p>No triggers armed. Add one below.</p>
+      ) : (
+        <div className="kv">
+          {rows.map((t) => (
+            <div key={t.id}>
+              <span>{t.name}{t.enabled ? "" : " (paused)"}</span>
+              <span>{t.kind === "schedule" ? `every ${Math.max(1, Math.round((t.intervalMs ?? 60_000) / 60_000))} min` : t.kind} · {t.fires} fired · {t.lastVerdict ?? "not yet"}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="acts" style={{ marginTop: 10 }}>
+        {rows.map((t) => (
+          <button key={t.id} className="btn" onClick={() => { setTriggerEnabled(t.id, !t.enabled); refresh(); }}>
+            {t.enabled ? "Pause" : "Resume"} “{t.name}”
+          </button>
+        ))}
+        {rows.length > 0 && <button className="btn" onClick={() => { for (const t of rows) if (!t.enabled) removeTrigger(t.id); else removeTrigger(t.id); refresh(); toast("Triggers removed.", "ok"); }}>Remove all</button>}
+      </div>
+      <h3 style={{ marginTop: 18 }}>Arm a schedule</h3>
+      <div className="kv">
+        {/* The row labels were <span>s — visible, adjacent, and completely
+            unconnected to the controls. A sighted reader pairs them by position;
+            a screen reader had nothing at all. Each is now a real <label
+            htmlFor>, which is also a larger click target and satisfies WCAG 2.5.3
+            (Label in Name) for free because the name IS the visible word. */}
+        <div><label htmlFor="trig-name">Name</label><span><input id="trig-name" aria-invalid={bad === "name" || undefined} aria-describedby="trig-note" value={name} onChange={(e) => setName(e.target.value)} placeholder="Standup digest" style={{ maxWidth: 200 }} /></span></div>
+        <div><label htmlFor="trig-work">Work</label><span>
+          <select id="trig-work" value={tool} onChange={(e) => setTool(e.target.value)}>
+            <option value="calculator">Calculator</option>
+            <option value="clock">Clock check</option>
+            <option value="dispatch_mission">Dispatch a mission</option>
+          </select>
+        </span></div>
+        <div><label htmlFor="trig-arg">Input / objective</label><span><input id="trig-arg" aria-invalid={bad === "arg" || undefined} aria-describedby="trig-note" value={arg} onChange={(e) => setArg(e.target.value)} placeholder={tool === "dispatch_mission" ? "Summarize open threads" : "12*12"} style={{ maxWidth: 200 }} /></span></div>
+        <div><label htmlFor="trig-mins">Every (minutes)</label><span><input id="trig-mins" value={minutes} onChange={(e) => setMinutes(e.target.value)} style={{ maxWidth: 70 }} /></span></div>
+      </div>
+      {note && <p id="trig-note">{note}</p>}
+      <div className="acts" style={{ marginTop: 10 }}>
+        <button className="btn" onClick={create}>Arm it</button>
+      </div>
+    </div>
   );
 }

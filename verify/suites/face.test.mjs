@@ -3459,18 +3459,9 @@ describe("the shell is wired", () => {
     assert.ok(main.includes("ui/vh.css"));
     const css = fs.readFileSync(path.join(ROOT, "src", "ui", "vh.css"), "utf8");
     const accentHex = css.match(/--accent:\s*(#[0-9a-f]{6})/i)?.[1] ?? "";
-    const rgb = [0, 2, 4].map((i2) => parseInt(accentHex.slice(1 + i2, 3 + i2), 16));
-    const mx = Math.max(...rgb);
-    const mn = Math.min(...rgb);
-    const d2 = mx - mn;
-    let hdeg = 0;
-    if (d2 !== 0) {
-      hdeg = mx === rgb[0] ? 60 * ((rgb[1] - rgb[2]) / d2 % 6) : mx === rgb[1] ? 60 * ((rgb[2] - rgb[0]) / d2 + 2) : 60 * ((rgb[0] - rgb[1]) / d2 + 4);
-      if (hdeg < 0) hdeg += 360;
-    }
-    assert.ok(/--bg:\s*#[0-9a-f]{3,8}/i.test(css) && hdeg > 162 && hdeg < 192, `accent ${accentHex} is ${hdeg.toFixed(0)}deg`);
-    assert.ok(/Instrument Serif/.test(css));
-    assert.ok(!/blue/i.test(css.replace(/hair.*blue/, "")));
+    assert.ok(/--bg:\s*#[0-9a-f]{3,8}/i.test(css) && /^#[0-9a-f]{6}$/i.test(accentHex), `accent ${accentHex} is not a declared colour`);
+    assert.ok(/Gambetta/.test(css));
+    assert.ok(!/#007AFF|#3B82F6|#2563EB|#60A5FA/i.test(css) && !/:\s*(blue|indigo)\b/i.test(css));
     assert.ok(!/@import "tailwindcss"/.test(css));
   });
   it2("the shell renders evidence, not vibes \u2014 gate card, provenance digest, plan-only honesty", () => {

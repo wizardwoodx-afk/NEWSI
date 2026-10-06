@@ -41,6 +41,8 @@ import {
   selfimpulseMissions,
   verifySelfImpulseReceipt,
 } from "../src/selfimpulse/engine/selfimpulse";
+import { bindOwnerRoot } from "../src/security/ownerRoot";
+bindOwnerRoot("probe-owner-passphrase");
 
 declare const SI_ROOT: string | undefined;
 const ROOT = typeof SI_ROOT === "string" && SI_ROOT.length > 0 ? SI_ROOT : process.cwd();
@@ -264,7 +266,7 @@ describe("drill over the wire — run_drill through the MCP face", () => {
     request("tools/call", { name, arguments: args }).then((m: any) => m.result.content[0].text as string);
 
   before(async () => {
-    child = spawn(process.execPath, ["tools/mcp.mjs"], { cwd: ROOT, stdio: ["pipe", "pipe", "pipe"] });
+    child = spawn(process.execPath, ["tools/mcp.mjs"], { env: { ...process.env, SI_OWNER_SECRET: "probe-owner-passphrase" }, cwd: ROOT, stdio: ["pipe", "pipe", "pipe"] });
     child.stdout!.on("data", (d: Buffer) => {
       buf += d.toString("utf8");
       let idx: number;

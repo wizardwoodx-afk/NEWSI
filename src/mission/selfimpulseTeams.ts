@@ -259,6 +259,13 @@ export interface DelegationRecord {
    * sender can see when its "safe" label was overruled — and why.
    */
   receiverPolicy?: ReceiverRiskVerdict;
+  /**
+   * The federation chain this delegation settled on: the hop the RECEIVER
+   * counted, and the identities it has already been through. A host that
+   * forwards this work onward passes it, which is what makes the hop bound
+   * reachable rather than advisory — see `MAX_FEDERATION_HOPS`.
+   */
+  chain?: SettledChain;
 }
 
 export interface DelegationOutcome {
@@ -266,10 +273,281 @@ export interface DelegationOutcome {
   record: DelegationRecord;
 }
 
+/**
+ * A delegation packet's whole life, and therefore how long a decision about it
+ * has to be remembered. A packet older than this is refused on arrival, so a
+ * replay registry only has to outlive the packet it is defending — which is what
+ * lets these registries be BOUNDED instead of growing for the life of the process.
+ */
 const PACKET_TTL_MS = 10 * 60 * 1000;
-const decidedDelegations = new Set<string>();
+/** How much clock disagreement two machines are allowed before one is lying. */
+const MAX_CLOCK_SKEW_MS = 60_000;
+/** Ceiling on remembered decisions, so a flood cannot turn the registry into a leak. */
+const REPLAY_REGISTRY_CAP = 4096;
+
+/**
+ * A replay registry that forgets, on purpose, and that refuses rather than
+ * forgets when it cannot.
+ *
+ * The two `Set`s this replaced grew for the life of the process and were declared
+ * to be replay-safe "for the TTL of the packet", which is not what an unbounded
+ * `Set` is. Entries are now evicted once the packet they defend has expired, and
+ * that eviction is safe precisely because `packetExpired` refuses anything older
+ * at the door: a decision cannot be re-taken for a packet that cannot arrive.
+ *
+ * The full case is the interesting one. Evicting to make room would reopen the
+ * hole — the oldest live entry is exactly the one a captured packet names — so
+ * when the registry is full this REFUSES and says so. Unbounded growth is a
+ * memory problem an operator can see; forgetting a settled decision is a
+ * re-execution nobody can.
+ */
+class ReplayRegistry {
+  private readonly settled = new Map<string, number>();
+  constructor(private readonly cap: number) {}
+
+  /** Claim an id for exactly one decision. Null when claimed; a reason when not. */
+  claim(id: string, now: number = Date.now()): string | null {
+    for (const [k, at] of [...this.settled]) if (now - at > PACKET_TTL_MS) this.settled.delete(k);
+    if (this.settled.has(id)) return `already decided (${this.settled.size} settled within the packet TTL) — replay refused`;
+    if (this.settled.size >= this.cap) {
+      return `the replay registry is full (${this.cap} unsettled decisions inside the packet TTL) — refusing rather than forgetting a live one, because forgetting one is what lets a captured packet replay`;
+    }
+    this.settled.set(id, now);
+    return null;
+  }
+}
+
+const decidedDelegations = new ReplayRegistry(REPLAY_REGISTRY_CAP);
 /** The receiving selfimpulse keeps its OWN replay registry — each side settles once. */
-const decidedInbound = new Set<string>();
+const decidedInbound = new ReplayRegistry(REPLAY_REGISTRY_CAP);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   FEDERATION DEPTH — how far ONE delegation chain may travel
+
+   THE THREAT MODEL, because the obvious fix does not work.
+
+   A hop counter carried in the packet is useless as a bound on its own: the
+   sender is the party being bounded, so it declares `hop: 1` on every round and
+   the field costs nothing to forge. `capability.delegationDepth === 0` does not
+   help either — that constrains what a CAPABILITY may authorise, on the mint
+   path, and a delegation packet is not a capability. The replay registries cannot
+   help: they dedupe by packet id, and `secureId("d")` mints a fresh id on every
+   call, so every round of a loop arrives as a packet nobody has seen.
+
+   So the only number a receiver can trust is the one it counts ITSELF:
+
+       observedHop = (hops this receiver already executed for this chain) + 1
+
+   The claim is still carried, and it is still inside `packetDigest`, so it cannot
+   be edited in flight. But it is treated as ATTACKER INPUT: checked for
+   well-formedness, refused when malformed, and — this is the property that makes
+   it safe — it can only ever refuse EARLIER than the observed count would. A
+   forged `hop: 1` buys a peer nothing, because the observed counter is what gets
+   compared against the limit. An ABSENT claim is read as "the first hop of a new
+   chain", which is both the only true reading and worth exactly one hop; a
+   MALFORMED claim — wrong type, fractional, below 1, over-long id, non-string
+   path entry — is refused outright rather than repaired.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * How many hosts will execute ONE delegation chain. Two is a ceiling, not a
+ * budget, and it is deliberately narrow: one inbound delegation is already a
+ * remote principal spending this owner's key on this owner's repository. Two
+ * admits the case federation exists for (A asks B, B asks C); three is not a
+ * feature here, it is a chain whose cost nobody bounded, on a protocol where the
+ * operator paired a peer and said nothing about loops.
+ */
+export const MAX_FEDERATION_HOPS = 2;
+
+/** A selfimpulse identity in a chain path is bounded too — it is attacker-supplied. */
+const MAX_CHAIN_ID_LEN = 96;
+const MAX_PATH_LEN = 8;
+
+export interface FederationChain {
+  /** Identifies the chain across every host that handles it. Minted by the first sender. */
+  chainId: string;
+  /** The hop the SENDER claims. Claimed, never authoritative — see above. */
+  hop: number;
+  /** Selfimpulse identities that have already handled this chain, in order. */
+  path: string[];
+}
+
+/** What the receiver settled, so a host that forwards onward can continue honestly. */
+export interface SettledChain extends FederationChain {
+  /** The hop the RECEIVER counted for itself. This is the enforced number. */
+  observedHop: number;
+}
+
+type ChainRead = { ok: true; claim: FederationChain } | { ok: false; reason: string };
+
+/**
+ * Read the chain a packet claims, or refuse it.
+ *
+ * Absent means "first hop of a new chain", keyed by the packet's own id — one
+ * hop, counted by the receiver like any other. Present-but-malformed means the
+ * peer is not speaking this protocol, and a peer that cannot be parsed is not
+ * guessed at.
+ */
+export function readChainClaim(packet: { id: string; chain?: unknown }): ChainRead {
+  const raw = packet.chain;
+  if (raw === undefined || raw === null) return { ok: true, claim: { chainId: packet.id, hop: 1, path: [] } };
+  if (typeof raw !== "object" || Array.isArray(raw)) return { ok: false, reason: "the delegation chain claim is not an object" };
+  const c = raw as Record<string, unknown>;
+  const chainId = c.chainId;
+  if (typeof chainId !== "string" || chainId.length === 0 || chainId.length > MAX_CHAIN_ID_LEN) {
+    return { ok: false, reason: `the delegation chain claim has no usable chainId (1..${MAX_CHAIN_ID_LEN} characters required)` };
+  }
+  const hop = c.hop;
+  if (typeof hop !== "number" || !Number.isInteger(hop) || hop < 1 || hop > MAX_FEDERATION_HOPS) {
+    return { ok: false, reason: `the delegation chain claim declares hop=${JSON.stringify(hop)}, which is not a whole number in 1..${MAX_FEDERATION_HOPS}` };
+  }
+  const pathRaw = c.path;
+  if (!Array.isArray(pathRaw)) return { ok: false, reason: "the delegation chain claim carries no visited-path array" };
+  if (pathRaw.length > MAX_PATH_LEN) return { ok: false, reason: `the delegation chain claims a ${pathRaw.length}-host path, longer than the ${MAX_PATH_LEN} this build accepts` };
+  const path: string[] = [];
+  for (const entry of pathRaw) {
+    if (typeof entry !== "string" || entry.length === 0 || entry.length > 80) {
+      return { ok: false, reason: "the delegation chain's visited path holds an entry that is not a selfimpulse identity" };
+    }
+    path.push(entry);
+  }
+  return { ok: true, claim: { chainId, hop, path } };
+}
+
+interface ObservedChain { observed: number; lastSeenAt: number; packetIds: string[] }
+
+/**
+ * Chains THIS receiver has executed work for. Bounded and expiring with the
+ * packet TTL, for the same reason the replay registries are.
+ */
+const observedChains = new Map<string, ObservedChain>();
+
+/**
+ * Count this hop against what this receiver has already done for the chain.
+ *
+ * The observed count is the enforced number. The claim's `path` is a second,
+ * weaker signal: it refuses a peer re-entering a host that already handled the
+ * chain, which shortens an honestly-reported loop from "at the limit" to
+ * "immediately". It travels with the packet, so a peer that omits its own
+ * identity defeats it — which is exactly why it is defence in depth and never
+ * the bound.
+ */
+export function observeInboundChain(
+  selfUser: string,
+  packetId: string,
+  claim: FederationChain,
+  now: number = Date.now(),
+): { ok: true; settled: SettledChain } | { ok: false; reason: string } {
+  for (const [id, e] of [...observedChains]) if (now - e.lastSeenAt > PACKET_TTL_MS) observedChains.delete(id);
+
+  if (claim.path.includes(selfUser)) {
+    return {
+      ok: false,
+      reason: `this delegation chain has already been through "${selfUser}" (it names this host in its path), so accepting it again would close a loop — refused`,
+    };
+  }
+
+  const entry = observedChains.get(claim.chainId);
+  if (entry && entry.packetIds.includes(packetId)) {
+    return { ok: false, reason: `packet ${packetId} was already executed for chain ${claim.chainId} — replay refused` };
+  }
+  const observedHop = (entry ? entry.observed : 0) + 1;
+  if (observedHop > MAX_FEDERATION_HOPS) {
+    return {
+      ok: false,
+      reason: `chain ${claim.chainId} has already been executed ${entry?.observed ?? 0} time(s) on "${selfUser}"; the federation depth limit is ${MAX_FEDERATION_HOPS} hops, so hop ${observedHop} is refused`,
+    };
+  }
+  if (!entry && observedChains.size >= REPLAY_REGISTRY_CAP) {
+    return {
+      ok: false,
+      reason: `the federation chain registry is full (${REPLAY_REGISTRY_CAP} chains inside the packet TTL) — refusing rather than forgetting a live chain, because forgetting one is what lets a loop come back round`,
+    };
+  }
+  if (entry) {
+    entry.observed = observedHop;
+    entry.lastSeenAt = now;
+    entry.packetIds.push(packetId);
+  } else {
+    observedChains.set(claim.chainId, { observed: observedHop, lastSeenAt: now, packetIds: [packetId] });
+  }
+  return { ok: true, settled: { chainId: claim.chainId, hop: claim.hop, path: [...claim.path, selfUser], observedHop } };
+}
+
+/**
+ * How many inbound delegations this receiver has executed inside the current
+ * packet-TTL window.
+ *
+ * The chain registry above is keyed by a `chainId` the peer CHOOSES, so a peer
+ * that mints a fresh id each round gets a fresh chain each round and never
+ * approaches its depth limit. This counter is the answer to that, and it is the
+ * one bound here that no field on the wire can influence: it counts executions,
+ * not claims. It is deliberately a global per-receiver ceiling rather than a
+ * per-peer one, because `packet.fromUser` is a claim too — it is authenticated
+ * by nothing at this layer, only the shared bearer token or the paired
+ * credential is. Keying on a claim would have made the limit as forgeable as the
+ * identity it was keyed on.
+ */
+const MAX_INBOUND_PER_WINDOW = 32;
+let inboundWindow = { count: 0, startedAt: 0 };
+
+function inboundWindowRefused(now: number): string | null {
+  if (inboundWindow.count === 0 || now - inboundWindow.startedAt > PACKET_TTL_MS) inboundWindow = { count: 0, startedAt: now };
+  if (inboundWindow.count >= MAX_INBOUND_PER_WINDOW) {
+    const waitS = Math.max(1, Math.ceil((PACKET_TTL_MS - (now - inboundWindow.startedAt)) / 1000));
+    return `this receiver has executed ${inboundWindow.count} inbound delegations in the last ${Math.round(PACKET_TTL_MS / 1000)}s and will not start another for ${waitS}s — the ceiling is what stops a peer from resetting its chain by inventing a new id`;
+  }
+  return null;
+}
+
+/**
+ * Declare the chain for an OUTBOUND delegation: this host is the next hop.
+ *
+ * `path` is every selfimpulse that has HANDLED this chain, in order, and the
+ * sender is in it — a host that forwards work onward has handled it, locally, by
+ * the fact that it is forwarding. The receiver appends itself when it settles.
+ * So the LAST element of a packet's path is always its sender.
+ *
+ * The declared hop is the GREATER of the claimed and the observed count, plus
+ * one — never the smaller — so a peer that under-reports its own depth cannot
+ * make this host under-report in turn. And a host that already appears EARLIER in
+ * the path (that is, anywhere but as the immediate parent it just answered)
+ * refuses here rather than transmitting a loop: a fresh receiver's counter starts
+ * at 1 whatever the path says, so the sender is the only place this can be caught
+ * before a packet exists.
+ */
+export function declareOutboundChain(
+  selfUser: string,
+  packetId: string,
+  parent?: Partial<SettledChain> | null,
+): { ok: true; chain: FederationChain } | { ok: false; reason: string } {
+  const claimed = typeof parent?.hop === "number" && Number.isInteger(parent.hop) && parent.hop > 0 ? parent.hop : 0;
+  const observed = typeof parent?.observedHop === "number" && Number.isInteger(parent.observedHop) && parent.observedHop > 0 ? parent.observedHop : 0;
+  const hop = Math.max(claimed, observed) + 1;
+  if (hop > MAX_FEDERATION_HOPS) {
+    return {
+      ok: false,
+      reason: `delegating onward would be hop ${hop}, past the federation depth limit of ${MAX_FEDERATION_HOPS} — this delegation ends here rather than becoming a chain nobody bounded`,
+    };
+  }
+  const inherited = Array.isArray(parent?.path)
+    ? parent.path.filter((p): p is string => typeof p === "string" && p.length > 0 && p.length <= 80)
+    : [];
+  if (inherited.slice(0, -1).includes(selfUser)) {
+    return {
+      ok: false,
+      reason: `this chain has already been through "${selfUser}" (the path it was handed names this host before its immediate parent), so re-delegating from here would close a loop — refused`,
+    };
+  }
+  if (inherited.length >= MAX_PATH_LEN) {
+    return { ok: false, reason: `the delegation path already names ${inherited.length} hosts, which is the ${MAX_PATH_LEN} this build accepts — this delegation ends here` };
+  }
+  const chainId = typeof parent?.chainId === "string" && parent.chainId.length > 0 && parent.chainId.length <= MAX_CHAIN_ID_LEN
+    ? parent.chainId
+    : packetId;
+  return { ok: true, chain: { chainId, hop, path: inherited.length === 0 ? [selfUser] : inherited } };
+}
+
 
 async function sha256Hex(text: string): Promise<string> {
   const subtle = globalThis.crypto?.subtle;
@@ -302,6 +580,12 @@ export async function delegateAcrossSelfImpulses(opts: {
   receiverGate?: HumanGate;
   /** LIVE BRIDGE — see handleInboundDelegation. Without it this path refuses rather than claims. */
   bridge?: BridgeConfig;
+  /**
+   * The chain this delegation continues, as the receiver that handed the work
+   * over reported it. Omit it for a fresh delegation; pass it when forwarding,
+   * and the depth limit is applied here before anything is transmitted.
+   */
+  chain?: Partial<SettledChain>;
 }): Promise<DelegationOutcome> {
   const { fromTeam, link, remoteTeam, task, tier, authority } = opts;
   const ts = new Date().toISOString();
@@ -354,10 +638,20 @@ export async function delegateAcrossSelfImpulses(opts: {
   if (!receiverRoute.ok) return refused(receiverRoute.reason, { fromTeammate });
   const toTeammate = receiverRoute.value.teammate;
 
-  /* 5. the delegation packet + its tamper-evident digest. */
+  /* 5. the delegation packet + its tamper-evident digest.
+
+     The chain rides INSIDE the digest, so it cannot be edited between here and
+     the far host. It is still only a claim: the far host counts its own hops.
+     Declaring it here is what makes the far host's bound reachable, because a
+     host that forwards work onward has to be able to say how deep it already is.
+     A forwarder that is already at the limit stops HERE — before a packet is
+     built — rather than transmitting something the far end will refuse. */
+  const declaredChain = declareOutboundChain(fromTeam.user, id, opts.chain);
+  if (!declaredChain.ok) return refused(declaredChain.reason, { fromTeammate });
   const packet = {
     id, fromUser: fromTeam.user, fromTeammate, toUser: remoteTeam.user,
     toTeammate: toTeammate.name, task: cleanTask, tier, ts,
+    chain: declaredChain.chain,
     declaredAuthority: sanitizeDeclaredAuthority(authority),
   };
   const packetDigest = await sha256Hex(JSON.stringify(packet));
@@ -409,8 +703,8 @@ export async function delegateAcrossSelfImpulses(opts: {
   }
 
   /* 8. replay guard: a decided delegation settles exactly once. */
-  if (decidedDelegations.has(id)) return refused("delegation already decided — replay refused");
-  decidedDelegations.add(id);
+  const alreadyDecided = decidedDelegations.claim(id);
+  if (alreadyDecided) return refused(`delegation already decided — ${alreadyDecided}`);
 
   /* 9. LIVE BRIDGE — the delegated work is EXECUTED by the real TeamExecutor and
    *    sealed as a si-proof-receipt/2, exactly as the A2A wire path does. The
@@ -439,6 +733,15 @@ export async function delegateAcrossSelfImpulses(opts: {
   const artifact = run.artifact;
   const receiverDigest = await sha256Hex(`${packetDigest}|${artifact ?? ""}`);
 
+  /* This host executed the work ON the remote team's behalf, so the settled chain
+     is the one the sender declared plus this host's own hop — which is what a
+     caller forwarding the work onward has to hand the next hop. */
+  const settledChain: SettledChain = {
+    ...declaredChain.chain,
+    path: [...declaredChain.chain.path, remoteTeam.user],
+    observedHop: 1,
+  };
+
   return {
     ok: run.ok || !executedForReal,
     record: {
@@ -454,13 +757,26 @@ export async function delegateAcrossSelfImpulses(opts: {
       ts,
       execution: run.execution,
       receipt: run.receipt,
+      chain: settledChain,
     },
   };
 }
 
-/** Packets older than the TTL may not be re-presented. */
+/**
+ * Packets older than the TTL may not be re-presented.
+ *
+ * This used to be `nowMs - new Date(ts).getTime() > PACKET_TTL_MS`, which fails
+ * open three ways: a timestamp in the FUTURE makes the difference negative and
+ * therefore never expires, and an unreadable one makes it `NaN`, and `NaN > x`
+ * is false — so a peer could hold a packet open forever, or send a packet with no
+ * clock at all, and neither was ever refused. A clock we cannot read is refused;
+ * a clock we do not believe (beyond the skew allowance) is refused.
+ */
 export function packetExpired(ts: string, nowMs: number = Date.now()): boolean {
-  return nowMs - new Date(ts).getTime() > PACKET_TTL_MS;
+  const at = new Date(ts).getTime();
+  if (!Number.isFinite(at)) return true;
+  if (at - nowMs > MAX_CLOCK_SKEW_MS) return true;
+  return nowMs - at > PACKET_TTL_MS;
 }
 
 import { type AgentCardV10 } from "./a2aV10";
@@ -563,6 +879,13 @@ export interface DelegationPacketV10 {
   tier: RiskTier;
   packetDigest: string;
   declaredAuthority?: DeclaredAuthority;
+  /**
+   * Which delegation chain this is, how deep the sender says it is, and which
+   * selfimpulses have already handled it. Inside `packetDigest`, so it cannot be
+   * edited in flight — and still only a CLAIM. The receiver counts its own hops;
+   * see the federation-depth section above before changing anything here.
+   */
+  chain?: FederationChain;
   ts: string;
 }
 
@@ -654,9 +977,28 @@ export async function handleInboundDelegation(
   });
 
   if (packet.toUser !== remoteTeam.user) return refused(`packet is addressed to "${packet.toUser}" but this selfimpulse is "${remoteTeam.user}"`);
-  if (packetExpired(packet.ts)) return refused("packet expired (TTL 10 min) — stale delegations are refused");
+  if (packetExpired(packet.ts)) {
+    return refused(`packet expired — older than the ${Math.round(PACKET_TTL_MS / 60000)}min TTL, carrying a timestamp this host cannot read, or dated further than ${Math.round(MAX_CLOCK_SKEW_MS / 1000)}s in the future`);
+  }
   const digest = await sha256Hex(JSON.stringify({ ...packet, packetDigest: "" }));
   if (digest !== packet.packetDigest) return refused("packet digest mismatch — the packet was modified in transit");
+
+  /* FEDERATION DEPTH, before any gate spends a human's attention and long before
+     the executor is touched. A claim this host cannot parse is refused outright;
+     a claim it can parse is counted against what THIS host has already executed,
+     so an honest chain stops at the limit and a dishonest one stops there too.
+
+     The count is taken HERE, which means a hop is spent even when something
+     LATER refuses — routing finds no owner, the receiver gate denies, the bridge
+     cannot execute. That is the deliberate direction: a peer must not be able to
+     probe the limit with packets that are never going to run anyway, and a host
+     that denies risky work has still been asked, so the chain is still deeper.
+     The cost is that a peer retrying the same chain with fresh packet ids walks
+     into the limit; that is what a bound does. */
+  const chainRead = readChainClaim(packet);
+  if (!chainRead.ok) return refused(`delegation-chain refusal: ${chainRead.reason}`);
+  const observed = observeInboundChain(remoteTeam.user, packet.id, chainRead.claim);
+  if (!observed.ok) return refused(`delegation-chain refusal: ${observed.reason}`);
 
   /* receiver GuardRail: content that crossed a boundary is re-scanned here. */
   const findings = detectInjection(packet.task);
@@ -692,13 +1034,19 @@ export async function handleInboundDelegation(
         note: riskVerdict.upgraded
           ? `denied at the RECEIVER gate by ${remoteTeam.user} — the sender declared "${packet.tier}" but this selfimpulse classified the task ${riskVerdict.risk} (${riskVerdict.why}). Nothing executed`
           : `denied at the RECEIVER gate by ${remoteTeam.user} — nothing executed`,
-        ts, receiverPolicy: riskVerdict, execution: null, receipt: null,
+        ts, receiverPolicy: riskVerdict, execution: null, receipt: null, chain: observed.settled,
       },
     };
   }
 
-  if (decidedInbound.has(packet.id)) return refused("delegation already decided — replay refused");
-  decidedInbound.add(packet.id);
+  /* Replay: one packet settles once, for as long as the packet could be valid.
+     The window counter is the part no field on the wire can move — it counts
+     executions, and a peer that mints a fresh chainId each round still spends it. */
+  const replayed = decidedInbound.claim(packet.id);
+  if (replayed) return refused(`delegation already decided — ${replayed}`);
+  const windowRefusal = inboundWindowRefused(Date.now());
+  if (windowRefusal) return refused(windowRefusal);
+  inboundWindow.count += 1;
 
   /* 9. LIVE BRIDGE — the delegated work is EXECUTED by the real TeamExecutor and
    *    sealed as a si-proof-receipt/2. This used to be a template literal that
@@ -725,7 +1073,7 @@ export async function handleInboundDelegation(
         senderGate: { outcome: "auto", by: packet.fromUser }, receiverGate, status: "refused",
         artifact: null, packetDigest: packet.packetDigest, receiverDigest: null,
         note: `this selfimpulse could not execute the delegation — ${run.reason}. Nothing ran, so nothing is claimed.`,
-        ts, execution: null, receipt: null, receiverPolicy: riskVerdict,
+        ts, execution: null, receipt: null, receiverPolicy: riskVerdict, chain: observed.settled,
       },
     };
   }
@@ -760,6 +1108,7 @@ export async function handleInboundDelegation(
       execution: run.execution,
       receipt: run.receipt,
       receiverPolicy: riskVerdict,
+      chain: observed.settled,
     },
   };
 }
@@ -805,6 +1154,12 @@ export async function delegateViaA2A(opts: {
   senderGate?: HumanGate;
   /** Authorization header value satisfying the remote card's securitySchemes. */
   authorization?: string;
+  /**
+   * The chain this delegation continues, as the receiver that handed the work
+   * over reported it. Omit it for a fresh delegation; pass it when forwarding,
+   * and the federation depth limit is applied here before a packet is built.
+   */
+  chain?: Partial<SettledChain>;
 }): Promise<DelegationOutcome> {
   const { fromTeam, task, tier, authority } = opts;
   const ts = new Date().toISOString();
@@ -868,16 +1223,24 @@ export async function delegateViaA2A(opts: {
     };
   }
 
-  /* 5. packet + digest, then the wire. */
+  /* 5. packet + digest, then the wire.
+
+     The chain goes inside the digest and is declared, never inherited verbatim:
+     `declareOutboundChain` recomputes the depth from the greater of what the far
+     end claimed and what it counted, so a peer that under-reports cannot make
+     this host under-report in turn. A host already at the limit stops here. */
+  const declaredChain = declareOutboundChain(fromTeam.user, id, opts.chain);
+  if (!declaredChain.ok) return refused(declaredChain.reason, { fromTeammate, toUser });
   const body = {
     vh: "delegation/1.0" as const, id, fromUser: fromTeam.user, fromTeammate, toUser,
-    task: cleanTask, tier, ts, declaredAuthority: sanitizeDeclaredAuthority(authority),
+    task: cleanTask, tier, ts, chain: declaredChain.chain,
+    declaredAuthority: sanitizeDeclaredAuthority(authority),
   };
   const packetDigest = await sha256Hex(JSON.stringify({ ...body, packetDigest: "" }));
   const packet: DelegationPacketV10 = { ...body, packetDigest };
-  if (decidedDelegations.has(id)) return refused("delegation already decided — replay refused", { fromTeammate, toUser, packetDigest });
-  decidedDelegations.add(id);
-  busNote("operator", `delegation ${id} crossing to ${toUser} over A2A v1.0 (${tier})`, fromTeam.user);
+  const alreadyDecided = decidedDelegations.claim(id);
+  if (alreadyDecided) return refused(`delegation already decided — ${alreadyDecided}`, { fromTeammate, toUser, packetDigest });
+  busNote("operator", `delegation ${id} crossing to ${toUser} over A2A v1.0 (${tier}, chain hop ${declaredChain.chain.hop}/${MAX_FEDERATION_HOPS})`, fromTeam.user);
 
   let remote: TaskV10;
   try {

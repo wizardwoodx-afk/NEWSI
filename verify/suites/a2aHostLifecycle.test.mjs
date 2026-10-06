@@ -28,7 +28,7 @@ function launchHost(extra = []) {
     "--port",
     "0",
     ...extra
-  ], { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"] });
+  ], { env: { ...process.env, SI_OWNER_SECRET: "probe-owner-passphrase" }, cwd: ROOT, stdio: ["ignore", "pipe", "pipe"] });
   const state = { child, ready: null, readyAt: null, stdout: "", stderr: "", exited: null };
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");

@@ -59,6 +59,8 @@ import { briefingForMission } from "./selfEvolveRuntime";
 import { strategyWaveShape, evidenceDepth, reviewBriefingLines, type StrategyParams } from "./selfImprove";
 import { verifyActionPacket, packetAllowsExecution, type ActionPacket } from "./actionPacket";
 import { attenuate, BudgetGate, budgetCheck, checkEnvelope, type AuthorityEnvelope, type BudgetTicket } from "./custody";
+import { recordSeatRun as finopsRecordSeatRun } from "../engine/finops";
+import { checkpoint as durableCheckpoint } from "./runCheckpoints";
 import { globalReputationLedger } from "./consensusEngine";
 
 /* ------------------------------------------------------------------ injected capabilities */
@@ -744,6 +746,11 @@ export async function executeTeam(req: TeamRunRequest, deps: TeamRunnerDeps, ses
   /** Branches that actually hold committed work, in the order they landed. */
   const committedBranches: string[] = [];
 
+  /* Durable missions: every settled wave leaves a checkpoint on a tamper-
+     evident chain, so a crash resumes from the last settled wave instead
+     of restarting the mission from zero. */
+  let waveNo = 0;
+  const durableRunId = `run:${req.missionSlug}`;
   for (const wave of waves) {
     if (waveFailed) {
       const skipReason = budgetStop
@@ -840,7 +847,29 @@ export async function executeTeam(req: TeamRunRequest, deps: TeamRunnerDeps, ses
       const tk = tickets.get(r.seatId);
       if (budgetGate && tk) budgetAccounting.overrun += budgetGate.settle(tk, r.chargedUsd ?? 0).overrunUsd;
       if ((r.usage?.costUsd === null || r.usage?.costUsd === undefined) && (r.usage?.tokens ?? 0) > 0) budgetAccounting.tokensOnly.add(r.seatId);
+      /* The books: every settled run lands in the FinOps ledger — the
+         chargeback export and the assurance score read these same rows.
+         USD-unknown stays unknown (null), never a guessed price. */
+      finopsRecordSeatRun({
+        at: Date.now(),
+        seatId: r.seatId,
+        missionId: req.missionSlug,
+        usd: r.usage?.costUsd ?? null,
+        tokens: r.usage?.tokens ?? null,
+        turns: r.usage?.turns ?? null,
+        verdict: r.verified ? "verified" : r.outcome === "completed" ? "completed" : r.outcome,
+        source: r.usage?.source ?? "unknown",
+      });
     }
+
+    /* the wave checkpoint — the crash-recovery point */
+    durableCheckpoint(durableRunId, req.missionSlug, waveNo, "wave settled", {
+      settled: results.length,
+      verified: results.filter((x) => x.verified).length,
+      budgetStop,
+      failed: waveFailed,
+    });
+    waveNo += 1;
 
     // 11.13.0 — budget authority is checked after every wave against REAL
     // charged spend; once the cap is crossed, no further seat is invoked.

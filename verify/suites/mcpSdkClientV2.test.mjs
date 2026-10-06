@@ -22683,6 +22683,7 @@ function textOf(result) {
 }
 before(async () => {
   transport = new StdioClientTransport({
+    env: { ...process.env, SI_OWNER_SECRET: "probe-owner-passphrase" },
     command: process.execPath,
     args: ["tools/mcp.mjs"],
     cwd: ROOT
@@ -22816,7 +22817,7 @@ describe2("M3 honesty over the official v2 client", () => {
 });
 describe2("M4 dual-era from ONE official client library", () => {
   it("the same v2 SDK, default (legacy) posture, still drives the 2025-11-25 handshake", async () => {
-    const legacyTransport = new StdioClientTransport({ command: process.execPath, args: ["tools/mcp.mjs"], cwd: ROOT });
+    const legacyTransport = new StdioClientTransport({ env: { ...process.env, SI_OWNER_SECRET: "probe-owner-passphrase" }, command: process.execPath, args: ["tools/mcp.mjs"], cwd: ROOT });
     const legacy = new Client({ name: "si-sdk-v2-legacy-posture", version: "1.0.0" });
     try {
       await legacy.connect(legacyTransport);

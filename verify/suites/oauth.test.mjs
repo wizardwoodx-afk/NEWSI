@@ -556,12 +556,12 @@ function randomBytes2(n) {
 }
 var sessionKey = null;
 var sessionParams = null;
-async function deriveKey(passphrase, salt) {
+async function deriveKey(passphrase, salt, iterations = PBKDF_ITERATIONS) {
   const s = subtle();
   if (!s) throw new Error("WebCrypto SubtleCrypto is unavailable in this runtime \u2014 the vault refuses rather than pretend to encrypt");
   const base = await s.importKey("raw", enc.encode(passphrase), "PBKDF2", false, ["deriveKey"]);
   return s.deriveKey(
-    { name: "PBKDF2", salt, iterations: PBKDF_ITERATIONS, hash: "SHA-256" },
+    { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
     base,
     { name: "AES-GCM", length: 256 },
     false,
@@ -587,9 +587,10 @@ async function setVaultPassphrase(passphrase, now = () => /* @__PURE__ */ new Da
     if (!existing) {
       const salt = randomBytes2(16);
       const iv = randomBytes2(12);
-      const key = await deriveKey(passphrase, salt);
+      const iterations = await calibratedIterations();
+      const key = await deriveKey(passphrase, salt, iterations);
       const check = await subtle().encrypt({ name: "AES-GCM", iv }, key, enc.encode("si-vault-check/1"));
-      const meta = { v: "si-vault-meta/1", saltB64: toB64(salt), ivB64: toB64(iv), cipherB64: toB64(check), kdf: "PBKDF2-SHA-256", iterations: PBKDF_ITERATIONS, createdAt: now().toISOString() };
+      const meta = { v: "si-vault-meta/1", saltB64: toB64(salt), ivB64: toB64(iv), cipherB64: toB64(check), kdf: "PBKDF2-SHA-256", iterations, createdAt: now().toISOString() };
       const s = storage();
       if (!s) return { ok: false, error: "no storage in this runtime \u2014 the vault can exist for this session only; persistence needs a store" };
       s.setItem(VAULT_META_KEY, JSON.stringify(meta));
@@ -599,7 +600,7 @@ async function setVaultPassphrase(passphrase, now = () => /* @__PURE__ */ new Da
     }
     try {
       const salt = fromB64(existing.saltB64);
-      const key = await deriveKey(passphrase, salt);
+      const key = await deriveKey(passphrase, salt, existing.iterations);
       const plain = await subtle().decrypt({ name: "AES-GCM", iv: fromB64(existing.ivB64) }, key, fromB64(existing.cipherB64));
       if (dec.decode(plain) !== "si-vault-check/1") return { ok: false, error: "that passphrase did not open the vault \u2014 nothing was changed" };
       sessionKey = key;
@@ -615,6 +616,21 @@ async function setVaultPassphrase(passphrase, now = () => /* @__PURE__ */ new Da
 function lockVault() {
   sessionKey = null;
   sessionParams = null;
+}
+async function calibratedIterations(targetMs = 250) {
+  const s = subtle();
+  if (!s) return PBKDF_ITERATIONS;
+  try {
+    const base = await s.importKey("raw", enc.encode("si-vault-calibration"), "PBKDF2", false, ["deriveBits"]);
+    const probeSalt = new Uint8Array(16);
+    const t0 = Date.now();
+    await s.deriveBits({ name: "PBKDF2", salt: probeSalt, iterations: 2e4, hash: "SHA-256" }, base, 256);
+    const per20k = Math.max(1, Date.now() - t0);
+    const scaled = Math.round(2e4 * targetMs / per20k / 1e3) * 1e3;
+    return Math.min(2e6, Math.max(PBKDF_ITERATIONS, scaled));
+  } catch {
+    return PBKDF_ITERATIONS;
+  }
 }
 async function vaultSeal(name, text, now = () => /* @__PURE__ */ new Date()) {
   if (!sessionKey) return { ok: false, error: "the vault is locked \u2014 set or enter the passphrase before anything is sealed" };

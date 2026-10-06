@@ -73,6 +73,21 @@ export default defineConfig({
       // node:crypto — the drill's attestation digest (16.4); the proof layer itself
       // already uses the Web Crypto API, so the browser half is an honest throw.
       { find: /^node:crypto$/, replacement: browserBuiltin("crypto") },
+      // The rest of nodeStubs/, which shipped with no alias pointing at them.
+      // A stub nothing aliases is worse than no stub: it reads as browser support
+      // that exists while the bundler quietly externalises the real import, and the
+      // `onwarn` handler below swallows the one warning that would have said so.
+      // These are all Proxy stubs that throw on first member access, so aliasing
+      // them turns a silent externalisation into a stated cause at runtime.
+      { find: /^node:http$/, replacement: browserBuiltin("http") },
+      { find: /^node:net$/, replacement: browserBuiltin("net") },
+      { find: /^node:url$/, replacement: browserBuiltin("url") },
+      { find: /^node:zlib$/, replacement: browserBuiltin("zlib") },
+      { find: /^node:buffer$/, replacement: browserBuiltin("buffer") },
+      { find: /^node:events$/, replacement: browserBuiltin("events") },
+      { find: /^node:stream$/, replacement: browserBuiltin("stream") },
+      { find: /^node:util$/, replacement: browserBuiltin("util") },
+      { find: /^node:process$/, replacement: browserBuiltin("process") },
     ],
   },
   optimizeDeps: {

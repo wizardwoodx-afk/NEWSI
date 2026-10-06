@@ -409,6 +409,83 @@ function collapseRepeatedLines(text, tolerance = 2) {
   }
   return { text: kept.join("\n"), collapsed };
 }
+function clipMarked(text, maxChars) {
+  const marker = "\n[\u2026 the middle of this tool output was elided to fit the context budget \u2026]\n";
+  if (maxChars <= marker.length) return marker.trim();
+  if (text.length <= maxChars) return text;
+  const room = maxChars - marker.length;
+  const head = Math.floor(room * 0.6);
+  return `${text.slice(0, head)}${marker}${text.slice(text.length - (room - head))}`;
+}
+function budgetConversation(head, segments, tail, budgetTokens = CONVERSATION_BUDGET) {
+  const assemble = (parts) => [head, ...parts, tail].filter((p) => p.length > 0).join("\n\n");
+  const full = assemble(segments.map((s) => s.text));
+  const fullTokens = estimateTokens(full);
+  if (fullTokens <= budgetTokens) {
+    return { text: full, trimmed: false, savedTokens: 0, kept: segments.length, clipped: 0, elided: 0, floorLimited: false, est: true };
+  }
+  const clean = (s) => collapseRepeatedLines(normalizeWhitespace(s).text).text;
+  const nHead = clean(head);
+  const nTail = clean(tail);
+  const nSegs = segments.map((s) => ({ label: s.label, text: clean(s.text) }));
+  const deduped = assemble(nSegs.map((s) => s.text));
+  if (estimateTokens(deduped) <= budgetTokens) {
+    return {
+      text: deduped,
+      trimmed: true,
+      savedTokens: fullTokens - estimateTokens(deduped),
+      kept: nSegs.length,
+      clipped: 0,
+      elided: 0,
+      floorLimited: false,
+      est: true
+    };
+  }
+  let remaining = budgetTokens - estimateTokens(nHead) - estimateTokens(nTail);
+  const bodies = new Array(nSegs.length);
+  const elidedLabels = [];
+  let kept = 0;
+  let clipped = 0;
+  for (let i = nSegs.length - 1; i >= 0; i--) {
+    const seg = nSegs[i];
+    const tokens = estimateTokens(seg.text);
+    if (tokens <= remaining) {
+      bodies[i] = seg.text;
+      kept++;
+      remaining -= tokens;
+      continue;
+    }
+    if (remaining > 0) {
+      bodies[i] = clipMarked(seg.text, Math.floor(remaining * 4));
+      clipped++;
+      remaining = 0;
+      continue;
+    }
+    elidedLabels.unshift(seg.label);
+    bodies[i] = "";
+  }
+  const notices = [];
+  if (clipped > 0 || elidedLabels.length > 0) {
+    notices.push(
+      `[loop context note] This conversation was held to a ${budgetTokens}-token budget. ${kept} result block(s) are complete, ${clipped} were shortened (each says so inline), and ${elidedLabels.length > 0 ? `${elidedLabels.length} \u2014 ${elidedLabels.join(", ")} \u2014 were left out.` : "none were left out."} An elided result did NOT come back empty and no tool failed: its output simply did not fit. Re-run that tool if you need it. The most recent turn is complete.`
+    );
+  }
+  let out = assemble([...notices, ...bodies.filter((b2) => b2.length > 0)]);
+  if (estimateTokens(out) > budgetTokens) {
+    out = fitToBudget(out, budgetTokens).text;
+  }
+  const after2 = estimateTokens(out);
+  return {
+    text: out,
+    trimmed: true,
+    savedTokens: Math.max(0, fullTokens - after2),
+    kept,
+    clipped,
+    elided: elidedLabels.length,
+    floorLimited: after2 > budgetTokens,
+    est: true
+  };
+}
 function recordEvent(e) {
   wireEvents.push(e);
   if (wireEvents.length > EVENT_CAP) wireEvents.splice(0, wireEvents.length - EVENT_CAP);
@@ -518,7 +595,7 @@ function recordUsage(entry, now = () => /* @__PURE__ */ new Date()) {
   list.push({ ...entry, at: now().toISOString() });
   storage()?.setItem(LEDGER_KEY, JSON.stringify(list.slice(-LEDGER_CAP)));
 }
-var LEDGER_KEY, LEDGER_CAP, PROMPT_BUDGET, WIRE_BUDGET, EVENT_CAP, wireEvents, wireSeq, lastPrefix;
+var LEDGER_KEY, LEDGER_CAP, PROMPT_BUDGET, WIRE_BUDGET, CONVERSATION_BUDGET, EVENT_CAP, wireEvents, wireSeq, lastPrefix;
 var init_tokenOptim = __esm({
   "src/engine/tokenOptim.ts"() {
     "use strict";
@@ -526,6 +603,7 @@ var init_tokenOptim = __esm({
     LEDGER_CAP = 500;
     PROMPT_BUDGET = 6e3;
     WIRE_BUDGET = 24e3;
+    CONVERSATION_BUDGET = 6e3;
     EVENT_CAP = 400;
     wireEvents = [];
     wireSeq = 0;
@@ -2125,6 +2203,122 @@ var init_providers = __esm({
     init_nativeProvider();
     init_client();
     DEFAULT_TIMEOUT_MS = 3e4;
+  }
+});
+
+// src/mission/caps.ts
+var DEFAULT_CAPS, INBOUND_DELEGATION_CAPS, CapLedger;
+var init_caps = __esm({
+  "src/mission/caps.ts"() {
+    "use strict";
+    DEFAULT_CAPS = { timeoutMs: 10 * 60 * 1e3, maxTurns: 40, maxCostUsd: 5 };
+    INBOUND_DELEGATION_CAPS = {
+      maxCostUsd: 2,
+      maxTurns: 40,
+      maxInvocations: 4,
+      maxWallClockMs: 30 * 6e4
+    };
+    CapLedger = class {
+      caps;
+      state;
+      constructor(caps, now = Date.now()) {
+        this.caps = caps;
+        this.state = { spentUsd: 0, spentTokens: 0, turnsUsed: 0, invocationsUsed: 0, startedAt: now, cappedInvocations: [] };
+      }
+      beginInvocation() {
+        this.state.invocationsUsed += 1;
+      }
+      /**
+       * Can another invocation start at all? Checked BEFORE dispatch — refusing is control, charging after is bookkeeping.
+       *
+       * TWO FAIL-CLOSED RULES, both added because an unpopulated `MissionCaps` used
+       * to mean "no ceiling at all":
+       *
+       *  1. A DECLARED-BUT-UNREADABLE CAP IS A REFUSAL, NOT AN ABSENT CAP. Every
+       *     guard below reads `?? 0`, and `NaN > 0` is false, so `{ maxTurns: NaN }`
+       *     and `{ maxCostUsd: -1 }` each silently disable themselves. A ceiling
+       *     nobody can read is not a ceiling, so any declared value that is not a
+       *     finite non-negative number refuses the dispatch and names the field.
+       *
+       *  2. A LEDGER WITH NO ARMED GUARD ADMITS NOTHING. `new CapLedger({})` scored
+       *     zero on every guard, so it returned `null` — admit, forever — which meant
+       *     the federation path's `new CapLedger({})` was an unbounded budget for
+       *     whoever reached the port. There is no honest reading of "no ceiling was
+       *     declared" as "run without limit", so it refuses and says so.
+       *
+       * An explicit `0` is still this build's way of saying "this one dimension is
+       * unlimited" (`mayRunTurn` documents the same convention) and stays honoured.
+       * What is refused is the ABSENCE of every armed guard, not a chosen zero.
+       *
+       * `missionLoop` constructs a ledger with `maxTurns: 120` and a numeric
+       * `maxCostUsd`, so rule 2 never fires on the mission path; rule 1 only fires
+       * on a malformed value, which is the direction it is meant to fail.
+       */
+      admissionError(now = Date.now()) {
+        for (const [field, value] of Object.entries(this.caps)) {
+          if (value === void 0 || value === null) continue;
+          if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+            return `the ${field} ceiling is declared as ${JSON.stringify(value)}, which is not a usable number \u2014 refusing rather than treating a broken ceiling as no ceiling`;
+          }
+        }
+        const maxCost = this.caps.maxCostUsd ?? 0;
+        if (maxCost > 0 && this.state.spentUsd >= maxCost) {
+          return `the mission has already spent $${this.state.spentUsd.toFixed(4)} of its $${maxCost.toFixed(4)} ceiling`;
+        }
+        const maxTurns = this.caps.maxTurns ?? 0;
+        if (maxTurns > 0 && this.state.turnsUsed >= maxTurns) {
+          return `the mission has already used ${this.state.turnsUsed} of its ${maxTurns} turns`;
+        }
+        const maxInvocations = this.caps.maxInvocations ?? 0;
+        if (maxInvocations > 0 && this.state.invocationsUsed >= maxInvocations) {
+          return `the mission has used all ${maxInvocations} permitted invocations`;
+        }
+        const maxWall = this.caps.maxWallClockMs ?? this.caps.timeoutMs ?? 0;
+        if (maxWall > 0 && now - this.state.startedAt >= maxWall) {
+          return `the mission's ${Math.round(maxWall / 1e3)}s wall clock has elapsed`;
+        }
+        if (maxCost <= 0 && maxTurns <= 0 && maxInvocations <= 0 && maxWall <= 0) {
+          return `no ceiling is set \u2014 cost, turns, invocations and the wall clock are all absent or zero, so this ledger would admit without limit; dispatch is refused until a real ceiling is declared`;
+        }
+        return null;
+      }
+      /** Record what a CLI actually consumed. Returns why, so the caller can show it. */
+      charge(r2) {
+        if (r2.tokens !== null && Number.isFinite(r2.tokens)) {
+          this.state.spentTokens += r2.tokens;
+        }
+        if (r2.costUsd !== null && Number.isFinite(r2.costUsd)) {
+          this.state.spentUsd += r2.costUsd;
+          const maxCost = this.caps.maxCostUsd ?? 0;
+          const breach = maxCost > 0 && this.state.spentUsd > maxCost ? "mission_cap" : null;
+          return {
+            chargedUsd: r2.costUsd,
+            basis: "reported_usd",
+            breach,
+            reason: breach ? `Charged $${r2.costUsd.toFixed(4)} from ${r2.source}, taking the mission to $${this.state.spentUsd.toFixed(4)} over a $${maxCost.toFixed(4)} ceiling.` : `Charged $${r2.costUsd.toFixed(4)} reported by ${r2.source}. Mission total $${this.state.spentUsd.toFixed(4)}.`
+          };
+        }
+        if (r2.tokens !== null) {
+          return {
+            chargedUsd: 0,
+            basis: "tokens_only",
+            breach: null,
+            reason: `${r2.source} reported ${r2.tokens} tokens and no price. Recorded as tokens; NOT converted to dollars, because a guessed price would be a fabricated cost.`
+          };
+        }
+        return { chargedUsd: 0, basis: "unknown", breach: null, reason: `${r2.source} reported neither cost nor tokens, so nothing was charged and the true spend is unknown.` };
+      }
+      /** Note that something was stopped by a cap. Kept separately from charges: a refusal is not a spend. */
+      recordCapped(id, outcome, detail, at = (/* @__PURE__ */ new Date()).toISOString()) {
+        this.state.cappedInvocations.push({ id, outcome, at, detail });
+      }
+      addTurns(n) {
+        this.state.turnsUsed += n;
+      }
+      snapshot() {
+        return { ...this.state, cappedInvocations: [...this.state.cappedInvocations] };
+      }
+    };
   }
 });
 
@@ -23310,6 +23504,8 @@ var init_bew = __esm({
 var agentLoop_exports = {};
 __export(agentLoop_exports, {
   MAX_AGENT_STEPS: () => MAX_AGENT_STEPS,
+  MEMBER_RUN_CAPS: () => MEMBER_RUN_CAPS,
+  MEMBER_RUN_TOKEN_CEILING: () => MEMBER_RUN_TOKEN_CEILING,
   memberToolIds: () => memberToolIds,
   runMemberAgent: () => runMemberAgent
 });
@@ -23332,33 +23528,118 @@ ${toolProtocolText(toolIds)}${mcpLine ? `
 ${mcpLine}` : ""}`).prompt : optimizeComposedPrompt(systemBase).prompt;
   const toolCtx = hasTools ? { ...opts.toolCtx, specialistId: specialist.id, hash: opts.hash } : null;
   let conversation = task;
+  const previousTurns = [];
   const toolReceipts = [];
   let calls = 0;
   let totalLatency = 0;
   let lastModel = provider2.model;
+  const ledger = opts.ledger ?? new CapLedger(MEMBER_RUN_CAPS);
+  ledger.beginInvocation();
+  const tokenCeiling = opts.runTokenCeiling ?? MEMBER_RUN_TOKEN_CEILING;
+  const conversationBudget = opts.conversationBudget ?? CONVERSATION_BUDGET;
+  let runPromptTokens = 0;
+  let runReplyTokens = 0;
+  let savedTokens = 0;
+  let pendingSaved = 0;
+  let contextFloorLimited = false;
+  const costRecord = (refused) => ({
+    basis: "tokens_only",
+    usd: null,
+    tokens: runPromptTokens + runReplyTokens,
+    promptTokens: runPromptTokens,
+    replyTokens: runReplyTokens,
+    reason: "This path reports tokens and no price, so nothing was converted to dollars: a guessed price would be a fabricated cost.",
+    ...refused ? { refused } : {},
+    contextFloorLimited,
+    savedTokens
+  });
+  const admit = (user) => {
+    const blocked = ledger.admissionError(Date.now());
+    if (blocked) return blocked;
+    if (tokenCeiling > 0) {
+      const spent = runPromptTokens + runReplyTokens;
+      const projected = spent + estimateTokens(system) + estimateTokens(user);
+      if (projected > tokenCeiling) {
+        return `dispatching this call would take the run to ${projected} estimated tokens (${spent} already spent), past its ${tokenCeiling}-token ceiling; it was refused before dispatch`;
+      }
+    }
+    return null;
+  };
+  const settle2 = (promptTokens, replyTokens) => {
+    runPromptTokens += promptTokens;
+    runReplyTokens += replyTokens;
+    ledger.charge({ costUsd: null, tokens: promptTokens + replyTokens, turns: 1, source: "member-agent-loop" });
+    ledger.addTurns(1);
+  };
   const bew = new BewRun(specialist.id);
   bew.to("plan");
   for (let step = 0; step < maxSteps; step++) {
+    const blocked = admit(conversation);
+    if (blocked) {
+      ledger.recordCapped(specialist.id, "cost_cap", blocked);
+      bew.to("verify");
+      return {
+        ok: false,
+        text: "",
+        error: blocked,
+        errorKind: "budget",
+        model: provider2.model,
+        latencyMs: totalLatency,
+        calls,
+        toolReceipts,
+        truncated: false,
+        tools: toolIds,
+        cost: costRecord(blocked),
+        bew: bew.finish("failed")
+        // a refused run did not finish its work
+      };
+    }
     const res = await complete(provider2, system, conversation, { fetchImpl: opts.fetchImpl });
     calls += 1;
+    const stepPrompt = estimateTokens(system) + estimateTokens(conversation);
+    const stepReply = estimateTokens(res.ok ? res.text : res.error);
+    settle2(stepPrompt, stepReply);
     recordUsage({
-      promptTokens: estimateTokens(system) + estimateTokens(conversation),
-      replyTokens: estimateTokens(res.ok ? res.text : res.error),
-      optimized: false,
-      savedTokens: 0
+      promptTokens: stepPrompt,
+      replyTokens: stepReply,
+      optimized: pendingSaved > 0,
+      savedTokens: pendingSaved
     });
+    pendingSaved = 0;
     if (!res.ok) {
       if (AUTO_REPAIR_KINDS.has(res.kind) && !conversation.includes("[repair turn]")) {
         const repairTask = `${task}
 
 [repair turn] Your previous attempt died mid-run (${res.kind}: ${redactSecrets(res.error, [provider2.apiKey]).slice(0, 140)}). Answer the ORIGINAL task standalone now \u2014 rely on nothing from the failed attempt.`;
+        const repairBlocked = admit(repairTask);
+        if (repairBlocked) {
+          ledger.recordCapped(specialist.id, "cost_cap", `the auto-repair rung was refused before dispatch: ${repairBlocked}`);
+          return {
+            ok: false,
+            text: "",
+            error: `attempt 1 failed with ${res.kind}, and the auto-repair was never dispatched: ${repairBlocked}`,
+            errorKind: "budget",
+            model: provider2.model,
+            latencyMs: totalLatency,
+            calls,
+            toolReceipts,
+            truncated: false,
+            tools: toolIds,
+            cost: costRecord(repairBlocked),
+            bew: bew.finish("failed")
+          };
+        }
         const repair = await complete(provider2, system, repairTask, { fetchImpl: opts.fetchImpl });
         calls += 1;
+        settle2(
+          estimateTokens(system) + estimateTokens(repairTask),
+          estimateTokens(repair.ok ? repair.text : repair.error)
+        );
         recordUsage({
           promptTokens: estimateTokens(system) + estimateTokens(repairTask),
           replyTokens: estimateTokens(repair.ok ? repair.text : repair.error),
-          optimized: false,
-          savedTokens: 0
+          optimized: pendingSaved > 0,
+          savedTokens: pendingSaved
         });
         if (repair.ok) {
           totalLatency += repair.latencyMs;
@@ -23375,6 +23656,7 @@ ${mcpLine}` : ""}`).prompt : optimizeComposedPrompt(systemBase).prompt;
             tools: toolIds,
             repaired: true,
             repairNote: `attempt 1 failed with ${res.kind}; the loop auto-repaired by restating the task standalone \u2014 no human pause was needed or made`,
+            cost: costRecord(),
             bew: bew.finish(repair.text.trim().length > 0 ? "done" : "partial")
           };
         }
@@ -23392,6 +23674,7 @@ ${mcpLine}` : ""}`).prompt : optimizeComposedPrompt(systemBase).prompt;
           tools: toolIds,
           repaired: true,
           repairNote: `attempt 1 failed with ${res.kind}; the auto-repair also failed with ${repair.kind ?? "unknown"} \u2014 reported honestly`,
+          cost: costRecord(),
           bew: bew.finish("failed")
         };
       }
@@ -23406,6 +23689,7 @@ ${mcpLine}` : ""}`).prompt : optimizeComposedPrompt(systemBase).prompt;
         toolReceipts,
         truncated: false,
         tools: toolIds,
+        cost: costRecord(),
         bew: bew.finish("failed")
       };
     }
@@ -23413,12 +23697,12 @@ ${mcpLine}` : ""}`).prompt : optimizeComposedPrompt(systemBase).prompt;
     lastModel = res.model;
     if (!hasTools || !toolCtx) {
       bew.to("verify");
-      return { ok: true, text: res.text, model: lastModel, latencyMs: totalLatency, calls, toolReceipts, truncated: false, tools: [], bew: bew.finish(res.text.trim().length > 0 ? "done" : "partial") };
+      return { ok: true, text: res.text, model: lastModel, latencyMs: totalLatency, calls, toolReceipts, truncated: false, tools: [], cost: costRecord(), bew: bew.finish(res.text.trim().length > 0 ? "done" : "partial") };
     }
     const blocks = parseToolBlocks(res.text);
     if (blocks.length === 0) {
       bew.to("verify");
-      return { ok: true, text: res.text, model: lastModel, latencyMs: totalLatency, calls, toolReceipts, truncated: false, tools: toolIds, bew: bew.finish(res.text.trim().length > 0 ? "done" : "partial") };
+      return { ok: true, text: res.text, model: lastModel, latencyMs: totalLatency, calls, toolReceipts, truncated: false, tools: toolIds, cost: costRecord(), bew: bew.finish(res.text.trim().length > 0 ? "done" : "partial") };
     }
     bew.to("act");
     const resultLines = [];
@@ -23456,31 +23740,39 @@ ${receipt.output}`);
         toolReceipts,
         truncated: true,
         tools: toolIds,
+        cost: costRecord(),
         bew: bew.finish("partial")
         // truncated ⇒ verify cannot pass ⇒ partial, never done
       };
     }
-    conversation = `${task}
-
-[turn ${step + 1}] Your previous reply requested tools. Their real results:
-
-${resultLines.join("\n\n")}
-
-Continue the task. If the work is done, answer with NO tool blocks.`;
+    previousTurns.push({ label: `turn ${step + 1}`, text: resultLines.join("\n\n") });
+    const budgeted = budgetConversation(task, previousTurns, CONTINUE_INSTRUCTION, conversationBudget);
+    conversation = budgeted.text;
+    savedTokens += budgeted.savedTokens;
+    contextFloorLimited = contextFloorLimited || budgeted.floorLimited;
+    pendingSaved += budgeted.savedTokens;
   }
-  return { ok: false, text: "", error: "agent loop ended without a provider result", model: provider2.model, latencyMs: totalLatency, calls, toolReceipts, truncated: false, tools: toolIds, bew: bew.finish("failed") };
+  return { ok: false, text: "", error: "agent loop ended without a provider result", model: provider2.model, latencyMs: totalLatency, calls, toolReceipts, truncated: false, tools: toolIds, cost: costRecord(), bew: bew.finish("failed") };
 }
-var MAX_AGENT_STEPS, AUTO_REPAIR_KINDS;
+var MAX_AGENT_STEPS, MEMBER_RUN_CAPS, REPLY_ALLOWANCE, MEMBER_RUN_TOKEN_CEILING, AUTO_REPAIR_KINDS, CONTINUE_INSTRUCTION;
 var init_agentLoop = __esm({
   "src/engine/agentLoop.ts"() {
     "use strict";
     init_providers();
     init_tokenOptim();
+    init_caps();
     init_tools();
     init_mcpRuntime();
     init_bew();
     MAX_AGENT_STEPS = 5;
+    MEMBER_RUN_CAPS = {
+      maxTurns: MAX_AGENT_STEPS + 1,
+      maxWallClockMs: (MAX_AGENT_STEPS + 1) * DEFAULT_TIMEOUT_MS
+    };
+    REPLY_ALLOWANCE = PROMPT_BUDGET;
+    MEMBER_RUN_TOKEN_CEILING = (MAX_AGENT_STEPS + 1) * (PROMPT_BUDGET + CONVERSATION_BUDGET + REPLY_ALLOWANCE);
     AUTO_REPAIR_KINDS = /* @__PURE__ */ new Set(["timeout", "network", "bad-response"]);
+    CONTINUE_INSTRUCTION = "Continue the task. If the work is done, answer with NO tool blocks.";
   }
 });
 

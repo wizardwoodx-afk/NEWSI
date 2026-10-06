@@ -39,6 +39,7 @@
  * module stays importable in SSR / the render probe.
  */
 import React, { useEffect, useRef } from "react";
+import { THEMES } from "../store";
 
 /* 3d-force-graph's published types are generic over node/link; we keep the
    instance as a structural any so custom Three.js meshes don't fight them. */
@@ -165,9 +166,41 @@ function palette(): Record<string, string> {
   };
 }
 
+/* Light/dark is a PROPERTY OF THE FINISH (store THEMES[].kind), not a literal
+ * id match — the retired "light"/"dark" ids no longer exist, so comparing
+ * dataset.theme against them would pin every finish to the dark palette. */
 export function currentTheme(): "dark" | "light" {
-  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+  const id = document.documentElement.dataset.theme;
+  return THEMES.find((t) => t.id === id)?.kind ?? "dark";
 }
+
+/* ── REDUCED MOTION, IN ONE PLACE ──────────────────────────────────────────────
+ * `prefers-reduced-motion` is not a build-time constant and it is not a mount-time
+ * fact: a user can turn it on while the window is open. Every motion decision in
+ * this file therefore goes through this predicate, and nothing caches the answer.
+ *
+ * The defect this fixes: the mount effect computed the media query once and gated
+ * autoRotate on it, but a SEPARATE effect wrote `ctrl.autoRotate = autoRotate`
+ * straight past that gate every time the prop changed — so flipping the toggle
+ * put a continuously rotating scene back in front of someone who had asked the
+ * OS for less of exactly that. Orbit damping and the directional particles, which
+ * are motion too, were never gated at all.
+ *
+ * The query object is created once and lazily, because `matchMedia()` allocates a
+ * fresh MediaQueryList per call and the particle callback below runs per link per
+ * frame. `.matches` is a live getter on that one object, so a mid-session change
+ * in the OS setting is still picked up — with a property read, not a query. */
+let reduceQuery: MediaQueryList | null | undefined;
+function reducedMotion(): boolean {
+  if (reduceQuery === undefined) {
+    reduceQuery = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
+  }
+  return reduceQuery?.matches ?? false;
+}
+
+/** Camera drift, per mode. Zero under reduced motion. */
+const ROTATE_SPEED: Record<GraphMode, number> = { work: 0.18, memory: 0.42 };
+const PARTICLE_SPEED = (l: FgLink): number => (l.live ? 0.014 : 0.005);
 
 export interface ForceGraphProps {
   mode: GraphMode;
@@ -196,6 +229,7 @@ export function ForceGraph({ mode, nodes, links, onNodeDoubleClick, onNodeClick,
       if (cancelled || !host.isConnected) return;
       const c = palette();
       const work = mode === "work";
+      const reduce = reducedMotion();
       inst = new Ctor(host)
         .width(host.clientWidth).height(host.clientHeight)
         .backgroundColor("rgba(0,0,0,0)")
@@ -208,7 +242,14 @@ export function ForceGraph({ mode, nodes, links, onNodeDoubleClick, onNodeClick,
         .nodeThreeObjectExtend(false)
         .nodeLabel((n: FgNode) => {
           const x = n;
-          return `<div style="font:12px Geist,system-ui;background:${c.bg};color:${c.fg};padding:7px 10px;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.4);max-width:280px;border-left:3px solid ${c[x.kind] ?? c.keyword}">${esc(x.name)}${x.sub ? `<br><span style="opacity:.7">${esc(x.sub)}</span>` : ""}<br><span style="opacity:.55;font-family:Geist Mono,monospace;font-size:10px;letter-spacing:.08em">${x.kind.toUpperCase()}${x.live ? " · LIVE" : ""}</span></div>`;
+          /* The two families are the ones the product ships, spelled exactly as
+           * their @font-face rules declare them. This used to ask for Geist and
+           * Geist Mono, whose files were deleted when Gambetta / Switzer /
+           * Fragment Mono replaced them, so every node label silently fell back
+           * to the system UI face and the data line to whatever monospace the OS
+           * had — a label set outside the design system, next to a canvas whose
+           * own palette is read from these same tokens. */
+          return `<div style="font:12px &quot;Switzer&quot;,system-ui,sans-serif;background:${c.bg};color:${c.fg};padding:7px 10px;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.4);max-width:280px;border-left:3px solid ${c[x.kind] ?? c.keyword}">${esc(x.name)}${x.sub ? `<br><span style="opacity:.7">${esc(x.sub)}</span>` : ""}<br><span style="opacity:.55;font-family:&quot;Fragment Mono&quot;,monospace;font-size:10px;letter-spacing:.08em">${x.kind.toUpperCase()}${x.live ? " · LIVE" : ""}</span></div>`;
         })
         .linkColor((l: FgLink) => (l.live ? c.live : (work ? c.wlink : c.link)))
         .linkWidth((l: FgLink) => (l.live ? 1.8 : work ? 1.05 : 0.8))
@@ -219,9 +260,14 @@ export function ForceGraph({ mode, nodes, links, onNodeDoubleClick, onNodeClick,
         .linkCurvature(work ? 0.16 : 0.26)
         .linkResolution(18)
         .linkDirectionalArrowLength(work ? 3.5 : 0).linkDirectionalArrowRelPos(1).linkDirectionalArrowColor(() => c.live)
-        .linkDirectionalParticles((l: FgLink) => (work ? (l.live ? 5 : 2) : 0))
-        .linkDirectionalParticleWidth(work ? 1.8 : 0).linkDirectionalParticleColor(() => c.live)
-        .linkDirectionalParticleSpeed((l: FgLink) => (l.live ? 0.014 : 0.005))
+        /* Particles TRAVEL a link, so they are continuous motion and go when the camera
+         * does. The gate lives INSIDE the callback because this is re-read every
+         * frame: a user who turns reduced motion on mid-session stops them on the
+         * next frame, with no re-wiring. Memory mode still spawns none, and
+         * probe/patinaShell.test.ts pins this exact expression as the proof. */
+        .linkDirectionalParticles((l: FgLink) => (work ? (reducedMotion() ? 0 : (l.live ? 5 : 2)) : 0))
+        .linkDirectionalParticleWidth(work && !reduce ? 1.8 : 0).linkDirectionalParticleColor(() => c.live)
+        .linkDirectionalParticleSpeed(PARTICLE_SPEED)
         .dagMode(work ? "td" : (null as unknown as "td")).dagLevelDistance(work ? 48 : 0)
         .warmupTicks(work ? 48 : 80)
         .cooldownTicks(work ? 160 : 220)
@@ -240,10 +286,11 @@ export function ForceGraph({ mode, nodes, links, onNodeDoubleClick, onNodeClick,
       live.cameraPosition({ x: 0, y: work ? 40 : 20, z: work ? 280 : 330 });
       lightScene(THREE, live, work, c);
       const ctrl = live.controls();
-      const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
       ctrl.autoRotate = rot.current && !reduce;
-      ctrl.autoRotateSpeed = reduce ? 0 : (work ? 0.18 : 0.42);
-      ctrl.enableDamping = true;
+      ctrl.autoRotateSpeed = reduce ? 0 : ROTATE_SPEED[work ? "work" : "memory"];
+      /* Damping is an easing curve applied every frame — motion, so it goes when
+         the camera does. */
+      ctrl.enableDamping = !reduce;
       /* Frame the scene once the layout settles, in BOTH modes — a graph that
          opens cropped is a graph the user has to fix before reading it. */
       live.onEngineStop(() => live.zoomToFit(700, work ? 140 : 120));
@@ -264,10 +311,30 @@ export function ForceGraph({ mode, nodes, links, onNodeDoubleClick, onNodeClick,
     inst.d3ReheatSimulation();
   }, [nodes, links]);
 
+  /* THE MOTION GATE. Reads the live instance at apply time — not a captured one, so
+   * a prop change that lands before the renderer has resolved is applied when it
+   * does — and re-checks the OS setting on every apply. A media-query change
+   * re-runs it too, so turning reduced motion on mid-session takes effect without a
+   * remount. The camera knobs are imperative properties on the controls object
+   * rather than per-frame callbacks, which is why they need re-applying at all;
+   * the particle count is not here because its own callback reads the setting
+   * live. A control that consults the setting once and a later control that does
+   * not is precisely how this regressed. */
   useEffect(() => {
-    const ctrl = g.current?.controls() as { autoRotate: boolean } | undefined;
-    if (ctrl) ctrl.autoRotate = autoRotate;
-  }, [autoRotate]);
+    const apply = (): void => {
+      const ctrl = g.current?.controls();
+      if (!ctrl) return;
+      const off = reducedMotion();
+      ctrl.autoRotate = autoRotate && !off;
+      ctrl.autoRotateSpeed = off ? 0 : ROTATE_SPEED[mode === "work" ? "work" : "memory"];
+      ctrl.enableDamping = !off;
+    };
+    apply();
+    if (typeof matchMedia !== "function") return;
+    const mq = matchMedia("(prefers-reduced-motion: reduce)");
+    mq.addEventListener?.("change", apply);
+    return () => { mq.removeEventListener?.("change", apply); };
+  }, [autoRotate, mode]);
 
   useEffect(() => { if (fitSignal > 0) g.current?.zoomToFit(700, 120); }, [fitSignal]);
 

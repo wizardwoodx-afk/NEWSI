@@ -45,6 +45,30 @@ export const PROMPT_BUDGET = 6000;
 /** Emergency budget for a whole wire pair (system + user), 19.7.0. */
 export const WIRE_BUDGET = 24_000;
 
+/**
+ * The ceiling for the GROWING side of a conversation.
+ *
+ * Why this exists. `PROMPT_BUDGET` above governs a COMPOSED SYSTEM prompt, and
+ * a system prompt is fixed for the length of a run. A tool-using agent also
+ * re-sends a conversation that carries that step's tool results, and for years
+ * that side carried no budget at all: one model reply may contain any number of
+ * tool blocks (`parseToolBlocks` has no cap), each receipt carries up to 2000
+ * characters of real output, and every one of those went onto the wire
+ * verbatim. The cost of a single member call was therefore decided by how many
+ * blocks the model happened to emit — unbounded, and never budgeted.
+ *
+ * `WIRE_BUDGET` is not a substitute. It is deliberately generous, it runs
+ * inside `complete()` after the text is already built, and when it does fire it
+ * trims the PAIR at a fixed offset — which can move a slice of the
+ * conversation into the system message. It is an emergency brake, not a bound
+ * the loop can plan against.
+ *
+ * The value matches `PROMPT_BUDGET` deliberately: after budgeting, the worst
+ * case wire pair is 12k tokens, comfortably inside `WIRE_BUDGET`, so the
+ * emergency guard never has to shred a real tool result to save the run.
+ */
+export const CONVERSATION_BUDGET = 6000;
+
 export interface TokenLedgerEntry {
   at: string;
   promptTokens: number;
@@ -141,6 +165,167 @@ export function collapseRepeatedLines(text: string, tolerance = 2): { text: stri
     }
   }
   return { text: kept.join("\n"), collapsed };
+}
+
+/* ── the growing side: an agent loop's transcript, budgeted ─────────────── */
+
+/** One step's worth of tool results inside a conversation, oldest first. */
+export interface ConversationSegment {
+  /** "turn 2" — repeated verbatim in every elision note, so the model can name
+   *  the turn whose output is missing instead of guessing why. */
+  label: string;
+  text: string;
+}
+
+export interface ConversationBudgetReport {
+  text: string;
+  trimmed: boolean;
+  /** estimated tokens not put on the wire, versus the un-budgeted conversation */
+  savedTokens: number;
+  /** segments sent in full */
+  kept: number;
+  /** segments sent with their middle cut and a marker naming the cut */
+  clipped: number;
+  /** segments left out entirely — each named in the note, none silent */
+  elided: number;
+  /** True when the result still exceeds the budget, so the caller can say so
+   *  instead of implying the budget held. See the floor note in budgetConversation. */
+  floorLimited: boolean;
+  est: true;
+}
+
+/**
+ * Clip to a character count, marking where the middle went.
+ *
+ * `fitToBudget` cannot do this below ~130 tokens: it floors `keepChars` at 400,
+ * so a smaller budget silently returns MORE text than was asked for. And its
+ * marker ends "full playbook preserved in the skill library", which is true of
+ * a composed system prompt and false of a tool result — it would tell the model
+ * its output is somewhere it can go and read it. This is the same head + tail +
+ * marker shape, with a marker that says what actually happened.
+ */
+function clipMarked(text: string, maxChars: number): string {
+  const marker = "\n[… the middle of this tool output was elided to fit the context budget …]\n";
+  if (maxChars <= marker.length) return marker.trim();
+  if (text.length <= maxChars) return text;
+  const room = maxChars - marker.length;
+  const head = Math.floor(room * 0.6);
+  return `${text.slice(0, head)}${marker}${text.slice(text.length - (room - head))}`;
+}
+
+/**
+ * Fit a conversation to a budget without lying about what happened to it.
+ *
+ * Order of sacrifice, and why:
+ *   1. NORMALIZE + DEDUP first — both are meaning-preserving and both already
+ *      mark what they touch, so they are free wins.
+ *   2. Then the segments. Head (the task) and tail (the instruction to
+ *      continue) are NEVER cut: the task is the contract and the instruction is
+ *      the loop's own protocol.
+ *   3. Newest segment first. The most recent tool result is what the model has
+ *      to act on; an older, larger one is the right thing to shorten.
+ *   4. A segment that does not fit is CLIPPED with a visible marker, not
+ *      dropped. Only when the budget is already spent does a segment become an
+ *      elision note — and that note is explicit, names the turn, and says
+ *      outright that the result did not come back empty, because "I cannot see
+ *      it" and "it was empty" are different facts and the model must not be
+ *      left guessing which one it is looking at.
+ *
+ * Nothing is ever dropped silently. That is the whole point: a truncated tool
+ * result that the model cannot tell apart from an empty one is a correctness
+ * bug, not a saving.
+ *
+ * Honest limit: when `head + tail` alone exceed the budget, no arrangement of
+ * segments can bring the conversation under it, and `fitToBudget`'s 400-char
+ * floor can stop the last-resort guard from enforcing a very small budget
+ * either. Both cases are reported as `floorLimited` rather than papered over.
+ */
+export function budgetConversation(
+  head: string,
+  segments: ConversationSegment[],
+  tail: string,
+  budgetTokens: number = CONVERSATION_BUDGET,
+): ConversationBudgetReport {
+  const assemble = (parts: string[]): string => [head, ...parts, tail].filter((p) => p.length > 0).join("\n\n");
+  const full = assemble(segments.map((s) => s.text));
+  const fullTokens = estimateTokens(full);
+  // The common case — a small run — is returned byte-identical, so nothing about
+  // a normal loop's wire text changes.
+  if (fullTokens <= budgetTokens) {
+    return { text: full, trimmed: false, savedTokens: 0, kept: segments.length, clipped: 0, elided: 0, floorLimited: false, est: true };
+  }
+
+  const clean = (s: string): string => collapseRepeatedLines(normalizeWhitespace(s).text).text;
+  const nHead = clean(head);
+  const nTail = clean(tail);
+  const nSegs = segments.map((s) => ({ label: s.label, text: clean(s.text) }));
+  const deduped = assemble(nSegs.map((s) => s.text));
+  if (estimateTokens(deduped) <= budgetTokens) {
+    return {
+      text: deduped,
+      trimmed: true,
+      savedTokens: fullTokens - estimateTokens(deduped),
+      kept: nSegs.length,
+      clipped: 0,
+      elided: 0,
+      floorLimited: false,
+      est: true,
+    };
+  }
+
+  let remaining = budgetTokens - estimateTokens(nHead) - estimateTokens(nTail);
+  const bodies: string[] = new Array(nSegs.length);
+  const elidedLabels: string[] = [];
+  let kept = 0;
+  let clipped = 0;
+  for (let i = nSegs.length - 1; i >= 0; i--) {
+    const seg = nSegs[i];
+    const tokens = estimateTokens(seg.text);
+    if (tokens <= remaining) {
+      bodies[i] = seg.text;
+      kept++;
+      remaining -= tokens;
+      continue;
+    }
+    if (remaining > 0) {
+      bodies[i] = clipMarked(seg.text, Math.floor(remaining * 4));
+      clipped++;
+      remaining = 0;
+      continue;
+    }
+    // Budget already spent on newer results. Say so, by name, or the model
+    // reads the gap as a tool that returned nothing.
+    elidedLabels.unshift(seg.label);
+    bodies[i] = "";
+  }
+
+  const notices: string[] = [];
+  if (clipped > 0 || elidedLabels.length > 0) {
+    notices.push(
+      `[loop context note] This conversation was held to a ${budgetTokens}-token budget. ` +
+        `${kept} result block(s) are complete, ${clipped} were shortened (each says so inline), ` +
+        `and ${elidedLabels.length > 0 ? `${elidedLabels.length} — ${elidedLabels.join(", ")} — were left out.` : "none were left out."} ` +
+        `An elided result did NOT come back empty and no tool failed: its output simply did not fit. ` +
+        `Re-run that tool if you need it. The most recent turn is complete.`,
+    );
+  }
+
+  let out = assemble([...notices, ...bodies.filter((b) => b.length > 0)]);
+  if (estimateTokens(out) > budgetTokens) {
+    // head + tail alone are over budget: no segment arrangement can save it.
+    out = fitToBudget(out, budgetTokens).text;
+  }
+  const after = estimateTokens(out);
+  return {
+    text: out,
+    trimmed: true,
+    savedTokens: Math.max(0, fullTokens - after),
+    kept,
+    clipped,
+    elided: elidedLabels.length,
+    floorLimited: after > budgetTokens,
+    est: true,
+  };
 }
 
 /* ── the wire pipeline ──────────────────────────────────────────────────── */

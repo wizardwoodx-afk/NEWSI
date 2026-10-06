@@ -3,7 +3,7 @@
 SelfImpulse ships with **two** release numbers, on purpose. They are defined here so no
 installer, manifest or diligence review has to guess which is which.
 
-Version of record: product 1.0.0 · engine MJ 19.7.15 ("SelfImpulse")
+Version of record: product 1.9.1 · engine MJ 19.7.15 ("SelfImpulse")
 
 | Number | What it versions | Where it appears |
 |---|---|---|

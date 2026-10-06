@@ -1,49 +1,52 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="holst">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
-    <meta name="description" content="SelfImpulse — an on-device AI captain that governs, executes, verifies and receipts every action. Built on the MJ engine." />
-    <meta name="theme-color" content="#14100C" />
-    <title>SelfImpulse — Agentic impulse for remaining</title>
+    <meta name="description" content="SelfImpulse — Intelligence That Collaborates. An on-device AI captain that governs, executes, verifies and receipts every action. Built on the MJ engine." />
+    <meta name="theme-color" content="#0D1B2A" />
+    <title>SelfImpulse — Intelligence That Collaborates</title>
     <link rel="icon" href="/brand/si-mark.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/brand/si-mark-128.png" />
     <script>
       // Boot: surface errors early. No splash — the app paints directly.
       (function(){
         /* Resolve the theme before any stylesheet paints. vh.css carries its
-         * colour tokens only under [data-theme=dark] / [data-theme=light], so
-         * with no attribute set `color:var(--fg)` is invalid-at-computed-value
-         * (black) while the inline background below forces the dark ground —
-         * black text on a dark ground for the whole first frame. */
+         * colour tokens only under [data-theme=…], so with no attribute set
+         * `color:var(--fg)` is invalid-at-computed-value (black) while the
+         * inline background below forces the ground — black text on a dark
+         * ground for the whole first frame. The id list here mirrors THEMES in
+         * src/ui/store.ts; probe/theme.test.ts asserts the two agree, so a new
+         * finish cannot boot unstyled. */
         try {
+          var t = localStorage.getItem("vh.theme.v2");
           document.documentElement.dataset.theme =
-            localStorage.getItem("vh.theme.v2") === "light" ? "light" : "dark";
+            (t === "holst" || t === "obsidian" || t === "azure" || t === "platinum" ||
+             t === "titanium" || t === "akaroa" || t === "caesar" || t === "stratos") ? t : "holst";
         } catch (e) {
-          document.documentElement.dataset.theme = "dark";
+          document.documentElement.dataset.theme = "holst";
         }
         window.addEventListener('error', function(e){ console.error('[11h]', e.message); });
         window.addEventListener('unhandledrejection', function(e){ console.error('[11h]', e.reason); });
       })();
     </script>
     <!-- CRITICAL GROUND. This block is the only paint that happens before the
-         stylesheet loads, and its selectors (html[data-theme=light] body)
+         stylesheet loads, and its selectors (html[data-theme=...] body)
          outrank vh.css's `body{...}`, so if the two disagree the app shows the
-         wrong ground for as long as this rule wins — which, being inline, is
-         forever. They drifted once already: this said #0D1010 / #FAEBD7 while
-         the sheet said something else entirely. verify/suites/theme.test.mjs
-         now asserts they match, so they cannot separate again.
+         wrong ground for as long as this rule wins -- which, being inline, is
+         forever. They drifted once already. probe/theme.test.ts now asserts
+         every finish's ground here matches its --bg in vh.css, so they cannot
+         separate again.
 
-         SLATE REVISION — both values moved here, and they moved TOGETHER.
-         The dark ground is now a shade of black (#14100C) rather than true
-         #000000, and the light ground is stone (#E7E4DA) rather than #F7F7F5.
-         vh.css and src/ui/si/si.css were changed to the same two values in the
-         same commit, which is the only way this block may ever change: it wins
-         over both sheets for the whole first frame, so a value that disagrees
-         with them is a visible flash that never corrects itself. -->
-    
-    <style>html,body{margin:0;padding:0;background:#14100C}html[data-theme="light"],html[data-theme="light"] body{background:#E7E4DA}#root{min-height:100vh}</style>
+         Eight grounds, one per finish, from the same tokens as the stylesheet.
+         The default (holst) is the bare html,body rule; the other seven are
+         attribute-scoped. vh.css, si.css and this block moved TOGETHER, which
+         is the only way this block may ever change: it wins over both sheets
+         for the whole first frame, so a value that disagrees with them is a
+         visible flash that never corrects itself. -->
+
+    <style>html,body{margin:0;padding:0;background:#0D1B2A}html[data-theme="obsidian"],html[data-theme="obsidian"] body{background:#0A0A0A}html[data-theme="azure"],html[data-theme="azure"] body{background:#121416}html[data-theme="platinum"],html[data-theme="platinum"] body{background:#D3D0D5}html[data-theme="titanium"],html[data-theme="titanium"] body{background:#0D0D0D}html[data-theme="akaroa"],html[data-theme="akaroa"] body{background:#E8DECE}html[data-theme="caesar"],html[data-theme="caesar"] body{background:#0E0809}html[data-theme="stratos"],html[data-theme="stratos"] body{background:#0D0A12}#root{min-height:100vh}</style>
   </head>
   <body>
     <div id="root"></div>

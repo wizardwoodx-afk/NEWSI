@@ -52,21 +52,30 @@ ok("the crew never faces the user by name", !/specialist\.name|sp\.name|\.name\}
 ok("no demo/simulated wording on the surface", !consoleSrc.includes("labelled demo") && !consoleSrc.includes("demo mission") && !/simulat/i.test(consoleSrc));
 
 console.log("== the theme system ==");
-/* The intent of this check is that the light theme is a COMPLETE override, not
- * a sparse one — a missing token silently inherits the dark value, which is how
- * a light theme ends up with dark-theme ink. Naming one hex (#FAF7F1) tested
- * neither: it passed or failed on a tuning value while saying nothing about
- * completeness, and it went red when the paper was deliberately re-stepped to
- * #F7F7F5. So this now enumerates the token set the light block must own, and
- * additionally pins the boot-ground parity that index.html:29-35 depends on. */
-const lightBlock = css.match(/\[data-theme=light\]\s*\{([\s\S]*?)\n\}/m)?.[1] ?? "";
+/* The intent of this check is that every finish is a COMPLETE override, not
+ * a sparse one — a missing token silently inherits another finish's value,
+ * which is how a light finish ends up with dark-theme ink. The legacy version
+ * pinned one light block; with eight finishes the same hole exists eight
+ * times, so the token set is enumerated against every [data-theme=…] block. */
+const THEME_IDS = [...css.matchAll(/\[data-theme=([a-z0-9-]+)\]/g)]
+  .map((m) => m[1]).filter((v, i, a) => a.indexOf(v) === i);
 const LIGHT_MUST_OWN = ["bg", "bg-deep", "s1", "s2", "s3", "line", "line-2", "fg", "fg-2", "fg-3", "accent", "accent-fg", "accent-soft", "ok", "warn", "bad", "shadow-1", "shadow-4", "glass"];
-const lightMissing = LIGHT_MUST_OWN.filter((t) => !new RegExp(`--${t}:`).test(lightBlock));
-ok("the light theme ships as full token overrides", lightMissing.length === 0,
-  `light block is missing: ${lightMissing.join(", ") || "none"}`);
-ok("the theme applies before first paint", main.includes("vh.theme.v2") && main.includes('dataset.theme = "light"'));
-ok("Settings carries the switch", settingsSrc.includes('setTheme("dark")') && settingsSrc.includes('setTheme("light")'));
-ok("no blue anywhere in the design system", !/#[0-9a-f]{0,2}[0-4][0-9a-f][0-9a-f]?[89a-f][0-9a-f]\b/i.test("") && !/\b(blue|indigo|#2563eb|#3b82f6|#1e40af)\b/i.test(css));
+const incompleteFinish = THEME_IDS.filter((id) => {
+  const block = css.match(new RegExp(`\\[data-theme=${id}\\]\\s*\\{([\\s\\S]*?)\\n\\}`, "m"))?.[1] ?? "";
+  return LIGHT_MUST_OWN.some((t) => !new RegExp(`--${t}:`).test(block));
+});
+ok("every finish ships full token overrides — none inherits a missing value from another",
+  incompleteFinish.length === 0, incompleteFinish.join(", ") || "all eight complete");
+ok("the theme applies before first paint, validated against THEMES",
+  main.includes("vh.theme.v2") && main.includes("THEMES.some(")
+  && main.includes("dataset.theme"));
+ok("Settings carries the switch — one picker, driven by THEMES",
+  /THEMES\.map\(/.test(settingsSrc) && /setTheme\(id\)/.test(settingsSrc),
+  "the picker must render from the store, not from a private id list");
+ok("no default-blue as a colour value anywhere in the design system",
+  !/#2563eb|#3b82f6|#1e40af|#1d4ed8|#60a5fa|#93c5fd/i.test(css)
+  && !/:\s*(blue|indigo|rebeccapurple)\b/i.test(css),
+  "agent-tool default blues are banned as values; a palette may lean blue");
 
 console.log("== provider semantics are exact ==");
 ok("session-only never seals (persist=false returns before any vault call)", /if \(!persist\) return \{ ok: true, note: "key kept in memory for this session only" \};/.test(storeSrc));

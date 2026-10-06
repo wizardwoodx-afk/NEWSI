@@ -329,7 +329,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 
 // src/version.ts
-var PRODUCT_VERSION = "1.0.0";
+var PRODUCT_VERSION = "1.9.1";
 var ENGINE_VERSION = "19.7.15";
 var ENGINE_SHORT = "19.7";
 var ENGINE_CODENAME = "SelfImpulse";
