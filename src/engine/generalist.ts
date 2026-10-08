@@ -39,16 +39,19 @@ import { stripToolBlocks } from "./tools";
 import { attestMissionRun, recordMissionAuthority, authorityOwnerIdentity } from "./missionAuthority";
 import { mandateCanonical } from "./authorityCore";
 import { classifyFailure } from "./failures";
-import { routeDeterministic, routeWithModel } from "./router";
-import { selectCrew, moeLine, type MoEReport } from "./moe";
+import { routeDeterministic, routeWithModel } from "./router";import { selectCrew, moeLine, type MoEReport } from "./moe";
 import { moeV2Line, type CrewSelection } from "./moeV2";
 import { musterWorkspace, floorAsCrew, officeSnapshot, type ElevenWorkspace } from "./workspace";
 import { complete, redactSecrets } from "./providers";
 import { memoryBriefing } from "./memory";
+import { keywords, similarity } from "./dreaming";
+import { loadKnowledgeProposals, type KnowledgeProposal } from "../mission/knowledgeSkills";
+import { scanForInjection } from "../security/injectionGuard";
 import { applyTeamPreference, autoProposeIfReady, recordTeamRun } from "./teamEvolve";
 import { autonomyCovers } from "./exam";
 import { regulatedRoutingVerdict } from "./federation/live";
-import type { GeneralistDeps, GeneralistResponse, MemberRunView, ProviderConfig, RouteDecision, SynthesisRecord } from "./types";
+import { recordGateApproval, sealGateApprovalReceipt } from "../security/approvalEvidence";
+import type { GateAsk, GeneralistDeps, GeneralistResponse, MemberRunView, ProviderConfig, RouteDecision, SynthesisRecord } from "./types";
 
 async function sha256Hex(text: string): Promise<string> {
   const buf = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -79,6 +82,108 @@ async function mapBounded<T, R>(items: T[], limit: number, fn: (item: T, index: 
   });
   await Promise.all(lanes);
   return out;
+}
+
+/* ── DOCS → AI: approved document knowledge reaching the chat engine ──────────
+ *
+ * WHY THIS BLOCK EXISTS, stated plainly because its absence was the defect.
+ * The Docs door is real: `fileIngest.ingestFile` sniffs, contains, parses to
+ * markdown, and `proposeKnowledgeSkill` distils it into a proposal a human
+ * approves. What was NOT real was the last step. Approved knowledge reached a
+ * model only through `approvedSkillDefs` → `selfEvolveRuntime.briefingForMission`
+ * → `teamExecutor`, which writes it as a FILE into a git worktree. Nothing under
+ * `src/engine/` read it. So the chat path — the one behind the Composer — briefed
+ * the model on `memoryBriefing` and bundled playbooks ONLY, and attaching a PDF
+ * to a chat could never, in principle, change the answer, while the UI said
+ * "N proposed — review in Docs" as though it had.
+ *
+ * This is that missing wire. It reads the persisted proposals through the
+ * accessor the store already uses (`loadKnowledgeProposals`) and selects
+ * `status === "approved"` — the only status allowed here, because guardline G3
+ * says nothing installs without its human decision, and a `proposed` row has not
+ * had one. `approved` rows are the same ones `decideKnowledgeProposal` mirrors
+ * into `vh.skills.v1`; this reads the forge's own record rather than the mirror,
+ * because the mirror is a 160-char summary plus a truncated procedure shaped for
+ * a node library, and the forge holds the fuller text.
+ *
+ * THE BUDGETS, and why they are small. A system briefing is paid for on every
+ * provider call of every routed member, so this is capped three ways:
+ *   • KNOWLEDGE_ENTRY_CAP  — one document's digest, so a 300-page book cannot
+ *     take the briefing hostage. Beyond it the guidance is truncated, not kept.
+ *   • KNOWLEDGE_MAX_ENTRIES — how many documents ride one answer at all.
+ *   • KNOWLEDGE_TOTAL_CAP   — the hard ceiling on characters ADDED to the
+ *     briefing, counted including the header and the per-entry lines. The loop
+ *     stops admitting entries the moment the next one would cross it, and says
+ *     how many it turned away rather than dropping them quietly.
+ * Selection is by relevance to the current ask, using the same keyword/similarity
+ * pair `dreaming.recall` already uses — no new scoring model invented here. When
+ * nothing in the store matches the ask, the ordering falls back to recency
+ * rather than pretending an arbitrary entry was chosen for being relevant.
+ *
+ * THE GUARD TRAVELS WITH IT. This text originated in a dropped file. The door
+ * scanned it on the way in, and `sanitizeText` strips the invisible channel
+ * again here, but the point of injection is the highest-value place an old or
+ * hand-edited row could bite, so each entry is re-scanned with the SAME guard
+ * and the SAME threshold the door uses (`critical` = withheld, not downgraded).
+ * Withheld entries are counted out loud in the briefing, never silently lost.
+ */
+const KNOWLEDGE_ENTRY_CAP = 640;
+const KNOWLEDGE_MAX_ENTRIES = 5;
+const KNOWLEDGE_TOTAL_CAP = 3200;
+
+/** When a proposal earned its human decision; falls back to distillation time. */
+function knowledgeDecidedAt(p: KnowledgeProposal): number {
+  const t = Date.parse(p.decidedAt ?? p.provenance?.distilledAt ?? "");
+  return Number.isFinite(t) ? t : 0;
+}
+
+export function approvedKnowledgeBriefing(query: string): string[] {
+  const approved = loadKnowledgeProposals().filter((p) => p.status === "approved");
+  if (approved.length === 0) return [];
+
+  const q = new Set(keywords(query));
+  const scored = approved.map((p) => ({
+    p,
+    at: knowledgeDecidedAt(p),
+    relevance: q.size === 0 ? 0 : similarity(new Set(keywords(`${p.title} ${p.summary} ${p.procedure}`)), q),
+  }));
+  /* Relevance orders the list only when something actually matches the ask. A
+     query that matches nothing is not evidence that a random entry is relevant,
+     so it degrades to recency — the most recent approved knowledge — instead. */
+  const anyMatch = scored.some((s) => s.relevance > 0);
+  scored.sort((a, b) => (anyMatch ? b.relevance - a.relevance : 0) || b.at - a.at);
+
+  const head = "[knowledge] Approved document knowledge the owner brought into this workspace. " +
+    "This is human-approved guidance distilled from files in Docs — apply it where it names something. " +
+    "It is NOT a measured result and NOT a preference this user expressed through accept/reject:";
+
+  const lines: string[] = [];
+  let used = head.length;
+  let withheld = 0;
+  let pastEntryCap = 0;
+  let pastCharCap = 0;
+  for (const s of scored) {
+    if (lines.length >= KNOWLEDGE_MAX_ENTRIES) { pastEntryCap += 1; continue; }
+    const body = sanitizeText(s.p.procedure, KNOWLEDGE_ENTRY_CAP);
+    if (!body.trim()) { withheld += 1; continue; }
+    if (scanForInjection(body).tier === "critical") { withheld += 1; continue; }
+    const source = s.p.provenance?.sourceName ?? "a document in Docs";
+    const day = (s.p.decidedAt ?? s.p.provenance?.distilledAt ?? "").slice(0, 10);
+    const line = `• ${s.p.title} (from ${source}${day ? `, approved ${day}` : ""}): ${body}`;
+    /* +1 per line for the newline the join will add, so `used` is the size of
+     * the string that actually goes out and the cap is the cap. */
+    if (used + line.length + 1 > KNOWLEDGE_TOTAL_CAP) { pastCharCap += 1; continue; }
+    used += line.length + 1;
+    lines.push(line);
+  }
+  if (lines.length === 0) return [];
+  const turned = [
+    withheld > 0 ? `${withheld} withheld by the content gate` : null,
+    pastEntryCap > 0 ? `${pastEntryCap} past the ${KNOWLEDGE_MAX_ENTRIES}-document limit for one answer` : null,
+    pastCharCap > 0 ? `${pastCharCap} past the ${Math.round(KNOWLEDGE_TOTAL_CAP / 1000)}k-char briefing budget` : null,
+  ].filter(Boolean).join("; ");
+  const tail = `(${lines.length} approved document(s) in this briefing${turned ? ` — not sent: ${turned}` : ""})`;
+  return [`${head}\n${lines.join("\n")}\n${tail}`];
 }
 
 /** Canonical serialization of the response — what the provenance digest commits to. */
@@ -338,12 +443,23 @@ export async function askSelfImpulse19(args: AskArgs, deps: GeneralistDeps = {})
         note: `risk tier "${worstTier}" requires the human gate; wire one or re-route`,
       });
     }
-    const decision = await deps.gate({
+    const ask: GateAsk = {
       action: `Captain routed "${text.slice(0, 120)}" to ${specialists.map((s) => s.name).join(", ")}`,
       riskTier: worstTier,
       specialistIds: specialists.map((s) => s.id),
       summary: routed.selected.flatMap((c) => c.reasons).slice(0, 4).join("; "),
-    });
+    };
+    const decision = await deps.gate(ask);
+    /* CONTENT-BOUND APPROVAL EVIDENCE — hash EXACTLY what the human was shown and
+       seal it under the run's issuer, so a later dispute proves what was approved,
+       not merely that something was (the open-multi-agent durable-approval lift).
+       This is EVIDENCE, not AUTHORITY: `decision` is unchanged, the native dialog
+       stays the only satisfier, and a runtime with no `onGateApproval` hook behaves
+       exactly as before. */
+    const approvalReceipt = await sealGateApprovalReceipt(
+      recordGateApproval(ask, decision, { decidedBy: "human-gate" }),
+    );
+    deps.onGateApproval?.(approvalReceipt);
     if (!decision.approved) {
       return finish({
         reply: `You (or the standing policy) declined this at the gate: ${decision.reason}`,
@@ -362,22 +478,49 @@ export async function askSelfImpulse19(args: AskArgs, deps: GeneralistDeps = {})
       ? specialists.map((s) => `${s.name} (${s.id}): ${s.capabilities[0]}`).join("\n")
       : `no specialist cleared the routing bar — the ${TITLES.captain} would handle this directly once a provider is configured`;
     return finish({
+      /* The routing record used to be concatenated into this sentence, so the one
+         bubble a person reads for an answer opened with "Routing: multi via
+         deterministic (3 of 1500 specialists considered). Agentic MoE v2:
+         tier=complex, crew 3/3 from a 674-specialist pool across 8 domain(s) ·
+         9 bench reserve(s) staged for failover · 671 pruned with reasons." —
+         internal vocabulary at full volume. The counts are kept, in words; the
+         machine record stays on the Work door, which renders it as a step you can
+         open instead of a paragraph you have to decode. */
       reply:
         `No provider key is configured, so nothing was executed. Here is the plan I would run:\n\n${plan}\n\n` +
-        `Routing: ${routed.strategy} via ${routed.routedBy} (${routed.selected.length} of ${routed.considered} specialists considered). ` +
-        (moeV2 ? moeV2Line(moeV2) : moeReport ? moeLine(moeReport) : "") +
-        (officeSnap ? ` ${officeSnap.line}` : "") +
-        (routed.fallbackReason ? ` Note: ${routed.fallbackReason}.` : ""),
+        `${routed.selected.length} of ${routed.considered} specialists were weighed for this and ${routed.selected.length} were chosen.` +
+        /* The workspace and who chose the crew stay IN the answer, because that is a
+           transparency property and not decoration — an operator has to be able to
+           tell a self-assembled crew from one they picked. What left is the machine
+           register it used to be stated in ("floor 3/25 sub-agents of 1500 · 60
+           domain specialists (Adept+HR) across 30 desks"). */
+        (officeSnap ? ` The Captain assembled this crew itself: 11WORKSPACE opened ${officeSnap.desks.length} desk${officeSnap.desks.length === 1 ? "" : "s"} and put ${officeSnap.floor.length} on the floor — you did not pick the team.` : "") +
+        (routed.fallbackReason ? ` One note: ${routed.fallbackReason}.` : ""),
       routed,
       executed: false,
       outcome: "planned",
       specialistIds: specialists.map((s) => s.id),
-      note: "provider not configured — plan only, nothing executed",
+      /* The machine record goes here instead: `note` is rendered as a hint line on
+         the Work door's answer step, which is where a person goes to inspect a run,
+         not the bubble they read for an answer. */
+      note: `provider not configured — plan only, nothing executed. ` +
+        `Routing: ${routed.strategy} via ${routed.routedBy}. ` +
+        (moeV2 ? moeV2Line(moeV2) : moeReport ? moeLine(moeReport) : "") +
+        (officeSnap ? ` ${officeSnap.line}` : ""),
     });
   }
 
   const gateLine = "You operate behind a human gate; risky actions are paused for approval. Never claim work you did not do.";
-  const briefing = memoryBriefing(userId);
+  /* THE one briefing assembly point for every answering path below — the
+     multi-member loop (:systemBase per member), the single member, and the
+     no-specialist Captain call all spread this array into the system prompt.
+     Attaching at line 380 rather than at each of the three is deliberate: three
+     call sites is three chances to miss one, and missing one is what made
+     documents unable to influence an answer. `askSelfImpulse19` itself (the
+     entry at :116) builds no other prompt that reaches a model with content —
+     the only earlier provider call is `routeWithModel`, which routes and never
+     answers — so this is the whole seam. */
+  const briefing = [...memoryBriefing(userId), ...approvedKnowledgeBriefing(text)];
 
   /* The 19.3.0 member execution seam: a workspace-wired member runs the real
      act/observe loop (own provider calls, gated tool executions, receipts);

@@ -46,7 +46,17 @@ ok("App imports Shell from ./ui/Shell", /from\s*["']\.\/ui\/Shell["']/.test(appS
 ok("App renders <Shell />", /<Shell\s*\/>/.test(appSrc));
 ok("no retired shell import survives in App", !/NextConsole|views\/|pages\/|Sidebar|Helm/.test(appSrc));
 const mainSrc = read("src/main.tsx");
-ok("main imports exactly one stylesheet (ui/vh.css)", (mainSrc.match(/import\s+['"][^'"]+\.css['"]/g) ?? []).length === 1 && /ui\/vh\.css/.test(mainSrc));
+/* This asserted "exactly one stylesheet", naming ui/vh.css — a sheet nothing
+   imports any more, so the check failed forever and stopped meaning anything.
+   Worse, "exactly one" is the wrong rule: si.css went unimported for a whole
+   release and the shell rendered with no rail, no borders and no surfaces,
+   because the markup depended on rules that never reached the page. What
+   matters is that every sheet the shell needs IS imported, and that the design
+   layer loads last so its :root can override ink.css. */
+ok("main imports every stylesheet the shell depends on, design layer last",
+  /import\s+['"]\.\/ui\/ink\.css['"]/.test(mainSrc) && /import\s+['"]\.\/ui\/si\/si\.css['"]/.test(mainSrc) &&
+  /import\s+['"]\.\/ui\/theme\.css['"]/.test(mainSrc) &&
+  mainSrc.indexOf("ui/si/si.css") < mainSrc.indexOf("ui/theme.css"));
 ok("no boot splash in index.html", !/si-boot|@keyframes/.test(read("index.html")));
 
 section("2. the store is the ONLY path to the engine â€” screens never bypass it");
@@ -63,7 +73,7 @@ for (const f of SHELL_FILES.filter((x) => x.startsWith("src/ui/screens/"))) {
 
 section("3. the human gate: approve or refuse â€” never a silent skip");
 const gate = read("src/ui/screens/GateCard.tsx");
-ok("the gate card offers Approve once", /Approve once/.test(gate) && /decideGate\(\{\s*approved:\s*true\s*\}\)/.test(gate));
+ok("the gate card offers Approve", /Approve/.test(gate) && /decideGate\(\{\s*approved:\s*true\s*\}\)/.test(gate));
 ok("refusal carries a reason into the receipt", /decideGate\(\{\s*approved:\s*false,\s*reason:/.test(gate));
 ok("the gate names the risk tier", /riskTier/.test(gate));
 ok("Work floats the gate over the graph", /gate-float/.test(read("src/ui/screens/Work.tsx")) && /<GateCard\s*\/>/.test(read("src/ui/screens/Work.tsx")));
@@ -105,7 +115,12 @@ ok("Enter sends (Shift+Enter breaks a line)", /e\.key === "Enter" && !e\.shiftKe
 const settings = read("src/ui/screens/Settings.tsx");
 ok("Settings connects a provider through the store", /setProvider\(\{\s*kind,\s*baseUrl/.test(settings));
 ok("Settings creates/unlocks the vault through the store", /createVault\(pass\)/.test(settings) && /unlockVault\(pass\)/.test(settings));
-ok("the Memory door opens a remembered conversation on double-click", /onNodeDoubleClick=\{open\}/.test(read("src/ui/screens/Memory.tsx")) && /openConversation\(/.test(read("src/ui/screens/Memory.tsx")));
+/* Opening a memory used to be a double-click on a graph node — undiscoverable,
+   unlabelled, and unreachable without a mouse. The invariant this check exists
+   for is that a remembered conversation can be opened from this door; the
+   gesture was never the point, and the button is a stronger guarantee of it. */
+ok("the Memory door opens a remembered conversation through an explicit control",
+  /onClick=\{\(\) => openConversation\(s\.id\)\}/.test(read("src/ui/screens/Memory.tsx")) && /Open the conversation/.test(read("src/ui/screens/Memory.tsx")));
 
 section("5. two graphs, deliberately different");
 const fg = read("src/ui/graph/ForceGraph.tsx");

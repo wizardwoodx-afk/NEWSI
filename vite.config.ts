@@ -88,6 +88,11 @@ export default defineConfig({
       { find: /^node:stream$/, replacement: browserBuiltin("stream") },
       { find: /^node:util$/, replacement: browserBuiltin("util") },
       { find: /^node:process$/, replacement: browserBuiltin("process") },
+      // node:dgram — UDP peer discovery for the A2A plane. Desktop only: a WebView
+      // has no socket, so the stub throws and names the missing capability rather
+      // than letting the bundler externalise the import and ship a build where
+      // discovery is silently dead.
+      { find: /^node:dgram$/, replacement: browserBuiltin("dgram") },
     ],
   },
   optimizeDeps: {
@@ -95,7 +100,7 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    strictPort: false,
+    strictPort: true,
     host: host || "0.0.0.0",
     allowedHosts: true,
     // 19.7.0 — vite's own CORS middleware (which 403s opaque origins) is

@@ -80,7 +80,14 @@ export type RefusalCode =
   // §13 — untrusted text that appears to be aimed at the agent rather than written for a
   // person. Distinct from every other code here, which are all about a file being
   // unreadable: this one is about a file being readable and hostile.
-  | "injection-suspected";
+  | "injection-suspected"
+  // An entry whose unix type is a SYMLINK: its bytes are a path, not a document. Refused
+  // by name, because a link is a claim about the filesystem and this door never consults one.
+  | "symlink-entry"
+  // Two central-directory records claiming the same name. Ambiguous on every reader —
+  // including jszip's, which silently picks one — so the container cannot be read with a
+  // known-good answer and is refused rather than resolved by guesswork.
+  | "duplicate-entry";
 
 export interface Refusal { code: RefusalCode; words: string }
 
@@ -95,6 +102,8 @@ export interface EntryInfo {
   method: number;
   encrypted: boolean;
   directory: boolean;
+  /** Unix mode S_IFLNK — the entry's CONTENT is a path, not a document. */
+  symlink: boolean;
 }
 
 export interface ScanReport {
@@ -117,6 +126,10 @@ const METHOD_ZSTD = 20;
 const METHOD_AES = 99;
 
 const FLAG_ENCRYPTED = 0x0001;
+
+/** Unix file-type bits, from the high 16 bits of an entry's external attributes. */
+const UNIX_KIND_DIRECTORY = 0x4000;
+const UNIX_KIND_SYMLINK = 0xa000;
 
 /** Magic-byte sniff. Extension is a hint, magic is the truth (see fileIngest).
  *  The signatures below are read little-endian, which is how they are stored:
@@ -191,10 +204,24 @@ function readCentralDirectory(bytes: Uint8Array): { entries: EntryInfo[]; zip64:
     const extAttrs = view.getUint32(p + 38, true);
     if (p + 46 + nameLen > bytes.length) return { entries, zip64, error: `entry ${n + 1} declares a name beyond the end of the file` };
     const name = new TextDecoder().decode(bytes.subarray(p + 46, p + 46 + nameLen));
+    /* The unix mode lives in the HIGH 16 bits of the external attributes, and only
+       its top FOUR bits say what KIND of thing the entry is. Reading the whole
+       word and comparing it to 0x4000 (as this did) only ever matched a
+       permission-less directory: a real producer writes 0o40755, which arrives as
+       0x41ed and compared unequal. That misfiled every real directory as a file.
+       Masking to the kind bits is what the field means. */
+    const unixMode = (extAttrs >>> 16) & 0xffff;
+    const unixKind = unixMode & 0xf000;
     entries.push({
       name, compressedSize, expandedSize, method,
       encrypted: (flags & FLAG_ENCRYPTED) !== 0,
-      directory: name.endsWith("/") || (extAttrs >>> 16) === 0x4000,
+      directory: name.endsWith("/") || unixKind === UNIX_KIND_DIRECTORY,
+      /* S_IFLNK. The bytes stored under a symlink entry are a PATH, not a
+         document — so a member called `notes.md` whose content is
+         `../../.ssh/id_rsa` would otherwise be read as prose and quoted into a
+         proposal as if the owner had written it. This door never writes to disk,
+         which is why the entry is harmless to inflate and unacceptable to KEEP. */
+      symlink: unixKind === UNIX_KIND_SYMLINK,
     });
     p += 46 + nameLen + extraLen + commentLen;
   }
@@ -230,8 +257,20 @@ export function scanContainer(bytes: Uint8Array, limits: ArchiveLimits = ARCHIVE
   };
   const fail = (code: RefusalCode, words: string) => ({ ok: false as const, refusal: { code, words }, report });
 
+  if (cd.entries.length > limits.maxEntries) {
+    return fail("too-many-entries", `${cd.entries.length} entries in this container, above the cap of ${limits.maxEntries}. Nothing was opened.`);
+  }
   if (files.length > limits.maxEntries) {
     return fail("too-many-entries", `${files.length} files in this container, above the cap of ${limits.maxEntries}. Nothing was opened.`);
+  }
+  /* Two records claiming one name is a container no reader can answer for. jszip
+     silently keeps one of them, so the bytes read would not be the bytes counted by
+     every cap above. Refused by name — the two that collide — because guessing which
+     record a producer meant is the one thing this door must not do. */
+  const seenNames = new Set<string>();
+  for (const e of cd.entries) {
+    if (!seenNames.has(e.name)) { seenNames.add(e.name); continue; }
+    return fail("duplicate-entry", `the archive declares "${e.name}" more than once. A container with two records for one name has no single honest reading — the bytes read would not be the bytes counted — so it is refused, in words, rather than resolved by picking one.`);
   }
   const encrypted = files.find((e) => e.encrypted);
   if (encrypted) {
@@ -246,6 +285,9 @@ export function scanContainer(bytes: Uint8Array, limits: ArchiveLimits = ARCHIVE
     }
     const bad = unsafeEntryName(e.name);
     if (bad) return fail("unsafe-entry-name", `refused by name, before any inflation: the archive carries ${bad}. SelfImpulse does not normalise a name it could not approve.`);
+    if (e.symlink) {
+      return fail("symlink-entry", `"${e.name}" is a symlink, so what it stores is a path to another file rather than the document. This door never resolves a link — a claim about the filesystem is not a document, and a member whose bytes are someone else's path must not be quoted into a proposal. Refused, in words.`);
+    }
     if (limits.maxDepth < 2 && looksLikeArchiveName(e.name)) {
       return fail("nested-archive", `"${e.name}" is itself an archive inside an archive. This door opens ONE container per dropped file (depth cap ${limits.maxDepth}) — a nested one is a DoS amplifier, not a document.`);
     }
@@ -277,7 +319,19 @@ export async function extractVetted(
   deadlineAt = Number.POSITIVE_INFINITY,
   now: () => number = Date.now,
 ): Promise<{ ok: true; files: ExtractedFile[] } | { ok: false; refusal: Refusal }> {
-  const approved = report.entries.filter((e) => !e.directory && !unsafeEntryName(e.name));
+  const members = report.entries.filter((e) => !e.directory);
+  const approved = members.filter((e) => unsafeEntryName(e.name) === null && !e.symlink);
+  /* An archive whose every member was declined is not an empty archive — it is a
+     refused one, and the difference is the whole difference between a door that
+     says "this file contained nothing" and a door that says "this file contained
+     something I will not open". Returning `{ok, files: []}` for the second is an
+     empty success of exactly the kind this module refuses to produce, so the
+     refusal is returned here where the reason is still known. */
+  if (members.length > 0 && approved.length === 0) {
+    const first = members[0];
+    return refuse(first.symlink ? "symlink-entry" : "unsafe-entry-name",
+      `none of this archive's ${members.length} member(s) is something this door will read — the first, "${first.name}", is ${unsafeEntryName(first.name) ?? "a symlink"}. Nothing was read from it.`);
+  }
   if (approved.length === 0) return { ok: true, files: [] };
   let zip: JSZip;
   try {

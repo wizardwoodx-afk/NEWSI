@@ -86,8 +86,15 @@ ok("hygiene 7 — expression sandbox caps length and rejects statement character
 const tauriConf = JSON.parse(read("src-tauri/tauri.conf.json"));
 const csp = String(tauriConf?.app?.security?.csp ?? "");
 ok("hygiene 8 — desktop CSP is set", csp.length > 0 && csp.includes("default-src 'self'"));
+/* Matched on the QUOTED token, not the bare word. `wasm-unsafe-eval` is a
+   distinct CSP3 source that permits WebAssembly compilation and nothing else —
+   the OCR worker needs it — and a substring test for "unsafe-eval" reports it as
+   the arbitrary `eval` escape it is not. The wide-open source is the thing being
+   policed here, so the pattern has to name it exactly. */
 ok("hygiene 9 — script-src allows only 'self' (no unsafe-inline / unsafe-eval)",
-  csp.includes("script-src 'self'") && !csp.includes("unsafe-eval") && !/script-src[^;]*unsafe-inline/.test(csp));
+  csp.includes("script-src 'self'") && !/'unsafe-eval'/.test(csp) && !/script-src[^;]*unsafe-inline/.test(csp));
+ok("hygiene 9b — the narrow wasm source is present because the OCR worker needs it",
+  csp.includes("'wasm-unsafe-eval'"));
 ok("hygiene 10 — CSP connect-src keeps the local services (IPC + local LLM/SearXNG)",
   csp.includes("ipc:") && csp.includes("http://ipc.localhost") && csp.includes("http://127.0.0.1:*"));
 ok("hygiene 11 — CSP connect-src allows every web-evidence provider the Researcher fetches",

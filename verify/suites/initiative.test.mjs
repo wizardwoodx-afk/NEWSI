@@ -9,6 +9,32 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
+// src/app/id.ts
+function cryptoToken() {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  if (c && typeof c.getRandomValues === "function") {
+    const bytes = new Uint8Array(16);
+    c.getRandomValues(bytes);
+    return Array.from(bytes, (b2) => b2.toString(16).padStart(2, "0")).join("");
+  }
+  degradedSeq += 1;
+  return `nocrypto-fallback-${degradedSeq.toString(36)}`;
+}
+function uid(prefix) {
+  return `${prefix}-${cryptoToken()}`;
+}
+function nowIso() {
+  return (/* @__PURE__ */ new Date()).toISOString();
+}
+var degradedSeq;
+var init_id = __esm({
+  "src/app/id.ts"() {
+    "use strict";
+    degradedSeq = 0;
+  }
+});
+
 // src/security/ipClassify.ts
 function expandIpv6(input2) {
   let s = input2;
@@ -349,6 +375,571 @@ var init_guardrail = __esm({
   }
 });
 
+// src/app/desktop.ts
+function detectHost() {
+  if (typeof window === "undefined") return "web";
+  const w = window;
+  if (w.__TAURI_INTERNALS__) return "tauri";
+  if (w.__TAURI__) return "tauri";
+  if (typeof navigator !== "undefined" && /tauri/i.test(navigator.userAgent)) return "tauri";
+  return "web";
+}
+var init_desktop = __esm({
+  "src/app/desktop.ts"() {
+    "use strict";
+  }
+});
+
+// src/security/egressNet.ts
+async function resolveEgress(raw, opts = {}) {
+  const allowLoopback = opts.allowLoopback ?? false;
+  const resolve = opts.resolve ?? systemResolver;
+  const base = checkEgressUrl(raw);
+  if (!base.ok) return { ok: false, reason: base.reason };
+  const host = new URL(raw).hostname.replace(/^\[|\]$/g, "");
+  const literal2 = normalizeHost(host);
+  if (literal2.kind !== "unknown") {
+    const cls = classifyIp(literal2, allowLoopback);
+    return cls.ok ? { ok: true, reason: "", pinnedIp: literal2.ip, scope: cls.scope } : { ok: false, reason: `${literal2.ip} \u2014 ${cls.reason}`, scope: cls.scope };
+  }
+  if (literal2.ip === "" && isObfuscatedIpv4Literal(host.toLowerCase())) {
+    return { ok: false, reason: `obfuscated IP literal "${host}" refused \u2014 write the address in dotted-quad form`, scope: "unknown" };
+  }
+  let answers;
+  try {
+    answers = await resolve(host);
+  } catch (e) {
+    return { ok: false, reason: `DNS resolution failed for "${host}": ${e instanceof Error ? e.message : String(e)}` };
+  }
+  if (answers.length === 0) return { ok: false, reason: `"${host}" resolved to no addresses \u2014 refused rather than guessing`, scope: "unknown" };
+  const seen = [];
+  let pinned = null;
+  for (const a of answers) {
+    const n = normalizeHost(a);
+    const cls = classifyIp(n, allowLoopback);
+    if (!cls.ok) {
+      return { ok: false, reason: `"${host}" resolves to ${n.ip || a} \u2014 ${cls.reason}`, scope: cls.scope };
+    }
+    seen.push(n.ip || a);
+    if (!pinned) pinned = { ip: n.ip || a, scope: cls.scope };
+  }
+  return { ok: true, reason: "", pinnedIp: pinned.ip, scope: pinned.scope, hops: [{ url: raw, ip: pinned.ip, status: 0 }] };
+}
+async function safeEgressFetch(raw, init = {}) {
+  const { fetchImpl, allowLoopback, resolve, maxRedirects, ...rest } = init;
+  const doFetch = fetchImpl ?? globalThis.fetch?.bind(globalThis);
+  if (!doFetch) throw new Error("no fetch available in this runtime \u2014 nothing was executed");
+  const hops = [];
+  let current = raw;
+  for (let hop = 0; hop <= (maxRedirects ?? DEFAULT_MAX_REDIRECTS); hop += 1) {
+    const decision = await resolveEgress(current, { allowLoopback, resolve });
+    if (!decision.ok) {
+      throw new Error(`egress refused at hop ${hop}: ${decision.reason} \u2014 nothing further was sent.`);
+    }
+    const res = await doFetch(current, { ...rest, redirect: "manual" });
+    hops.push({ url: current, ip: decision.pinnedIp ?? "", status: res.status });
+    const location = res.headers.get("location");
+    if (!location || res.status < 300 || res.status > 399) {
+      Object.defineProperty(res, "egressHops", { value: hops, enumerable: false });
+      return res;
+    }
+    let next;
+    try {
+      next = new URL(location, current).toString();
+    } catch {
+      throw new Error(`egress refused: hop ${hop} returned an unparseable Location \u2014 nothing further was sent.`);
+    }
+    if (hop === (maxRedirects ?? DEFAULT_MAX_REDIRECTS)) {
+      throw new Error(`egress refused: more than ${maxRedirects ?? DEFAULT_MAX_REDIRECTS} redirects \u2014 possible redirect loop.`);
+    }
+    current = next;
+  }
+  throw new Error("egress refused: redirect budget exhausted.");
+}
+var systemResolver, DEFAULT_MAX_REDIRECTS;
+var init_egressNet = __esm({
+  "src/security/egressNet.ts"() {
+    "use strict";
+    init_guardrail();
+    init_ipClassify();
+    systemResolver = async (hostname3) => {
+      const dns = await import("node:dns/promises").catch(() => null);
+      if (!dns) return [];
+      const out = [];
+      try {
+        for (const r2 of await dns.lookup(hostname3, { all: true, verbatim: true })) out.push(r2.address);
+      } catch {
+      }
+      return out;
+    };
+    DEFAULT_MAX_REDIRECTS = 5;
+  }
+});
+
+// src/version.ts
+var ENGINE_VERSION, ENGINE_SHORT, ENGINE_CODENAME, PRODUCT_TITLE;
+var init_version = __esm({
+  "src/version.ts"() {
+    "use strict";
+    ENGINE_VERSION = "19.7.16";
+    ENGINE_SHORT = "19.7";
+    ENGINE_CODENAME = "SelfImpulse";
+    PRODUCT_TITLE = `SelfImpulse (engine MJ ${ENGINE_SHORT} "${ENGINE_CODENAME}")`;
+  }
+});
+
+// src/domain/types.ts
+var GRAPH_SCHEMA_VERSION;
+var init_types = __esm({
+  "src/domain/types.ts"() {
+    "use strict";
+    GRAPH_SCHEMA_VERSION = 2;
+  }
+});
+
+// src/ipc/localDb.ts
+function empty() {
+  return {
+    workflows: [],
+    executions: [],
+    events: [],
+    memories: [],
+    skills: [],
+    feedback: [],
+    evolution: [],
+    mcp: seedMcp(),
+    approvals: [],
+    dlq: [],
+    secrets: {},
+    runQueue: []
+  };
+}
+function seedMcp() {
+  const now = nowIso();
+  const rows = [
+    ["mcp.filesystem", "Filesystem", "npx", ["-y", "tsx", "vendor/mcp-servers-reference/src/filesystem/index.ts"]],
+    ["mcp.git", "Git", "python", ["-m", "mcp_server_git"]],
+    ["mcp.memory", "Memory", "npx", ["-y", "tsx", "vendor/mcp-servers-reference/src/memory/index.ts"]],
+    ["mcp.sequential-thinking", "Sequential Thinking", "npx", ["-y", "tsx", "vendor/mcp-servers-reference/src/sequentialthinking/index.ts"]],
+    ["mcp.time", "Time", "python", ["-m", "mcp_server_time"]],
+    ["mcp.github", "GitHub", "github-mcp-server", ["stdio"]],
+    ["mcp.control", "Control MCP", "selfimpulse-control-mcp", ["stdio"]]
+  ];
+  return rows.map(([id, name, command, args]) => ({
+    id,
+    name,
+    transport: "stdio",
+    config: { transport: "stdio", command, args, enabled: id === "mcp.control", pinned: true },
+    state: "AVAILABLE",
+    createdAt: now,
+    updatedAt: now
+  }));
+}
+function load() {
+  try {
+    const raw = localStorage.getItem(KEY3);
+    if (!raw) return empty();
+    return { ...empty(), ...JSON.parse(raw) };
+  } catch {
+    return empty();
+  }
+}
+function save(db) {
+  localStorage.setItem(KEY3, JSON.stringify(db));
+}
+var KEY3, localDb;
+var init_localDb = __esm({
+  "src/ipc/localDb.ts"() {
+    "use strict";
+    init_id();
+    init_types();
+    KEY3 = "selfimpulse.v3.db";
+    localDb = {
+      load,
+      save,
+      reset() {
+        localStorage.removeItem(KEY3);
+      },
+      workflowList() {
+        return load().workflows.slice().sort((a, b2) => b2.updatedAt.localeCompare(a.updatedAt));
+      },
+      workflowGet(id) {
+        const w = load().workflows.find((x) => x.id === id);
+        if (!w) throw new Error(`workflow not found: ${id}`);
+        return w;
+      },
+      workflowCreate(name, description) {
+        const db = load();
+        const id = uid("wf");
+        const now = nowIso();
+        const graph = {
+          schemaVersion: GRAPH_SCHEMA_VERSION,
+          id,
+          name,
+          nodes: [],
+          connections: [],
+          viewport: { x: 0, y: 0, zoom: 1 },
+          groups: [],
+          notes: []
+        };
+        db.workflows.unshift({ id, name, description, graph, createdAt: now, updatedAt: now, tags: [] });
+        save(db);
+        return { id };
+      },
+      workflowSave(id, name, description, graph) {
+        const db = load();
+        const w = db.workflows.find((x) => x.id === id);
+        if (!w) throw new Error("workflow not found");
+        w.name = name;
+        w.description = description;
+        w.graph = graph;
+        w.updatedAt = nowIso();
+        save(db);
+      },
+      workflowDelete(id) {
+        const db = load();
+        db.workflows = db.workflows.filter((w) => w.id !== id);
+        save(db);
+      },
+      executionCreate(workflowId, workflowVersion) {
+        const db = load();
+        const id = uid("exec");
+        db.executions.unshift({
+          id,
+          workflowId,
+          workflowVersion,
+          status: "RUNNING",
+          startedAt: nowIso(),
+          endedAt: null,
+          error: null,
+          stats: { nodesRun: 0, nodesFailed: 0, retries: 0, inputTokens: 0, outputTokens: 0, durationMs: 0, costUsd: 0, evaluationScores: [] }
+        });
+        save(db);
+        return { id };
+      },
+      executionFinish(id, status, error63, stats) {
+        const db = load();
+        const e = db.executions.find((x) => x.id === id);
+        if (!e) return;
+        e.status = status;
+        e.error = error63;
+        e.stats = stats;
+        e.endedAt = nowIso();
+        save(db);
+      },
+      executionList() {
+        return load().executions;
+      },
+      eventEmit(executionId, kind, level, nodeId, data) {
+        const db = load();
+        const rec = {
+          seq: db.events.length + 1,
+          ts: nowIso(),
+          kind,
+          level,
+          nodeId,
+          executionId,
+          data
+        };
+        db.events.push(rec);
+        if (db.events.length > 4e3) db.events = db.events.slice(-3e3);
+        save(db);
+        window.dispatchEvent(new CustomEvent("vh://event", { detail: rec }));
+        return rec;
+      },
+      executionEvents(executionId) {
+        return load().events.filter((e) => e.executionId === executionId);
+      },
+      importedGenomesSave(rows) {
+        const db = load();
+        db.importedGenomes = rows;
+        save(db);
+      },
+      importedGenomesList() {
+        return load().importedGenomes ?? [];
+      },
+      secretSet(ref, value) {
+        const db = load();
+        db.secrets[ref] = value;
+        save(db);
+      },
+      secretDelete(ref) {
+        const db = load();
+        delete db.secrets[ref];
+        save(db);
+      },
+      secretExists(refs) {
+        const db = load();
+        return Object.fromEntries(
+          refs.map((r2) => [
+            r2,
+            db.secrets[r2] ? { exists: true, location: "browser-localStorage", survivesRestart: true, warning: "Stored in browser localStorage, not an OS keychain. Readable by anything in this origin." } : { exists: false, location: "absent", survivesRestart: false }
+          ])
+        );
+      },
+      secretGet(ref) {
+        return load().secrets[ref] ?? null;
+      },
+      mcpList() {
+        return load().mcp;
+      },
+      mcpSave(cfg) {
+        const db = load();
+        const id = cfg.id || uid("mcp");
+        const now = nowIso();
+        const existing = db.mcp.find((m) => m.id === id);
+        if (existing) {
+          Object.assign(existing, cfg, { updatedAt: now });
+        } else {
+          db.mcp.push({
+            id,
+            name: cfg.name,
+            transport: cfg.transport ?? "stdio",
+            config: cfg.config ?? { transport: "stdio", enabled: true },
+            state: "AVAILABLE",
+            createdAt: now,
+            updatedAt: now
+          });
+        }
+        save(db);
+        return { id };
+      },
+      mcpRemove(id) {
+        const db = load();
+        db.mcp = db.mcp.filter((m) => m.id !== id);
+        save(db);
+      },
+      memoryAdd(nodeKey, kind, content, tags, importance) {
+        const db = load();
+        const rec = { id: uid("mem"), nodeKey, kind, content, tags, importance, createdAt: nowIso() };
+        db.memories.unshift(rec);
+        save(db);
+        return { id: rec.id };
+      },
+      memorySearch(nodeKey, query, limit = 12) {
+        const q = query.toLowerCase();
+        return load().memories.filter((m) => m.nodeKey === nodeKey && (!q || m.content.toLowerCase().includes(q))).slice(0, limit);
+      },
+      memoryDelete(id) {
+        const db = load();
+        db.memories = db.memories.filter((m) => m.id !== id);
+        save(db);
+      },
+      skillsList(nodeKey) {
+        const all = load().skills.filter((s) => s.nodeKey === nodeKey);
+        return { skills: all.filter((s) => s.active), all };
+      },
+      skillUpsert(args) {
+        const db = load();
+        const rec = {
+          id: uid("skill"),
+          nodeKey: args.nodeKey,
+          name: args.name,
+          description: args.description,
+          procedure: args.procedure,
+          preconditions: "",
+          toolStrategy: "",
+          verificationStrategy: "",
+          knownFailureModes: "",
+          version: 1,
+          score: null,
+          origin: args.origin,
+          active: true,
+          createdAt: nowIso(),
+          updatedAt: nowIso(),
+          applications: 0
+        };
+        db.skills.push(rec);
+        save(db);
+        return { id: rec.id, version: 1 };
+      },
+      feedbackAdd(executionId, nodeKey, rating, comment) {
+        const db = load();
+        const rec = { id: uid("fb"), executionId, nodeKey, rating, comment, createdAt: nowIso() };
+        db.feedback.unshift(rec);
+        save(db);
+        return { id: rec.id };
+      },
+      feedbackList() {
+        return load().feedback;
+      },
+      evolutionList() {
+        return load().evolution;
+      },
+      evolutionPropose(cand) {
+        const db = load();
+        const rec = {
+          id: uid("evo"),
+          nodeKey: cand.nodeKey ?? "",
+          parentVersion: cand.parentVersion ?? 1,
+          candidateVersion: cand.candidateVersion ?? 2,
+          trigger: cand.trigger ?? "manual",
+          evidence: cand.evidence ?? [],
+          changes: cand.changes ?? {},
+          baselineScore: cand.baselineScore ?? null,
+          candidateScore: cand.candidateScore ?? null,
+          holdoutPassed: cand.holdoutPassed ?? null,
+          regressionPassed: cand.regressionPassed ?? null,
+          status: "PROPOSED",
+          decision: "PENDING",
+          createdAt: nowIso(),
+          decidedAt: null
+        };
+        db.evolution.unshift(rec);
+        save(db);
+        return { id: rec.id };
+      },
+      evolutionDecide(id, decision) {
+        const db = load();
+        const c = db.evolution.find((x) => x.id === id);
+        if (!c) throw new Error(`evolution candidate ${id} does not exist \u2014 nothing was changed.`);
+        if (c.status !== "PROPOSED")
+          throw new Error(
+            `evolution candidate ${id} is not PROPOSED (current status ${c.status}) \u2014 it moves exactly once, from PROPOSED to DECIDED.`
+          );
+        c.decision = decision;
+        c.status = "DECIDED";
+        c.decidedAt = nowIso();
+        save(db);
+        return { ok: true };
+      },
+      approvalList() {
+        return load().approvals.filter((a) => a.status === "OPEN").map(({ capability: _capability, ...rest }) => rest);
+      },
+      approvalRequest(executionId, nodeKey, summary, payload, requestedBy) {
+        const db = load();
+        const rec = {
+          id: uid("appr"),
+          executionId,
+          nodeKey,
+          summary,
+          payload,
+          status: "OPEN",
+          createdAt: nowIso(),
+          // C-2 (archive 4): the request binds who asked and what authority answers.
+          requestedBy: requestedBy && requestedBy.trim() ? requestedBy : `execution:${executionId}`,
+          authority: "human"
+        };
+        db.approvals.unshift(rec);
+        save(db);
+        window.dispatchEvent(new CustomEvent("vh://approval", { detail: rec }));
+        return { id: rec.id, requestedBy: rec.requestedBy, authority: rec.authority };
+      },
+      /** C-2 (archive 4) — the web mirror's native-equivalent capability mint.
+       *
+       *  Desktop mints through an OS dialog; the browser's equivalent of a window
+       *  WebView scripts cannot answer is `window.confirm` — synchronous, modal,
+       *  and not programmatically dismissible. Declined confirm ⇒ no token, no
+       *  decision. The token is scoped to one verdict and expires in five minutes,
+       *  exactly like the native capability. */
+      approvalAuthorize(id, decision) {
+        if (decision !== "APPROVED" && decision !== "REJECTED") {
+          throw new Error(`approval_authorize: decision must be APPROVED or REJECTED (got ${JSON.stringify(decision)})`);
+        }
+        const db = load();
+        const a = db.approvals.find((x) => x.id === id);
+        if (!a) throw new Error(`approval ${id} does not exist \u2014 nothing to authorize.`);
+        if (a.status !== "OPEN") throw new Error(`approval ${id} is not OPEN (current status ${a.status}) \u2014 nothing to authorize.`);
+        if (typeof window === "undefined" || typeof window.confirm !== "function") {
+          throw new Error("approval_authorize requires an interactive confirm dialog \u2014 refusing to mint a capability non-interactively.");
+        }
+        const word = decision === "APPROVED" ? "approve" : "refuse";
+        const ok2 = window.confirm(
+          `SelfImpulse \u2014 human approval gate
+
+${a.summary}
+
+Requester: ${a.requestedBy ?? `execution:${a.executionId}`}
+Required authority: ${a.authority ?? "human"}
+Verdict if you confirm: ${decision}
+
+${word.toUpperCase()} this? Cancel mints nothing and decides nothing.`
+        );
+        if (!ok2) {
+          throw new Error(`approval ${id}: declined at the confirm dialog \u2014 no capability was minted and no decision was recorded.`);
+        }
+        const token = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? `cap_${crypto.randomUUID()}` : uid("cap");
+        a.capability = token;
+        a.capExpiresAt = Math.floor(Date.now() / 1e3) + 300;
+        a.capDecision = decision;
+        save(db);
+        return { capability: token, expiresAt: a.capExpiresAt, approvalId: id, decision };
+      },
+      approvalDecide(id, decision, capability) {
+        const db = load();
+        const a = db.approvals.find((x) => x.id === id);
+        if (!a) throw new Error(`approval ${id} does not exist \u2014 nothing was changed.`);
+        if (a.status !== "OPEN")
+          throw new Error(
+            `approval ${id} is not OPEN (current status ${a.status}) \u2014 a decision is final; an approval moves exactly once, from OPEN to APPROVED or REJECTED.`
+          );
+        if (!capability || !capability.trim())
+          throw new Error(
+            `approval ${id}: no capability presented \u2014 a decision must first pass approval_authorize, where a human answers the dialog. Requester code cannot decide its own request.`
+          );
+        if (!a.capability)
+          throw new Error(`approval ${id} has no live capability \u2014 call approval_authorize first; the human's answer is what makes a decision legitimate.`);
+        if (a.capability !== capability)
+          throw new Error(`capability does not belong to approval ${id} \u2014 it was minted for a different request (confused-approver refused).`);
+        if (typeof a.capExpiresAt === "number" && Math.floor(Date.now() / 1e3) > a.capExpiresAt)
+          throw new Error(`capability for approval ${id} expired (freshness window closed) \u2014 return to approval_authorize for a fresh answer.`);
+        if (a.capDecision !== decision)
+          throw new Error(
+            `capability for approval ${id} was minted for ${a.capDecision ?? "no verdict"}; it cannot cast ${decision}. Re-open approval_authorize and let the human pick this verdict explicitly.`
+          );
+        a.status = decision;
+        a.decidedBy = "human:confirm";
+        a.decidedAt = nowIso();
+        a.capability = void 0;
+        a.capExpiresAt = void 0;
+        a.capDecision = void 0;
+        save(db);
+      },
+      approvalGet(executionId, nodeKey) {
+        const a = load().approvals.find((x) => x.executionId === executionId && x.nodeKey === nodeKey && x.status !== "OPEN");
+        return a ? { decided: true, status: a.status, id: a.id, decidedBy: a.decidedBy ?? "", decidedAt: a.decidedAt ?? null, requestedBy: a.requestedBy ?? "", payload: a.payload ?? {} } : { decided: false };
+      },
+      dlqList() {
+        return load().dlq.filter((d) => d.status === "OPEN");
+      },
+      dlqAdd(executionId, nodeKey, error63, payload, suggestedCause, candidateFix) {
+        const db = load();
+        const rec = {
+          id: uid("dlq"),
+          executionId,
+          nodeKey,
+          error: error63,
+          payload,
+          status: "OPEN",
+          suggestedCause,
+          candidateFix,
+          createdAt: nowIso()
+        };
+        db.dlq.unshift(rec);
+        save(db);
+        return { id: rec.id };
+      },
+      dlqResolve(id) {
+        const db = load();
+        const d = db.dlq.find((x) => x.id === id);
+        if (d) d.status = "RESOLVED";
+        save(db);
+      },
+      runEnqueue(workflowId) {
+        const db = load();
+        db.runQueue.push(workflowId);
+        save(db);
+      },
+      runTake() {
+        const db = load();
+        const items = db.runQueue.splice(0);
+        save(db);
+        return items;
+      }
+    };
+  }
+});
+
 // node_modules/@tauri-apps/api/external/tslib/tslib.es6.js
 function __classPrivateFieldGet(receiver, state2, kind, f2) {
   if (kind === "a" && !f2) throw new TypeError("Private accessor was defined without a getter");
@@ -501,6 +1092,676 @@ var init_core = __esm({
       }
     };
     _Resource_rid = /* @__PURE__ */ new WeakMap();
+  }
+});
+
+// src/ipc/client.ts
+var client_exports = {};
+__export(client_exports, {
+  ipc: () => ipc,
+  nodeKeyOf: () => nodeKeyOf,
+  useTauri: () => useTauri
+});
+async function tauriInvoke(cmd, args) {
+  const { invoke: invoke2 } = await Promise.resolve().then(() => (init_core(), core_exports));
+  return invoke2(cmd, args ?? {});
+}
+function pickExecGrant(program, cwd, needNetwork) {
+  const now = Date.now() / 1e3;
+  execGrants = execGrants.filter((g) => g.expiresAt > now + 5);
+  const bare = bareProgram(program);
+  return execGrants.find((g) => (g.network || !needNetwork) && g.programs.includes(bare) && (cwd === void 0 || within(cwd, g.workspace)));
+}
+function dropExecGrant(token) {
+  execGrants = execGrants.filter((g) => g.token !== token);
+}
+async function requestExecGrant(workspace, network, programs = [], minutes) {
+  const ws = workspace ?? String((await ipc.appInfo()).workspaceRoot ?? "");
+  const r2 = await tauriInvoke("exec_grant_request", { programs, workspace: ws, network, minutes });
+  const g = { token: r2.grant, workspace: r2.workspace, network: r2.network, programs: r2.programs, expiresAt: r2.expiresAt };
+  execGrants.push(g);
+  return g;
+}
+function nodeKeyOf(workflowId, nodeId) {
+  return `${workflowId}:${nodeId}`;
+}
+var useTauri, browserReason, execGrants, bareProgram, norm, within, ipc;
+var init_client = __esm({
+  "src/ipc/client.ts"() {
+    "use strict";
+    init_desktop();
+    init_guardrail();
+    init_egressNet();
+    init_version();
+    init_localDb();
+    useTauri = () => detectHost() === "tauri";
+    browserReason = "No browser is attached in this build: the app does not bundle or launch Chromium, so there is no session, no page and no DOM. Nothing was fetched.";
+    execGrants = [];
+    bareProgram = (p) => (p.split(/[\\/]/).pop() ?? p).replace(/\.exe$/i, "");
+    norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+    within = (child, root) => norm(child) === norm(root) || norm(child).startsWith(norm(root) + "/");
+    ipc = {
+      appInfo: async () => {
+        if (useTauri()) return tauriInvoke("app_info");
+        return {
+          version: ENGINE_VERSION,
+          platform: navigator.platform,
+          workspaceRoot: "(browser workspace)",
+          artifactsDir: "(memory)",
+          dbHealthy: true,
+          controlMcpPort: 0,
+          controlMcpTransport: "stdio",
+          controlMcpRunning: true,
+          startupMs: 0,
+          host: "webview-host",
+          vendors: ["mcp-servers-reference", "mcp-github"]
+        };
+      },
+      /* ---------------------------------------------------------------- federation
+       *
+       * The desktop app bundles an A2A host and, until now, did nothing with it:
+       * `app_info` reported `a2aHostPath`, and no TypeScript ever read the field.
+       * The architecture was therefore a fact a user had to discover, which is not
+       * the same thing as a product concept.
+       *
+       * It is one now, and the decision is EXPLICIT rather than automatic. A host
+       * binds a TCP port and signs an agent card, so silently starting one on launch
+       * would be the app opening a listener nobody asked for. Instead the user
+       * mounts it deliberately, and the UI says plainly what mounting means before
+       * the button does anything.
+       */
+      /* ── FEDERATION ────────────────────────────────────────────────────────
+       * Three commands, one lifecycle. This used to be a single `shellExec` call
+       * with a 20-second timeout, which cannot work: `run_timeout()` kills the
+       * child on the deadline, so a long-lived A2A host came up, announced READY,
+       * and was terminated while the UI still called it mounted. The backend now
+       * supervises the child itself (`a2a_host_start` / `_status` / `_stop`), and
+       * `running` is a question the OS answers rather than a constant. */
+      federationStatus: async () => {
+        if (!useTauri()) {
+          return {
+            state: "unavailable",
+            bundled: false,
+            hostPath: null,
+            running: false,
+            pid: null,
+            port: null,
+            cardUrl: null,
+            interfaceUrl: null,
+            selfimpulse: null,
+            identityFp: null,
+            cardSigned: false,
+            tokenMinted: false,
+            bindScope: null,
+            bindAddress: null,
+            pairingCode: null,
+            pairingExpires: null,
+            files: false,
+            detail: "Federation is a desktop capability. This build has no bundled A2A host."
+          };
+        }
+        let info2 = {};
+        try {
+          info2 = await tauriInvoke("app_info");
+        } catch {
+        }
+        const bundled = info2?.a2aHostBundled === true;
+        const hostPath = info2?.a2aHostPath ?? null;
+        const base = { bundled, hostPath };
+        try {
+          const st = await tauriInvoke("a2a_host_status");
+          const state2 = typeof st.state === "string" ? st.state : "stopped";
+          return {
+            state: state2,
+            ...base,
+            running: st.running === true && state2 === "running",
+            files: st.files === true,
+            pid: typeof st.pid === "number" ? st.pid : null,
+            port: typeof st.port === "number" ? st.port : null,
+            cardUrl: typeof st.cardUrl === "string" ? st.cardUrl : null,
+            interfaceUrl: typeof st.interfaceUrl === "string" ? st.interfaceUrl : null,
+            selfimpulse: typeof st.selfimpulse === "string" ? st.selfimpulse : null,
+            identityFp: typeof st.identityFp === "string" ? st.identityFp : null,
+            cardSigned: st.cardSigned === true,
+            tokenMinted: st.tokenMinted === true,
+            bindScope: st.bindScope === "lan" ? "lan" : st.bindScope === "local" ? "local" : null,
+            bindAddress: typeof st.bindAddress === "string" ? st.bindAddress : null,
+            pairingCode: typeof st.pairingCode === "string" ? st.pairingCode : null,
+            pairingExpires: typeof st.pairingExpires === "string" ? st.pairingExpires : null,
+            detail: String(st.detail ?? "")
+          };
+        } catch (err) {
+          return {
+            state: bundled ? "stopped" : "unavailable",
+            ...base,
+            running: false,
+            pid: null,
+            port: null,
+            cardUrl: null,
+            interfaceUrl: null,
+            selfimpulse: null,
+            identityFp: null,
+            cardSigned: false,
+            tokenMinted: false,
+            bindScope: null,
+            bindAddress: null,
+            pairingCode: null,
+            pairingExpires: null,
+            files: false,
+            detail: `Could not read the A2A host state: ${String(err)}`
+          };
+        }
+      },
+      federationMount: async (opts) => {
+        if (!useTauri()) return { ok: false, detail: "Federation is a desktop capability." };
+        const st = await ipc.federationStatus();
+        if (!st.bundled || !st.hostPath) {
+          return { ok: false, detail: "No A2A host is bundled with this build; nothing was started." };
+        }
+        if (st.state === "running") {
+          return { ok: true, detail: `The A2A host is already mounted (pid ${st.pid}, port ${st.port}); a second mount was not started.` };
+        }
+        try {
+          const r2 = await tauriInvoke("a2a_host_start", {
+            selfimpulse: opts.selfimpulse || "SelfImpulse",
+            port: opts.port ?? 0,
+            bind: opts.bind ?? "local",
+            pair: opts.pair === true,
+            files: opts.files === true
+          });
+          return { ok: r2.ok === true, detail: String(r2.detail ?? (r2.ok === true ? "The host is mounted." : "The host did not report ready.")) };
+        } catch (err) {
+          return { ok: false, detail: `Mount failed in words rather than pretending: ${String(err)}` };
+        }
+      },
+      federationStop: async () => {
+        if (!useTauri()) return { ok: false, detail: "Federation is a desktop capability." };
+        try {
+          const r2 = await tauriInvoke("a2a_host_stop");
+          return { ok: r2.ok !== false, detail: String(r2.detail ?? "The A2A host was stopped.") };
+        } catch (err) {
+          return { ok: false, detail: `Stop failed in words rather than pretending: ${String(err)}` };
+        }
+      },
+      dbMaintenance: async (vacuum) => {
+        if (useTauri()) return tauriInvoke("db_maintenance", { vacuum });
+        if (vacuum) {
+        }
+        const raw = localStorage.getItem("selfimpulse.v3.db") ?? "";
+        return { vacuumed: vacuum, sizeBytes: raw.length };
+      },
+      workflowList: async () => {
+        if (useTauri()) return tauriInvoke("workflow_list");
+        return localDb.workflowList();
+      },
+      workflowGet: async (workflowId) => {
+        if (useTauri()) return tauriInvoke("workflow_get", { workflowId });
+        return localDb.workflowGet(workflowId);
+      },
+      workflowCreate: async (name, description) => {
+        if (useTauri()) return tauriInvoke("workflow_create", { name, description });
+        return localDb.workflowCreate(name, description);
+      },
+      workflowDelete: async (workflowId) => {
+        if (useTauri()) return tauriInvoke("workflow_delete", { workflowId });
+        localDb.workflowDelete(workflowId);
+      },
+      workflowSave: async (workflowId, name, description, graph) => {
+        if (useTauri()) return tauriInvoke("workflow_save", { workflowId, name, description, graph });
+        localDb.workflowSave(workflowId, name, description, graph);
+      },
+      // V7 fix (bug T): the browser fallbacks for versioning fabricated an id and a constant
+      // `version: 1`, so the version history UI showed a plausible list of versions that were never
+      // stored and could not be restored. These now fail loudly. The Tauri side is real.
+      versionCreate: async (workflowId, label) => {
+        if (useTauri()) return tauriInvoke("workflow_version_create", { workflowId, label });
+        throw new Error("Workflow versions are only stored by the native build; nothing was saved in this browser session.");
+      },
+      versionList: async (_workflowId) => {
+        if (useTauri()) return tauriInvoke("workflow_versions", { workflowId: _workflowId });
+        throw new Error("Workflow versions are only stored by the native build; this browser session has no version history to show.");
+      },
+      versionRestore: async (versionRecordId) => {
+        if (useTauri()) return tauriInvoke("workflow_version_restore", { versionRecordId });
+        throw new Error("Cannot restore a version in the browser: nothing was ever stored, so nothing was changed.");
+      },
+      nodeStateLoad: async (nodeKey) => {
+        if (useTauri()) return tauriInvoke("node_state_load", { nodeKey });
+        return {};
+      },
+      nodeStateSave: async (nodeKey, rolePrompt) => {
+        if (useTauri()) return tauriInvoke("node_state_save", { nodeKey, rolePrompt });
+      },
+      memoryAdd: async (nodeKey, kind, content, tags, importance, executionId) => {
+        if (useTauri()) return tauriInvoke("memory_add", { nodeKey, kind, content, tags, importance, executionId });
+        return localDb.memoryAdd(nodeKey, kind, content, tags, importance);
+      },
+      memorySearch: async (nodeKey, query, limit = 12) => {
+        if (useTauri()) return tauriInvoke("memory_search", { nodeKey, query, limit, kinds: null });
+        return localDb.memorySearch(nodeKey, query, limit);
+      },
+      memoryDelete: async (memoryId) => {
+        if (useTauri()) return tauriInvoke("memory_delete", { memoryId });
+        localDb.memoryDelete(memoryId);
+      },
+      skillsList: async (nodeKey) => {
+        if (useTauri()) return tauriInvoke("skills_list", { nodeKey });
+        return localDb.skillsList(nodeKey);
+      },
+      skillTouch: async (skillIds) => {
+        if (useTauri()) return tauriInvoke("skill_touch", { skill_ids: skillIds });
+        throw new Error("Skill usage counts live in the native build's SQLite store; the browser preview has no skill store to update.");
+      },
+      skillDeactivate: async (skillId) => {
+        if (useTauri()) return tauriInvoke("skill_deactivate", { skill_id: skillId });
+      },
+      skillUpsert: async (args) => {
+        if (useTauri()) return tauriInvoke("skill_upsert", args);
+        return localDb.skillUpsert(args);
+      },
+      feedbackAdd: async (executionId, nodeKey, rating, comment) => {
+        if (useTauri()) return tauriInvoke("feedback_add", { executionId, nodeKey, rating, comment });
+        return localDb.feedbackAdd(executionId, nodeKey, rating, comment);
+      },
+      feedbackList: async () => {
+        if (useTauri()) return tauriInvoke("feedback_list");
+        return localDb.feedbackList();
+      },
+      // V7 fix (bug T): these returned fabricated ids and empty lists. A fabricated evaluation id
+      // implies a stored result that does not exist, and an empty list is indistinguishable from
+      // "no evaluations have ever run" — both read as success while nothing happened.
+      evaluationSave: async (nodeKey, executionId, suite, score, details) => {
+        if (useTauri()) return tauriInvoke("evaluation_save", { nodeKey, executionId, suite, score, details });
+        throw new Error("Evaluation results live in the native build's SQLite database; the browser preview has no database to write.");
+      },
+      evaluationHistory: async (nodeKey) => {
+        if (useTauri()) return tauriInvoke("evaluation_history", { nodeKey });
+        throw new Error("Evaluation history lives in the native build's SQLite database; the browser preview has no database to read.");
+      },
+      suiteList: async () => {
+        if (useTauri()) return tauriInvoke("suite_list");
+        throw new Error("Test suites live in the native build's SQLite database; the browser preview has no database to read.");
+      },
+      suiteSave: async (args) => {
+        if (useTauri()) return tauriInvoke("suite_save", args);
+        throw new Error("Test suites live in the native build's SQLite database; the browser preview has no database to write.");
+      },
+      evolutionProposeSave: async (cand) => {
+        if (useTauri()) return tauriInvoke("evolution_propose_save", { cand });
+        return localDb.evolutionPropose(cand);
+      },
+      evolutionList: async (nodeKey) => {
+        if (useTauri()) return tauriInvoke("evolution_list", { nodeKey: nodeKey ?? null });
+        return localDb.evolutionList();
+      },
+      evolutionDecide: async (candidateId, decision) => {
+        if (useTauri()) return tauriInvoke("evolution_decide", { candidateId, decision });
+        return localDb.evolutionDecide(candidateId, decision);
+      },
+      evolutionRollback: async (candidateId, restoreRolePrompt) => {
+        if (useTauri()) return tauriInvoke("evolution_rollback", { candidateId, restoreRolePrompt: restoreRolePrompt ?? null });
+      },
+      approvalRequest: async (executionId, nodeKey, summary, payload, requestedBy) => {
+        if (useTauri()) return tauriInvoke("approval_request", { executionId, nodeKey, summary, payload, requestedBy: requestedBy ?? null });
+        return localDb.approvalRequest(executionId, nodeKey, summary, payload, requestedBy);
+      },
+      approvalGet: async (executionId, nodeKey) => {
+        if (useTauri()) return tauriInvoke("approval_get", { executionId, nodeKey });
+        return localDb.approvalGet(executionId, nodeKey);
+      },
+      approvalList: async () => {
+        if (useTauri()) return tauriInvoke("approval_list");
+        return localDb.approvalList();
+      },
+      /** C-2 (archive 4): mint the decision capability — native OS dialog in the
+       *  desktop app, an interactive confirm in the web mirror. The token it
+       *  returns is the ONLY thing approvalDecide will accept. */
+      approvalAuthorize: async (approvalId, decision) => {
+        if (useTauri()) return tauriInvoke("approval_authorize", { approvalId, decision });
+        return localDb.approvalAuthorize(approvalId, decision);
+      },
+      approvalDecide: async (approvalId, decision, capability) => {
+        if (useTauri()) return tauriInvoke("approval_decide", { approvalId, decision, capability });
+        localDb.approvalDecide(approvalId, decision, capability);
+      },
+      executionCreate: async (workflowId, workflowVersion) => {
+        if (useTauri()) return tauriInvoke("execution_create", { workflowId, workflowVersion });
+        return localDb.executionCreate(workflowId, workflowVersion);
+      },
+      executionFinish: async (executionId, status, error63, stats) => {
+        if (useTauri()) return tauriInvoke("execution_finish", { executionId, status, error: error63, stats });
+        localDb.executionFinish(executionId, status, error63, stats);
+      },
+      eventEmit: async (executionId, kind, level, nodeId, data) => {
+        if (useTauri()) {
+          const rec = await tauriInvoke("event_emit", { executionId, kind, level, nodeId, data });
+          window.dispatchEvent(new CustomEvent("vh://event", { detail: rec }));
+          return rec;
+        }
+        return localDb.eventEmit(executionId, kind, level, nodeId, data);
+      },
+      executionEvents: async (executionId) => {
+        if (useTauri()) return tauriInvoke("execution_events", { executionId });
+        return localDb.executionEvents(executionId);
+      },
+      executionTrace: async (executionId) => {
+        if (useTauri()) return tauriInvoke("execution_trace", { executionId });
+        return { events: localDb.executionEvents(executionId), status: "COMPLETED" };
+      },
+      executionList: async () => {
+        if (useTauri()) return tauriInvoke("execution_list");
+        return localDb.executionList();
+      },
+      dlqAdd: async (executionId, nodeKey, error63, payload, suggestedCause, candidateFix) => {
+        if (useTauri()) return tauriInvoke("dlq_add", { executionId, nodeKey, error: error63, payload, suggestedCause, candidateFix });
+        return localDb.dlqAdd(executionId, nodeKey, error63, payload, suggestedCause, candidateFix);
+      },
+      dlqList: async () => {
+        if (useTauri()) return tauriInvoke("dlq_list");
+        return localDb.dlqList();
+      },
+      dlqResolve: async (dlqId) => {
+        if (useTauri()) return tauriInvoke("dlq_resolve", { dlqId });
+        localDb.dlqResolve(dlqId);
+      },
+      runRequestTake: async () => {
+        if (useTauri()) return tauriInvoke("run_request_take");
+        return localDb.runTake();
+      },
+      evolutionServiceHealth: async () => {
+        if (useTauri()) return tauriInvoke("evolution_service_health");
+        return {
+          available: false,
+          transport: "stdio",
+          reason: "The evolution service is a stdio child process of the native host. Build the desktop app (npm run tauri:build).",
+          engine: "mj_evolution.stdio_server",
+          hooks: ["on_session_start", "pre_llm_call", "post_llm_call", "on_session_end"]
+        };
+      },
+      hermesBridge: async (msg) => {
+        if (useTauri()) return tauriInvoke("hermes_bridge", { msg });
+        return { ok: true, transport: "in-process", echo: msg };
+      },
+      evolutionServicePropose: async (args) => {
+        if (useTauri()) return tauriInvoke("evolution_service_propose", { args });
+        return null;
+      },
+      secretGet: async (secretRef) => {
+        if (useTauri()) return tauriInvoke("secret_get", { secretRef });
+        const value = localDb.secretGet(secretRef);
+        return { ref: secretRef, present: value != null && value !== "", value: value ?? null };
+      },
+      secretSet: async (secretRef, value) => {
+        if (useTauri()) return tauriInvoke("secret_set", { secretRef, value });
+        localDb.secretSet(secretRef, value);
+        return { stored: true, location: "browser-localStorage", survivesRestart: true, warning: "Stored in browser localStorage, not an OS keychain." };
+      },
+      secretDelete: async (secretRef) => {
+        if (useTauri()) return tauriInvoke("secret_delete", { secretRef });
+        localDb.secretDelete(secretRef);
+      },
+      secretExists: async (refs) => {
+        if (useTauri()) return tauriInvoke("secret_exists", { secretRefs: refs });
+        return localDb.secretExists(refs);
+      },
+      llmChat: async (req) => {
+        const target = req.base_url && req.base_url.trim() ? req.base_url.trim() : void 0;
+        if (target) {
+          const egress = checkEgressUrl(target);
+          if (!egress.ok) {
+            throw new Error(
+              `base URL refused by the egress guard: ${egress.reason} \u2014 nothing was sent and no key left this machine.`
+            );
+          }
+        }
+        if (useTauri()) return tauriInvoke("llm_chat", { req: { ...req, base_url: target } });
+        const key = localDb.secretGet(req.secret_ref);
+        if (req.provider === "ollama" || target?.includes("11434")) {
+          try {
+            const r2 = await safeEgressFetch(`${target || "http://127.0.0.1:11434"}/api/chat`, {
+              method: "POST",
+              allowLoopback: true,
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: req.model,
+                stream: false,
+                messages: [
+                  ...req.system ? [{ role: "system", content: req.system }] : [],
+                  ...req.messages
+                ]
+              })
+            });
+            const j = await r2.json();
+            return {
+              content: j.message?.content ?? "",
+              model: req.model,
+              usage: { input_tokens: 0, output_tokens: 0 },
+              duration_ms: 0
+            };
+          } catch (e) {
+            throw new Error(`ollama unreachable: ${e}`);
+          }
+        }
+        if (!key) throw new Error(`secret not found: ${req.secret_ref}`);
+        throw new Error("Cloud LLM calls from the web host require the native desktop build (CORS). Use Local LLM / Ollama or run `npm run tauri`.");
+      },
+      fsRead: async (path2) => {
+        if (useTauri()) return tauriInvoke("fs_read", { path: path2 });
+        throw new Error("Filesystem is available in the native desktop build.");
+      },
+      fsWrite: async (path2, content) => {
+        if (useTauri()) return tauriInvoke("fs_write", { path: path2, content });
+        throw new Error("Filesystem is available in the native desktop build.");
+      },
+      fsList: async (path2) => {
+        if (useTauri()) return tauriInvoke("fs_list", { path: path2 });
+        return [];
+      },
+      fsMkdir: async (path2) => {
+        if (useTauri()) return tauriInvoke("fs_mkdir", { path: path2 });
+      },
+      fsRemove: async (path2, recursive2) => {
+        if (useTauri()) return tauriInvoke("fs_remove", { path: path2, recursive: recursive2 });
+      },
+      /**
+       * Run a dev tool inside the sandbox. The native side runs NOTHING without an execution grant a
+       * human minted at a native dialog (which tools, which workspace, network or not, for how long).
+       * The grant is requested on first need and kept in this module's memory — never persisted — and
+       * renewed transparently when it expires or is revoked. Network is OFF unless `opts.network` asks
+       * for it, in which case the dialog says so in capitals.
+       */
+      shellExec: async (program, args, cwd, timeoutSecs, opts) => {
+        if (!useTauri()) throw new Error("Terminal is available in the native desktop build.");
+        const needNetwork = opts?.network === true;
+        let g = pickExecGrant(program, cwd, needNetwork);
+        if (!g) g = await requestExecGrant(cwd, needNetwork);
+        try {
+          return await tauriInvoke("shell_exec", { program, args, cwd, timeoutSecs, grant: g.token });
+        } catch (e) {
+          if (!/unknown or was revoked|has expired/i.test(String(e))) throw e;
+          dropExecGrant(g.token);
+          const fresh = await requestExecGrant(cwd, needNetwork);
+          return await tauriInvoke("shell_exec", { program, args, cwd, timeoutSecs, grant: fresh.token });
+        }
+      },
+      /** Ask (natively) for an execution grant. Resolves with its public shape — the token stays inside this module. */
+      execGrantRequest: async (o = {}) => {
+        if (!useTauri()) throw new Error("Execution grants exist in the native desktop build only.");
+        const g = await requestExecGrant(o.workspace, o.network === true, o.programs, o.minutes);
+        return { workspace: g.workspace, network: g.network, programs: g.programs, expiresAt: g.expiresAt };
+      },
+      execGrantsStatus: async () => {
+        if (!useTauri()) return [];
+        return tauriInvoke("exec_grants_status");
+      },
+      execGrantsRevoke: async () => {
+        if (!useTauri()) return { revoked: 0 };
+        execGrants = [];
+        return tauriInvoke("exec_grants_revoke");
+      },
+      /**
+       * Bind a provider key to ONE non-canonical https origin. The vendor's own host needs no binding;
+       * anything else (a self-hosted or BYOK gateway) needs a human at a native dialog, because the
+       * page cannot be trusted to say where a key may go.
+       */
+      providerBindEndpoint: async (secretRef, baseUrl) => {
+        if (!useTauri()) throw new Error("Endpoint binding exists in the native desktop build only \u2014 the web edition holds no cloud keys.");
+        return tauriInvoke("provider_bind_endpoint", { secretRef, baseUrl });
+      },
+      providerEndpointsList: async () => {
+        if (!useTauri()) return [];
+        return tauriInvoke("provider_endpoints_list");
+      },
+      providerUnbindEndpoint: async (secretRef) => {
+        if (!useTauri()) return { unbound: false, secretRef };
+        return tauriInvoke("provider_unbind_endpoint", { secretRef });
+      },
+      // QA fix (audit C2): the native filesystem is sandboxed to the app data dir plus these
+      // user-registered workspace roots. Teams registers the runner repo when a run starts.
+      workspaceRootAdd: async (root) => {
+        if (!useTauri()) return { ok: false, path: root };
+        return tauriInvoke("workspace_root_add", { root });
+      },
+      workspaceRootRemove: async (root) => {
+        if (!useTauri()) return { ok: false, path: root };
+        return tauriInvoke("workspace_root_remove", { root });
+      },
+      workspaceRootList: async () => {
+        if (!useTauri()) return [];
+        return tauriInvoke("workspace_root_list");
+      },
+      mcpServerList: async () => {
+        if (useTauri()) return tauriInvoke("mcp_server_list");
+        return localDb.mcpList();
+      },
+      mcpServerSave: async (cfg) => {
+        if (useTauri()) return tauriInvoke("mcp_server_save", { cfg });
+        return localDb.mcpSave(cfg);
+      },
+      mcpServerRemove: async (serverId) => {
+        if (useTauri()) return tauriInvoke("mcp_server_remove", { serverId });
+        localDb.mcpRemove(serverId);
+      },
+      mcpConnectTest: async (serverId) => {
+        if (useTauri()) return tauriInvoke("mcp_connect_test", { serverId });
+        const s = localDb.mcpList().find((m) => m.id === serverId);
+        return {
+          serverId,
+          connected: false,
+          lastError: "Connect from the native desktop build (stdio MCP).",
+          toolCount: 0,
+          name: s?.name
+        };
+      },
+      mcpCall: async (serverId, tool, args) => {
+        if (useTauri()) return tauriInvoke("mcp_call", { serverId, tool, arguments: args });
+        throw new Error("MCP calls require the native desktop build.");
+      },
+      // V7 fix (bug V): these browser fallbacks invented a session id, a page title and an engine
+      // name. An agent or a page reading them would conclude a real navigation had happened. Every
+      // one of them now reports the same notAttached shape the Rust side does.
+      /**
+       * `key` is what makes browser use autonomous: pass a stable key (a node key, a workflow id) and
+       * the same session comes back, so a loop that navigates repeatedly drives one tab with its
+       * history and cookies intact instead of leaking a fresh browser context on every call.
+       */
+      browserSessionCreate: async (key) => {
+        if (useTauri()) return tauriInvoke("browser_session_create", { key });
+        return { ok: false, notAttached: true, engine: null, sessionId: null, reason: browserReason };
+      },
+      browserSessionClose: async (sessionId) => {
+        if (useTauri()) return tauriInvoke("browser_session_close", { sessionId });
+      },
+      browserSessions: async () => {
+        if (useTauri()) return tauriInvoke("browser_sessions");
+        return [];
+      },
+      browserNavigate: async (sessionId, url2, timeoutMs = 3e4) => {
+        if (useTauri()) return tauriInvoke("browser_navigate", { sessionId, url: url2, timeoutMs });
+        return { ok: false, notAttached: true, url: url2, title: null, engine: null, reason: browserReason };
+      },
+      browserAct: async (args) => {
+        if (useTauri()) return tauriInvoke("browser_act", args);
+        return { ok: false, notAttached: true, reason: browserReason };
+      },
+      browserScreenshot: async (sessionId, fullPage = false) => {
+        if (useTauri()) return tauriInvoke("browser_screenshot", { sessionId, fullPage });
+        return { ok: false, notAttached: true, path: null, reason: browserReason };
+      },
+      browserConsole: async (sessionId) => {
+        if (useTauri()) return tauriInvoke("browser_console", { sessionId });
+        return { ok: false, notAttached: true, console: [], networkFailures: [], reason: browserReason };
+      },
+      /* There is no external execution bridge.
+       *
+       * Every agent runs in-process on the owner's own provider key. Nothing in this
+       * bridge can spawn a third-party process, and the methods that once did are
+       * gone rather than stubbed — there is no native command left to call.
+       * probe/noExternalCli.test.ts pins the absence.
+       */
+      /* -------------------------------------------------------------- git
+       * Every one of these throws in a browser build rather than returning an empty result. A git panel
+       * that renders "no changes" when it never spoke to git is the exact false-success pattern the product forbids:
+       * the user cannot tell "clean tree" from "never checked". The thrown message is the label.
+       */
+      gitIsRepo: async (cwd) => {
+        if (useTauri()) return tauriInvoke("git_is_repo", { cwd });
+        throw new Error("git needs the native desktop build: a browser cannot see your repository.");
+      },
+      gitStatus: async (cwd) => {
+        if (useTauri()) return tauriInvoke("git_status", { cwd });
+        throw new Error("git needs the native desktop build: a browser cannot see your repository.");
+      },
+      gitDiff: async (cwd, staged = false, budget) => {
+        if (useTauri()) return tauriInvoke("git_diff", { cwd, staged, budget: budget ?? null });
+        throw new Error("git needs the native desktop build: a browser cannot see your repository.");
+      },
+      gitHead: async (cwd) => {
+        if (useTauri()) return tauriInvoke("git_head", { cwd });
+        throw new Error("git needs the native desktop build: a browser cannot see your repository.");
+      },
+      gitBranch: async (cwd) => {
+        if (useTauri()) return tauriInvoke("git_branch", { cwd });
+        throw new Error("git needs the native desktop build: a browser cannot see your repository.");
+      },
+      /**
+       * Did a seat that was told to be read-only actually refrain from writing?
+       * A harness flag is a promise; this is the check. Three-way on purpose — see `git.rs`.
+       */
+      gitReadOnlyCheck: async (cwd) => {
+        if (useTauri()) return tauriInvoke("git_read_only_check", { cwd });
+        throw new Error("git needs the native desktop build: a browser cannot see your repository.");
+      },
+      packageExport: async (workflowId, includeHistory) => {
+        if (useTauri()) return tauriInvoke("package_export", { workflowId, includeHistory });
+        const wf = localDb.workflowGet(workflowId);
+        return {
+          packageFormat: 1,
+          exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          application: "SelfImpulse",
+          version: ENGINE_VERSION,
+          workflow: { name: wf.name, description: wf.description, graph: wf.graph },
+          history: [],
+          secretsIncluded: false
+        };
+      },
+      packageImport: async (pkg) => {
+        if (useTauri()) return tauriInvoke("package_import", { pkg });
+        const p = pkg;
+        if (p.application !== "SelfImpulse" && p.application !== "VH" || !p.workflow) throw new Error("package rejected");
+        const created = localDb.workflowCreate(`${p.workflow.name} (imported)`, p.workflow.description ?? "");
+        localDb.workflowSave(created.id, `${p.workflow.name} (imported)`, p.workflow.description ?? "", p.workflow.graph);
+        return { id: created.id, validated: true };
+      },
+      controlValidate: async (workflowId) => {
+        if (useTauri()) return tauriInvoke("control_validate_graph", { workflowId });
+        return { valid: true, errors: [] };
+      },
+      controlConnectPorts: async (args) => {
+        if (useTauri()) return tauriInvoke("control_connect_ports", args);
+        throw new Error("use graph store connect");
+      }
+    };
   }
 });
 
@@ -5008,9 +6269,9 @@ function cloneIssues(issues) {
   return issues.map((iss) => iss.path ? { ...iss, path: iss.path.slice() } : { ...iss });
 }
 function isRecursive(inst, stack, resolve) {
-  const cached2 = recursive.get(inst);
-  if (cached2 !== void 0)
-    return cached2 ? PROVEN : NONE;
+  const cached3 = recursive.get(inst);
+  if (cached3 !== void 0)
+    return cached3 ? PROVEN : NONE;
   if (stack.has(inst))
     return PROVEN;
   stack.add(inst);
@@ -8442,7 +9703,7 @@ function id_default() {
   };
 }
 var error25;
-var init_id = __esm({
+var init_id2 = __esm({
   "node_modules/zod/v4/locales/id.js"() {
     init_util();
     error25 = () => {
@@ -13192,7 +14453,7 @@ var init_locales = __esm({
     init_hr();
     init_hu();
     init_hy();
-    init_id();
+    init_id2();
     init_is();
     init_it();
     init_ja();
@@ -20327,15 +21588,15 @@ function visit(schema, fnOrHandlers) {
   };
   const cache = /* @__PURE__ */ new Map();
   function run(s) {
-    const cached2 = cache.get(s);
-    if (cached2 === RESOLVING) {
+    const cached3 = cache.get(s);
+    if (cached3 === RESOLVING) {
       return new $ZodLazy({
         type: "lazy",
         getter: () => cache.get(s)
       });
     }
-    if (cached2 !== void 0)
-      return cached2;
+    if (cached3 !== void 0)
+      return cached3;
     cache.set(s, RESOLVING);
     const inner = mapInner(s);
     const mapped = fn(inner, inner !== s);
@@ -33522,7 +34783,13 @@ function loadInitiative() {
   } catch {
   }
   state = {
-    level: 1,
+    /* A fresh install now boots on ME. It shipped at level 1, which meant the
+       heartbeat was live before anyone had asked it to be — on a product whose
+       whole claim is that nothing acts without the operator, defaulting to
+       self-initiation contradicted that in the one moment there was no
+       operator decision to point at. Anyone who already chose a level keeps it:
+       this is the fallback for absent state, not a reset. */
+    level: 0,
     followUps: [],
     acts: [],
     lastWakeAt: null,
@@ -33700,27 +34967,8 @@ async function executeWakeActs(acts, executor) {
   return runs;
 }
 
-// src/app/id.ts
-var degradedSeq = 0;
-function cryptoToken() {
-  const c = globalThis.crypto;
-  if (c && typeof c.randomUUID === "function") return c.randomUUID();
-  if (c && typeof c.getRandomValues === "function") {
-    const bytes = new Uint8Array(16);
-    c.getRandomValues(bytes);
-    return Array.from(bytes, (b2) => b2.toString(16).padStart(2, "0")).join("");
-  }
-  degradedSeq += 1;
-  return `nocrypto-fallback-${degradedSeq.toString(36)}`;
-}
-function uid(prefix) {
-  return `${prefix}-${cryptoToken()}`;
-}
-function nowIso() {
-  return (/* @__PURE__ */ new Date()).toISOString();
-}
-
 // src/engine/generalist.ts
+init_id();
 init_guardrail();
 
 // src/engine/bew.ts
@@ -35127,1194 +36375,8 @@ Now produce the single synthesized domain result.`;
 // src/engine/providers.ts
 init_guardrail();
 
-// src/app/desktop.ts
-function detectHost() {
-  if (typeof window === "undefined") return "web";
-  const w = window;
-  if (w.__TAURI_INTERNALS__) return "tauri";
-  if (w.__TAURI__) return "tauri";
-  if (typeof navigator !== "undefined" && /tauri/i.test(navigator.userAgent)) return "tauri";
-  return "web";
-}
-
-// src/ipc/client.ts
-init_guardrail();
-
-// src/security/egressNet.ts
-init_guardrail();
-init_ipClassify();
-var systemResolver = async (hostname3) => {
-  const dns = await import("node:dns/promises").catch(() => null);
-  if (!dns) return [];
-  const out = [];
-  try {
-    for (const r2 of await dns.lookup(hostname3, { all: true, verbatim: true })) out.push(r2.address);
-  } catch {
-  }
-  return out;
-};
-async function resolveEgress(raw, opts = {}) {
-  const allowLoopback = opts.allowLoopback ?? false;
-  const resolve = opts.resolve ?? systemResolver;
-  const base = checkEgressUrl(raw);
-  if (!base.ok) return { ok: false, reason: base.reason };
-  const host = new URL(raw).hostname.replace(/^\[|\]$/g, "");
-  const literal2 = normalizeHost(host);
-  if (literal2.kind !== "unknown") {
-    const cls = classifyIp(literal2, allowLoopback);
-    return cls.ok ? { ok: true, reason: "", pinnedIp: literal2.ip, scope: cls.scope } : { ok: false, reason: `${literal2.ip} \u2014 ${cls.reason}`, scope: cls.scope };
-  }
-  if (literal2.ip === "" && isObfuscatedIpv4Literal(host.toLowerCase())) {
-    return { ok: false, reason: `obfuscated IP literal "${host}" refused \u2014 write the address in dotted-quad form`, scope: "unknown" };
-  }
-  let answers;
-  try {
-    answers = await resolve(host);
-  } catch (e) {
-    return { ok: false, reason: `DNS resolution failed for "${host}": ${e instanceof Error ? e.message : String(e)}` };
-  }
-  if (answers.length === 0) return { ok: false, reason: `"${host}" resolved to no addresses \u2014 refused rather than guessing`, scope: "unknown" };
-  const seen = [];
-  let pinned = null;
-  for (const a of answers) {
-    const n = normalizeHost(a);
-    const cls = classifyIp(n, allowLoopback);
-    if (!cls.ok) {
-      return { ok: false, reason: `"${host}" resolves to ${n.ip || a} \u2014 ${cls.reason}`, scope: cls.scope };
-    }
-    seen.push(n.ip || a);
-    if (!pinned) pinned = { ip: n.ip || a, scope: cls.scope };
-  }
-  return { ok: true, reason: "", pinnedIp: pinned.ip, scope: pinned.scope, hops: [{ url: raw, ip: pinned.ip, status: 0 }] };
-}
-var DEFAULT_MAX_REDIRECTS = 5;
-async function safeEgressFetch(raw, init = {}) {
-  const { fetchImpl, allowLoopback, resolve, maxRedirects, ...rest } = init;
-  const doFetch = fetchImpl ?? globalThis.fetch?.bind(globalThis);
-  if (!doFetch) throw new Error("no fetch available in this runtime \u2014 nothing was executed");
-  const hops = [];
-  let current = raw;
-  for (let hop = 0; hop <= (maxRedirects ?? DEFAULT_MAX_REDIRECTS); hop += 1) {
-    const decision = await resolveEgress(current, { allowLoopback, resolve });
-    if (!decision.ok) {
-      throw new Error(`egress refused at hop ${hop}: ${decision.reason} \u2014 nothing further was sent.`);
-    }
-    const res = await doFetch(current, { ...rest, redirect: "manual" });
-    hops.push({ url: current, ip: decision.pinnedIp ?? "", status: res.status });
-    const location = res.headers.get("location");
-    if (!location || res.status < 300 || res.status > 399) {
-      Object.defineProperty(res, "egressHops", { value: hops, enumerable: false });
-      return res;
-    }
-    let next;
-    try {
-      next = new URL(location, current).toString();
-    } catch {
-      throw new Error(`egress refused: hop ${hop} returned an unparseable Location \u2014 nothing further was sent.`);
-    }
-    if (hop === (maxRedirects ?? DEFAULT_MAX_REDIRECTS)) {
-      throw new Error(`egress refused: more than ${maxRedirects ?? DEFAULT_MAX_REDIRECTS} redirects \u2014 possible redirect loop.`);
-    }
-    current = next;
-  }
-  throw new Error("egress refused: redirect budget exhausted.");
-}
-
-// src/version.ts
-var ENGINE_VERSION = "19.7.15";
-var ENGINE_SHORT = "19.7";
-var ENGINE_CODENAME = "SelfImpulse";
-var PRODUCT_TITLE = `SelfImpulse (engine MJ ${ENGINE_SHORT} "${ENGINE_CODENAME}")`;
-
-// src/domain/types.ts
-var GRAPH_SCHEMA_VERSION = 2;
-
-// src/ipc/localDb.ts
-var KEY3 = "selfimpulse.v3.db";
-function empty() {
-  return {
-    workflows: [],
-    executions: [],
-    events: [],
-    memories: [],
-    skills: [],
-    feedback: [],
-    evolution: [],
-    mcp: seedMcp(),
-    approvals: [],
-    dlq: [],
-    secrets: {},
-    runQueue: []
-  };
-}
-function seedMcp() {
-  const now = nowIso();
-  const rows = [
-    ["mcp.filesystem", "Filesystem", "npx", ["-y", "tsx", "vendor/mcp-servers-reference/src/filesystem/index.ts"]],
-    ["mcp.git", "Git", "python", ["-m", "mcp_server_git"]],
-    ["mcp.memory", "Memory", "npx", ["-y", "tsx", "vendor/mcp-servers-reference/src/memory/index.ts"]],
-    ["mcp.sequential-thinking", "Sequential Thinking", "npx", ["-y", "tsx", "vendor/mcp-servers-reference/src/sequentialthinking/index.ts"]],
-    ["mcp.time", "Time", "python", ["-m", "mcp_server_time"]],
-    ["mcp.github", "GitHub", "github-mcp-server", ["stdio"]],
-    ["mcp.control", "Control MCP", "selfimpulse-control-mcp", ["stdio"]]
-  ];
-  return rows.map(([id, name, command, args]) => ({
-    id,
-    name,
-    transport: "stdio",
-    config: { transport: "stdio", command, args, enabled: id === "mcp.control", pinned: true },
-    state: "AVAILABLE",
-    createdAt: now,
-    updatedAt: now
-  }));
-}
-function load() {
-  try {
-    const raw = localStorage.getItem(KEY3);
-    if (!raw) return empty();
-    return { ...empty(), ...JSON.parse(raw) };
-  } catch {
-    return empty();
-  }
-}
-function save(db) {
-  localStorage.setItem(KEY3, JSON.stringify(db));
-}
-var localDb = {
-  load,
-  save,
-  reset() {
-    localStorage.removeItem(KEY3);
-  },
-  workflowList() {
-    return load().workflows.slice().sort((a, b2) => b2.updatedAt.localeCompare(a.updatedAt));
-  },
-  workflowGet(id) {
-    const w = load().workflows.find((x) => x.id === id);
-    if (!w) throw new Error(`workflow not found: ${id}`);
-    return w;
-  },
-  workflowCreate(name, description) {
-    const db = load();
-    const id = uid("wf");
-    const now = nowIso();
-    const graph = {
-      schemaVersion: GRAPH_SCHEMA_VERSION,
-      id,
-      name,
-      nodes: [],
-      connections: [],
-      viewport: { x: 0, y: 0, zoom: 1 },
-      groups: [],
-      notes: []
-    };
-    db.workflows.unshift({ id, name, description, graph, createdAt: now, updatedAt: now, tags: [] });
-    save(db);
-    return { id };
-  },
-  workflowSave(id, name, description, graph) {
-    const db = load();
-    const w = db.workflows.find((x) => x.id === id);
-    if (!w) throw new Error("workflow not found");
-    w.name = name;
-    w.description = description;
-    w.graph = graph;
-    w.updatedAt = nowIso();
-    save(db);
-  },
-  workflowDelete(id) {
-    const db = load();
-    db.workflows = db.workflows.filter((w) => w.id !== id);
-    save(db);
-  },
-  executionCreate(workflowId, workflowVersion) {
-    const db = load();
-    const id = uid("exec");
-    db.executions.unshift({
-      id,
-      workflowId,
-      workflowVersion,
-      status: "RUNNING",
-      startedAt: nowIso(),
-      endedAt: null,
-      error: null,
-      stats: { nodesRun: 0, nodesFailed: 0, retries: 0, inputTokens: 0, outputTokens: 0, durationMs: 0, costUsd: 0, evaluationScores: [] }
-    });
-    save(db);
-    return { id };
-  },
-  executionFinish(id, status, error63, stats) {
-    const db = load();
-    const e = db.executions.find((x) => x.id === id);
-    if (!e) return;
-    e.status = status;
-    e.error = error63;
-    e.stats = stats;
-    e.endedAt = nowIso();
-    save(db);
-  },
-  executionList() {
-    return load().executions;
-  },
-  eventEmit(executionId, kind, level, nodeId, data) {
-    const db = load();
-    const rec = {
-      seq: db.events.length + 1,
-      ts: nowIso(),
-      kind,
-      level,
-      nodeId,
-      executionId,
-      data
-    };
-    db.events.push(rec);
-    if (db.events.length > 4e3) db.events = db.events.slice(-3e3);
-    save(db);
-    window.dispatchEvent(new CustomEvent("vh://event", { detail: rec }));
-    return rec;
-  },
-  executionEvents(executionId) {
-    return load().events.filter((e) => e.executionId === executionId);
-  },
-  importedGenomesSave(rows) {
-    const db = load();
-    db.importedGenomes = rows;
-    save(db);
-  },
-  importedGenomesList() {
-    return load().importedGenomes ?? [];
-  },
-  secretSet(ref, value) {
-    const db = load();
-    db.secrets[ref] = value;
-    save(db);
-  },
-  secretDelete(ref) {
-    const db = load();
-    delete db.secrets[ref];
-    save(db);
-  },
-  secretExists(refs) {
-    const db = load();
-    return Object.fromEntries(
-      refs.map((r2) => [
-        r2,
-        db.secrets[r2] ? { exists: true, location: "browser-localStorage", survivesRestart: true, warning: "Stored in browser localStorage, not an OS keychain. Readable by anything in this origin." } : { exists: false, location: "absent", survivesRestart: false }
-      ])
-    );
-  },
-  secretGet(ref) {
-    return load().secrets[ref] ?? null;
-  },
-  mcpList() {
-    return load().mcp;
-  },
-  mcpSave(cfg) {
-    const db = load();
-    const id = cfg.id || uid("mcp");
-    const now = nowIso();
-    const existing = db.mcp.find((m) => m.id === id);
-    if (existing) {
-      Object.assign(existing, cfg, { updatedAt: now });
-    } else {
-      db.mcp.push({
-        id,
-        name: cfg.name,
-        transport: cfg.transport ?? "stdio",
-        config: cfg.config ?? { transport: "stdio", enabled: true },
-        state: "AVAILABLE",
-        createdAt: now,
-        updatedAt: now
-      });
-    }
-    save(db);
-    return { id };
-  },
-  mcpRemove(id) {
-    const db = load();
-    db.mcp = db.mcp.filter((m) => m.id !== id);
-    save(db);
-  },
-  memoryAdd(nodeKey, kind, content, tags, importance) {
-    const db = load();
-    const rec = { id: uid("mem"), nodeKey, kind, content, tags, importance, createdAt: nowIso() };
-    db.memories.unshift(rec);
-    save(db);
-    return { id: rec.id };
-  },
-  memorySearch(nodeKey, query, limit = 12) {
-    const q = query.toLowerCase();
-    return load().memories.filter((m) => m.nodeKey === nodeKey && (!q || m.content.toLowerCase().includes(q))).slice(0, limit);
-  },
-  memoryDelete(id) {
-    const db = load();
-    db.memories = db.memories.filter((m) => m.id !== id);
-    save(db);
-  },
-  skillsList(nodeKey) {
-    const all = load().skills.filter((s) => s.nodeKey === nodeKey);
-    return { skills: all.filter((s) => s.active), all };
-  },
-  skillUpsert(args) {
-    const db = load();
-    const rec = {
-      id: uid("skill"),
-      nodeKey: args.nodeKey,
-      name: args.name,
-      description: args.description,
-      procedure: args.procedure,
-      preconditions: "",
-      toolStrategy: "",
-      verificationStrategy: "",
-      knownFailureModes: "",
-      version: 1,
-      score: null,
-      origin: args.origin,
-      active: true,
-      createdAt: nowIso(),
-      updatedAt: nowIso(),
-      applications: 0
-    };
-    db.skills.push(rec);
-    save(db);
-    return { id: rec.id, version: 1 };
-  },
-  feedbackAdd(executionId, nodeKey, rating, comment) {
-    const db = load();
-    const rec = { id: uid("fb"), executionId, nodeKey, rating, comment, createdAt: nowIso() };
-    db.feedback.unshift(rec);
-    save(db);
-    return { id: rec.id };
-  },
-  feedbackList() {
-    return load().feedback;
-  },
-  evolutionList() {
-    return load().evolution;
-  },
-  evolutionPropose(cand) {
-    const db = load();
-    const rec = {
-      id: uid("evo"),
-      nodeKey: cand.nodeKey ?? "",
-      parentVersion: cand.parentVersion ?? 1,
-      candidateVersion: cand.candidateVersion ?? 2,
-      trigger: cand.trigger ?? "manual",
-      evidence: cand.evidence ?? [],
-      changes: cand.changes ?? {},
-      baselineScore: cand.baselineScore ?? null,
-      candidateScore: cand.candidateScore ?? null,
-      holdoutPassed: cand.holdoutPassed ?? null,
-      regressionPassed: cand.regressionPassed ?? null,
-      status: "PROPOSED",
-      decision: "PENDING",
-      createdAt: nowIso(),
-      decidedAt: null
-    };
-    db.evolution.unshift(rec);
-    save(db);
-    return { id: rec.id };
-  },
-  evolutionDecide(id, decision) {
-    const db = load();
-    const c = db.evolution.find((x) => x.id === id);
-    if (!c) throw new Error(`evolution candidate ${id} does not exist \u2014 nothing was changed.`);
-    if (c.status !== "PROPOSED")
-      throw new Error(
-        `evolution candidate ${id} is not PROPOSED (current status ${c.status}) \u2014 it moves exactly once, from PROPOSED to DECIDED.`
-      );
-    c.decision = decision;
-    c.status = "DECIDED";
-    c.decidedAt = nowIso();
-    save(db);
-    return { ok: true };
-  },
-  approvalList() {
-    return load().approvals.filter((a) => a.status === "OPEN").map(({ capability: _capability, ...rest }) => rest);
-  },
-  approvalRequest(executionId, nodeKey, summary, payload, requestedBy) {
-    const db = load();
-    const rec = {
-      id: uid("appr"),
-      executionId,
-      nodeKey,
-      summary,
-      payload,
-      status: "OPEN",
-      createdAt: nowIso(),
-      // C-2 (archive 4): the request binds who asked and what authority answers.
-      requestedBy: requestedBy && requestedBy.trim() ? requestedBy : `execution:${executionId}`,
-      authority: "human"
-    };
-    db.approvals.unshift(rec);
-    save(db);
-    window.dispatchEvent(new CustomEvent("vh://approval", { detail: rec }));
-    return { id: rec.id, requestedBy: rec.requestedBy, authority: rec.authority };
-  },
-  /** C-2 (archive 4) — the web mirror's native-equivalent capability mint.
-   *
-   *  Desktop mints through an OS dialog; the browser's equivalent of a window
-   *  WebView scripts cannot answer is `window.confirm` — synchronous, modal,
-   *  and not programmatically dismissible. Declined confirm ⇒ no token, no
-   *  decision. The token is scoped to one verdict and expires in five minutes,
-   *  exactly like the native capability. */
-  approvalAuthorize(id, decision) {
-    if (decision !== "APPROVED" && decision !== "REJECTED") {
-      throw new Error(`approval_authorize: decision must be APPROVED or REJECTED (got ${JSON.stringify(decision)})`);
-    }
-    const db = load();
-    const a = db.approvals.find((x) => x.id === id);
-    if (!a) throw new Error(`approval ${id} does not exist \u2014 nothing to authorize.`);
-    if (a.status !== "OPEN") throw new Error(`approval ${id} is not OPEN (current status ${a.status}) \u2014 nothing to authorize.`);
-    if (typeof window === "undefined" || typeof window.confirm !== "function") {
-      throw new Error("approval_authorize requires an interactive confirm dialog \u2014 refusing to mint a capability non-interactively.");
-    }
-    const word = decision === "APPROVED" ? "approve" : "refuse";
-    const ok2 = window.confirm(
-      `SelfImpulse \u2014 human approval gate
-
-${a.summary}
-
-Requester: ${a.requestedBy ?? `execution:${a.executionId}`}
-Required authority: ${a.authority ?? "human"}
-Verdict if you confirm: ${decision}
-
-${word.toUpperCase()} this? Cancel mints nothing and decides nothing.`
-    );
-    if (!ok2) {
-      throw new Error(`approval ${id}: declined at the confirm dialog \u2014 no capability was minted and no decision was recorded.`);
-    }
-    const token = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? `cap_${crypto.randomUUID()}` : uid("cap");
-    a.capability = token;
-    a.capExpiresAt = Math.floor(Date.now() / 1e3) + 300;
-    a.capDecision = decision;
-    save(db);
-    return { capability: token, expiresAt: a.capExpiresAt, approvalId: id, decision };
-  },
-  approvalDecide(id, decision, capability) {
-    const db = load();
-    const a = db.approvals.find((x) => x.id === id);
-    if (!a) throw new Error(`approval ${id} does not exist \u2014 nothing was changed.`);
-    if (a.status !== "OPEN")
-      throw new Error(
-        `approval ${id} is not OPEN (current status ${a.status}) \u2014 a decision is final; an approval moves exactly once, from OPEN to APPROVED or REJECTED.`
-      );
-    if (!capability || !capability.trim())
-      throw new Error(
-        `approval ${id}: no capability presented \u2014 a decision must first pass approval_authorize, where a human answers the dialog. Requester code cannot decide its own request.`
-      );
-    if (!a.capability)
-      throw new Error(`approval ${id} has no live capability \u2014 call approval_authorize first; the human's answer is what makes a decision legitimate.`);
-    if (a.capability !== capability)
-      throw new Error(`capability does not belong to approval ${id} \u2014 it was minted for a different request (confused-approver refused).`);
-    if (typeof a.capExpiresAt === "number" && Math.floor(Date.now() / 1e3) > a.capExpiresAt)
-      throw new Error(`capability for approval ${id} expired (freshness window closed) \u2014 return to approval_authorize for a fresh answer.`);
-    if (a.capDecision !== decision)
-      throw new Error(
-        `capability for approval ${id} was minted for ${a.capDecision ?? "no verdict"}; it cannot cast ${decision}. Re-open approval_authorize and let the human pick this verdict explicitly.`
-      );
-    a.status = decision;
-    a.decidedBy = "human:confirm";
-    a.decidedAt = nowIso();
-    a.capability = void 0;
-    a.capExpiresAt = void 0;
-    a.capDecision = void 0;
-    save(db);
-  },
-  approvalGet(executionId, nodeKey) {
-    const a = load().approvals.find((x) => x.executionId === executionId && x.nodeKey === nodeKey && x.status !== "OPEN");
-    return a ? { decided: true, status: a.status, id: a.id, decidedBy: a.decidedBy ?? "", decidedAt: a.decidedAt ?? null, requestedBy: a.requestedBy ?? "", payload: a.payload ?? {} } : { decided: false };
-  },
-  dlqList() {
-    return load().dlq.filter((d) => d.status === "OPEN");
-  },
-  dlqAdd(executionId, nodeKey, error63, payload, suggestedCause, candidateFix) {
-    const db = load();
-    const rec = {
-      id: uid("dlq"),
-      executionId,
-      nodeKey,
-      error: error63,
-      payload,
-      status: "OPEN",
-      suggestedCause,
-      candidateFix,
-      createdAt: nowIso()
-    };
-    db.dlq.unshift(rec);
-    save(db);
-    return { id: rec.id };
-  },
-  dlqResolve(id) {
-    const db = load();
-    const d = db.dlq.find((x) => x.id === id);
-    if (d) d.status = "RESOLVED";
-    save(db);
-  },
-  runEnqueue(workflowId) {
-    const db = load();
-    db.runQueue.push(workflowId);
-    save(db);
-  },
-  runTake() {
-    const db = load();
-    const items = db.runQueue.splice(0);
-    save(db);
-    return items;
-  }
-};
-
-// src/ipc/client.ts
-async function tauriInvoke(cmd, args) {
-  const { invoke: invoke2 } = await Promise.resolve().then(() => (init_core(), core_exports));
-  return invoke2(cmd, args ?? {});
-}
-var useTauri = () => detectHost() === "tauri";
-var browserReason = "No browser is attached in this build: the app does not bundle or launch Chromium, so there is no session, no page and no DOM. Nothing was fetched.";
-var execGrants = [];
-var bareProgram = (p) => (p.split(/[\\/]/).pop() ?? p).replace(/\.exe$/i, "");
-var norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-var within = (child, root) => norm(child) === norm(root) || norm(child).startsWith(norm(root) + "/");
-function pickExecGrant(program, cwd, needNetwork) {
-  const now = Date.now() / 1e3;
-  execGrants = execGrants.filter((g) => g.expiresAt > now + 5);
-  const bare = bareProgram(program);
-  return execGrants.find((g) => (g.network || !needNetwork) && g.programs.includes(bare) && (cwd === void 0 || within(cwd, g.workspace)));
-}
-function dropExecGrant(token) {
-  execGrants = execGrants.filter((g) => g.token !== token);
-}
-async function requestExecGrant(workspace, network, programs = [], minutes) {
-  const ws = workspace ?? String((await ipc.appInfo()).workspaceRoot ?? "");
-  const r2 = await tauriInvoke("exec_grant_request", { programs, workspace: ws, network, minutes });
-  const g = { token: r2.grant, workspace: r2.workspace, network: r2.network, programs: r2.programs, expiresAt: r2.expiresAt };
-  execGrants.push(g);
-  return g;
-}
-var ipc = {
-  appInfo: async () => {
-    if (useTauri()) return tauriInvoke("app_info");
-    return {
-      version: ENGINE_VERSION,
-      platform: navigator.platform,
-      workspaceRoot: "(browser workspace)",
-      artifactsDir: "(memory)",
-      dbHealthy: true,
-      controlMcpPort: 0,
-      controlMcpTransport: "stdio",
-      controlMcpRunning: true,
-      startupMs: 0,
-      host: "webview-host",
-      vendors: ["mcp-servers-reference", "mcp-github"]
-    };
-  },
-  /* ---------------------------------------------------------------- federation
-   *
-   * The desktop app bundles an A2A host and, until now, did nothing with it:
-   * `app_info` reported `a2aHostPath`, and no TypeScript ever read the field.
-   * The architecture was therefore a fact a user had to discover, which is not
-   * the same thing as a product concept.
-   *
-   * It is one now, and the decision is EXPLICIT rather than automatic. A host
-   * binds a TCP port and signs an agent card, so silently starting one on launch
-   * would be the app opening a listener nobody asked for. Instead the user
-   * mounts it deliberately, and the UI says plainly what mounting means before
-   * the button does anything.
-   */
-  /* ── FEDERATION ────────────────────────────────────────────────────────
-   * Three commands, one lifecycle. This used to be a single `shellExec` call
-   * with a 20-second timeout, which cannot work: `run_timeout()` kills the
-   * child on the deadline, so a long-lived A2A host came up, announced READY,
-   * and was terminated while the UI still called it mounted. The backend now
-   * supervises the child itself (`a2a_host_start` / `_status` / `_stop`), and
-   * `running` is a question the OS answers rather than a constant. */
-  federationStatus: async () => {
-    if (!useTauri()) {
-      return {
-        state: "unavailable",
-        bundled: false,
-        hostPath: null,
-        running: false,
-        pid: null,
-        port: null,
-        cardUrl: null,
-        interfaceUrl: null,
-        selfimpulse: null,
-        identityFp: null,
-        cardSigned: false,
-        tokenMinted: false,
-        bindScope: null,
-        bindAddress: null,
-        pairingCode: null,
-        pairingExpires: null,
-        files: false,
-        detail: "Federation is a desktop capability. This build has no bundled A2A host."
-      };
-    }
-    let info2 = {};
-    try {
-      info2 = await tauriInvoke("app_info");
-    } catch {
-    }
-    const bundled = info2?.a2aHostBundled === true;
-    const hostPath = info2?.a2aHostPath ?? null;
-    const base = { bundled, hostPath };
-    try {
-      const st = await tauriInvoke("a2a_host_status");
-      const state2 = typeof st.state === "string" ? st.state : "stopped";
-      return {
-        state: state2,
-        ...base,
-        running: st.running === true && state2 === "running",
-        files: st.files === true,
-        pid: typeof st.pid === "number" ? st.pid : null,
-        port: typeof st.port === "number" ? st.port : null,
-        cardUrl: typeof st.cardUrl === "string" ? st.cardUrl : null,
-        interfaceUrl: typeof st.interfaceUrl === "string" ? st.interfaceUrl : null,
-        selfimpulse: typeof st.selfimpulse === "string" ? st.selfimpulse : null,
-        identityFp: typeof st.identityFp === "string" ? st.identityFp : null,
-        cardSigned: st.cardSigned === true,
-        tokenMinted: st.tokenMinted === true,
-        bindScope: st.bindScope === "lan" ? "lan" : st.bindScope === "local" ? "local" : null,
-        bindAddress: typeof st.bindAddress === "string" ? st.bindAddress : null,
-        pairingCode: typeof st.pairingCode === "string" ? st.pairingCode : null,
-        pairingExpires: typeof st.pairingExpires === "string" ? st.pairingExpires : null,
-        detail: String(st.detail ?? "")
-      };
-    } catch (err) {
-      return {
-        state: bundled ? "stopped" : "unavailable",
-        ...base,
-        running: false,
-        pid: null,
-        port: null,
-        cardUrl: null,
-        interfaceUrl: null,
-        selfimpulse: null,
-        identityFp: null,
-        cardSigned: false,
-        tokenMinted: false,
-        bindScope: null,
-        bindAddress: null,
-        pairingCode: null,
-        pairingExpires: null,
-        files: false,
-        detail: `Could not read the A2A host state: ${String(err)}`
-      };
-    }
-  },
-  federationMount: async (opts) => {
-    if (!useTauri()) return { ok: false, detail: "Federation is a desktop capability." };
-    const st = await ipc.federationStatus();
-    if (!st.bundled || !st.hostPath) {
-      return { ok: false, detail: "No A2A host is bundled with this build; nothing was started." };
-    }
-    if (st.state === "running") {
-      return { ok: true, detail: `The A2A host is already mounted (pid ${st.pid}, port ${st.port}); a second mount was not started.` };
-    }
-    try {
-      const r2 = await tauriInvoke("a2a_host_start", {
-        selfimpulse: opts.selfimpulse || "SelfImpulse",
-        port: opts.port ?? 0,
-        bind: opts.bind ?? "local",
-        pair: opts.pair === true,
-        files: opts.files === true
-      });
-      return { ok: r2.ok === true, detail: String(r2.detail ?? (r2.ok === true ? "The host is mounted." : "The host did not report ready.")) };
-    } catch (err) {
-      return { ok: false, detail: `Mount failed in words rather than pretending: ${String(err)}` };
-    }
-  },
-  federationStop: async () => {
-    if (!useTauri()) return { ok: false, detail: "Federation is a desktop capability." };
-    try {
-      const r2 = await tauriInvoke("a2a_host_stop");
-      return { ok: r2.ok !== false, detail: String(r2.detail ?? "The A2A host was stopped.") };
-    } catch (err) {
-      return { ok: false, detail: `Stop failed in words rather than pretending: ${String(err)}` };
-    }
-  },
-  dbMaintenance: async (vacuum) => {
-    if (useTauri()) return tauriInvoke("db_maintenance", { vacuum });
-    if (vacuum) {
-    }
-    const raw = localStorage.getItem("selfimpulse.v3.db") ?? "";
-    return { vacuumed: vacuum, sizeBytes: raw.length };
-  },
-  workflowList: async () => {
-    if (useTauri()) return tauriInvoke("workflow_list");
-    return localDb.workflowList();
-  },
-  workflowGet: async (workflowId) => {
-    if (useTauri()) return tauriInvoke("workflow_get", { workflowId });
-    return localDb.workflowGet(workflowId);
-  },
-  workflowCreate: async (name, description) => {
-    if (useTauri()) return tauriInvoke("workflow_create", { name, description });
-    return localDb.workflowCreate(name, description);
-  },
-  workflowDelete: async (workflowId) => {
-    if (useTauri()) return tauriInvoke("workflow_delete", { workflowId });
-    localDb.workflowDelete(workflowId);
-  },
-  workflowSave: async (workflowId, name, description, graph) => {
-    if (useTauri()) return tauriInvoke("workflow_save", { workflowId, name, description, graph });
-    localDb.workflowSave(workflowId, name, description, graph);
-  },
-  // V7 fix (bug T): the browser fallbacks for versioning fabricated an id and a constant
-  // `version: 1`, so the version history UI showed a plausible list of versions that were never
-  // stored and could not be restored. These now fail loudly. The Tauri side is real.
-  versionCreate: async (workflowId, label) => {
-    if (useTauri()) return tauriInvoke("workflow_version_create", { workflowId, label });
-    throw new Error("Workflow versions are only stored by the native build; nothing was saved in this browser session.");
-  },
-  versionList: async (_workflowId) => {
-    if (useTauri()) return tauriInvoke("workflow_versions", { workflowId: _workflowId });
-    throw new Error("Workflow versions are only stored by the native build; this browser session has no version history to show.");
-  },
-  versionRestore: async (versionRecordId) => {
-    if (useTauri()) return tauriInvoke("workflow_version_restore", { versionRecordId });
-    throw new Error("Cannot restore a version in the browser: nothing was ever stored, so nothing was changed.");
-  },
-  nodeStateLoad: async (nodeKey) => {
-    if (useTauri()) return tauriInvoke("node_state_load", { nodeKey });
-    return {};
-  },
-  nodeStateSave: async (nodeKey, rolePrompt) => {
-    if (useTauri()) return tauriInvoke("node_state_save", { nodeKey, rolePrompt });
-  },
-  memoryAdd: async (nodeKey, kind, content, tags, importance, executionId) => {
-    if (useTauri()) return tauriInvoke("memory_add", { nodeKey, kind, content, tags, importance, executionId });
-    return localDb.memoryAdd(nodeKey, kind, content, tags, importance);
-  },
-  memorySearch: async (nodeKey, query, limit = 12) => {
-    if (useTauri()) return tauriInvoke("memory_search", { nodeKey, query, limit, kinds: null });
-    return localDb.memorySearch(nodeKey, query, limit);
-  },
-  memoryDelete: async (memoryId) => {
-    if (useTauri()) return tauriInvoke("memory_delete", { memoryId });
-    localDb.memoryDelete(memoryId);
-  },
-  skillsList: async (nodeKey) => {
-    if (useTauri()) return tauriInvoke("skills_list", { nodeKey });
-    return localDb.skillsList(nodeKey);
-  },
-  skillTouch: async (skillIds) => {
-    if (useTauri()) return tauriInvoke("skill_touch", { skill_ids: skillIds });
-    throw new Error("Skill usage counts live in the native build's SQLite store; the browser preview has no skill store to update.");
-  },
-  skillDeactivate: async (skillId) => {
-    if (useTauri()) return tauriInvoke("skill_deactivate", { skill_id: skillId });
-  },
-  skillUpsert: async (args) => {
-    if (useTauri()) return tauriInvoke("skill_upsert", args);
-    return localDb.skillUpsert(args);
-  },
-  feedbackAdd: async (executionId, nodeKey, rating, comment) => {
-    if (useTauri()) return tauriInvoke("feedback_add", { executionId, nodeKey, rating, comment });
-    return localDb.feedbackAdd(executionId, nodeKey, rating, comment);
-  },
-  feedbackList: async () => {
-    if (useTauri()) return tauriInvoke("feedback_list");
-    return localDb.feedbackList();
-  },
-  // V7 fix (bug T): these returned fabricated ids and empty lists. A fabricated evaluation id
-  // implies a stored result that does not exist, and an empty list is indistinguishable from
-  // "no evaluations have ever run" — both read as success while nothing happened.
-  evaluationSave: async (nodeKey, executionId, suite, score, details) => {
-    if (useTauri()) return tauriInvoke("evaluation_save", { nodeKey, executionId, suite, score, details });
-    throw new Error("Evaluation results live in the native build's SQLite database; the browser preview has no database to write.");
-  },
-  evaluationHistory: async (nodeKey) => {
-    if (useTauri()) return tauriInvoke("evaluation_history", { nodeKey });
-    throw new Error("Evaluation history lives in the native build's SQLite database; the browser preview has no database to read.");
-  },
-  suiteList: async () => {
-    if (useTauri()) return tauriInvoke("suite_list");
-    throw new Error("Test suites live in the native build's SQLite database; the browser preview has no database to read.");
-  },
-  suiteSave: async (args) => {
-    if (useTauri()) return tauriInvoke("suite_save", args);
-    throw new Error("Test suites live in the native build's SQLite database; the browser preview has no database to write.");
-  },
-  evolutionProposeSave: async (cand) => {
-    if (useTauri()) return tauriInvoke("evolution_propose_save", { cand });
-    return localDb.evolutionPropose(cand);
-  },
-  evolutionList: async (nodeKey) => {
-    if (useTauri()) return tauriInvoke("evolution_list", { nodeKey: nodeKey ?? null });
-    return localDb.evolutionList();
-  },
-  evolutionDecide: async (candidateId, decision) => {
-    if (useTauri()) return tauriInvoke("evolution_decide", { candidateId, decision });
-    return localDb.evolutionDecide(candidateId, decision);
-  },
-  evolutionRollback: async (candidateId, restoreRolePrompt) => {
-    if (useTauri()) return tauriInvoke("evolution_rollback", { candidateId, restoreRolePrompt: restoreRolePrompt ?? null });
-  },
-  approvalRequest: async (executionId, nodeKey, summary, payload, requestedBy) => {
-    if (useTauri()) return tauriInvoke("approval_request", { executionId, nodeKey, summary, payload, requestedBy: requestedBy ?? null });
-    return localDb.approvalRequest(executionId, nodeKey, summary, payload, requestedBy);
-  },
-  approvalGet: async (executionId, nodeKey) => {
-    if (useTauri()) return tauriInvoke("approval_get", { executionId, nodeKey });
-    return localDb.approvalGet(executionId, nodeKey);
-  },
-  approvalList: async () => {
-    if (useTauri()) return tauriInvoke("approval_list");
-    return localDb.approvalList();
-  },
-  /** C-2 (archive 4): mint the decision capability — native OS dialog in the
-   *  desktop app, an interactive confirm in the web mirror. The token it
-   *  returns is the ONLY thing approvalDecide will accept. */
-  approvalAuthorize: async (approvalId, decision) => {
-    if (useTauri()) return tauriInvoke("approval_authorize", { approvalId, decision });
-    return localDb.approvalAuthorize(approvalId, decision);
-  },
-  approvalDecide: async (approvalId, decision, capability) => {
-    if (useTauri()) return tauriInvoke("approval_decide", { approvalId, decision, capability });
-    localDb.approvalDecide(approvalId, decision, capability);
-  },
-  executionCreate: async (workflowId, workflowVersion) => {
-    if (useTauri()) return tauriInvoke("execution_create", { workflowId, workflowVersion });
-    return localDb.executionCreate(workflowId, workflowVersion);
-  },
-  executionFinish: async (executionId, status, error63, stats) => {
-    if (useTauri()) return tauriInvoke("execution_finish", { executionId, status, error: error63, stats });
-    localDb.executionFinish(executionId, status, error63, stats);
-  },
-  eventEmit: async (executionId, kind, level, nodeId, data) => {
-    if (useTauri()) {
-      const rec = await tauriInvoke("event_emit", { executionId, kind, level, nodeId, data });
-      window.dispatchEvent(new CustomEvent("vh://event", { detail: rec }));
-      return rec;
-    }
-    return localDb.eventEmit(executionId, kind, level, nodeId, data);
-  },
-  executionEvents: async (executionId) => {
-    if (useTauri()) return tauriInvoke("execution_events", { executionId });
-    return localDb.executionEvents(executionId);
-  },
-  executionTrace: async (executionId) => {
-    if (useTauri()) return tauriInvoke("execution_trace", { executionId });
-    return { events: localDb.executionEvents(executionId), status: "COMPLETED" };
-  },
-  executionList: async () => {
-    if (useTauri()) return tauriInvoke("execution_list");
-    return localDb.executionList();
-  },
-  dlqAdd: async (executionId, nodeKey, error63, payload, suggestedCause, candidateFix) => {
-    if (useTauri()) return tauriInvoke("dlq_add", { executionId, nodeKey, error: error63, payload, suggestedCause, candidateFix });
-    return localDb.dlqAdd(executionId, nodeKey, error63, payload, suggestedCause, candidateFix);
-  },
-  dlqList: async () => {
-    if (useTauri()) return tauriInvoke("dlq_list");
-    return localDb.dlqList();
-  },
-  dlqResolve: async (dlqId) => {
-    if (useTauri()) return tauriInvoke("dlq_resolve", { dlqId });
-    localDb.dlqResolve(dlqId);
-  },
-  runRequestTake: async () => {
-    if (useTauri()) return tauriInvoke("run_request_take");
-    return localDb.runTake();
-  },
-  evolutionServiceHealth: async () => {
-    if (useTauri()) return tauriInvoke("evolution_service_health");
-    return {
-      available: false,
-      transport: "stdio",
-      reason: "The evolution service is a stdio child process of the native host. Build the desktop app (npm run tauri:build).",
-      engine: "mj_evolution.stdio_server",
-      hooks: ["on_session_start", "pre_llm_call", "post_llm_call", "on_session_end"]
-    };
-  },
-  hermesBridge: async (msg) => {
-    if (useTauri()) return tauriInvoke("hermes_bridge", { msg });
-    return { ok: true, transport: "in-process", echo: msg };
-  },
-  evolutionServicePropose: async (args) => {
-    if (useTauri()) return tauriInvoke("evolution_service_propose", { args });
-    return null;
-  },
-  secretGet: async (secretRef) => {
-    if (useTauri()) return tauriInvoke("secret_get", { secretRef });
-    const value = localDb.secretGet(secretRef);
-    return { ref: secretRef, present: value != null && value !== "", value: value ?? null };
-  },
-  secretSet: async (secretRef, value) => {
-    if (useTauri()) return tauriInvoke("secret_set", { secretRef, value });
-    localDb.secretSet(secretRef, value);
-    return { stored: true, location: "browser-localStorage", survivesRestart: true, warning: "Stored in browser localStorage, not an OS keychain." };
-  },
-  secretDelete: async (secretRef) => {
-    if (useTauri()) return tauriInvoke("secret_delete", { secretRef });
-    localDb.secretDelete(secretRef);
-  },
-  secretExists: async (refs) => {
-    if (useTauri()) return tauriInvoke("secret_exists", { secretRefs: refs });
-    return localDb.secretExists(refs);
-  },
-  llmChat: async (req) => {
-    const target = req.base_url && req.base_url.trim() ? req.base_url.trim() : void 0;
-    if (target) {
-      const egress = checkEgressUrl(target);
-      if (!egress.ok) {
-        throw new Error(
-          `base URL refused by the egress guard: ${egress.reason} \u2014 nothing was sent and no key left this machine.`
-        );
-      }
-    }
-    if (useTauri()) return tauriInvoke("llm_chat", { req: { ...req, base_url: target } });
-    const key = localDb.secretGet(req.secret_ref);
-    if (req.provider === "ollama" || target?.includes("11434")) {
-      try {
-        const r2 = await safeEgressFetch(`${target || "http://127.0.0.1:11434"}/api/chat`, {
-          method: "POST",
-          allowLoopback: true,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: req.model,
-            stream: false,
-            messages: [
-              ...req.system ? [{ role: "system", content: req.system }] : [],
-              ...req.messages
-            ]
-          })
-        });
-        const j = await r2.json();
-        return {
-          content: j.message?.content ?? "",
-          model: req.model,
-          usage: { input_tokens: 0, output_tokens: 0 },
-          duration_ms: 0
-        };
-      } catch (e) {
-        throw new Error(`ollama unreachable: ${e}`);
-      }
-    }
-    if (!key) throw new Error(`secret not found: ${req.secret_ref}`);
-    throw new Error("Cloud LLM calls from the web host require the native desktop build (CORS). Use Local LLM / Ollama or run `npm run tauri`.");
-  },
-  fsRead: async (path2) => {
-    if (useTauri()) return tauriInvoke("fs_read", { path: path2 });
-    throw new Error("Filesystem is available in the native desktop build.");
-  },
-  fsWrite: async (path2, content) => {
-    if (useTauri()) return tauriInvoke("fs_write", { path: path2, content });
-    throw new Error("Filesystem is available in the native desktop build.");
-  },
-  fsList: async (path2) => {
-    if (useTauri()) return tauriInvoke("fs_list", { path: path2 });
-    return [];
-  },
-  fsMkdir: async (path2) => {
-    if (useTauri()) return tauriInvoke("fs_mkdir", { path: path2 });
-  },
-  fsRemove: async (path2, recursive2) => {
-    if (useTauri()) return tauriInvoke("fs_remove", { path: path2, recursive: recursive2 });
-  },
-  /**
-   * Run a dev tool inside the sandbox. The native side runs NOTHING without an execution grant a
-   * human minted at a native dialog (which tools, which workspace, network or not, for how long).
-   * The grant is requested on first need and kept in this module's memory — never persisted — and
-   * renewed transparently when it expires or is revoked. Network is OFF unless `opts.network` asks
-   * for it, in which case the dialog says so in capitals.
-   */
-  shellExec: async (program, args, cwd, timeoutSecs, opts) => {
-    if (!useTauri()) throw new Error("Terminal is available in the native desktop build.");
-    const needNetwork = opts?.network === true;
-    let g = pickExecGrant(program, cwd, needNetwork);
-    if (!g) g = await requestExecGrant(cwd, needNetwork);
-    try {
-      return await tauriInvoke("shell_exec", { program, args, cwd, timeoutSecs, grant: g.token });
-    } catch (e) {
-      if (!/unknown or was revoked|has expired/i.test(String(e))) throw e;
-      dropExecGrant(g.token);
-      const fresh = await requestExecGrant(cwd, needNetwork);
-      return await tauriInvoke("shell_exec", { program, args, cwd, timeoutSecs, grant: fresh.token });
-    }
-  },
-  /** Ask (natively) for an execution grant. Resolves with its public shape — the token stays inside this module. */
-  execGrantRequest: async (o = {}) => {
-    if (!useTauri()) throw new Error("Execution grants exist in the native desktop build only.");
-    const g = await requestExecGrant(o.workspace, o.network === true, o.programs, o.minutes);
-    return { workspace: g.workspace, network: g.network, programs: g.programs, expiresAt: g.expiresAt };
-  },
-  execGrantsStatus: async () => {
-    if (!useTauri()) return [];
-    return tauriInvoke("exec_grants_status");
-  },
-  execGrantsRevoke: async () => {
-    if (!useTauri()) return { revoked: 0 };
-    execGrants = [];
-    return tauriInvoke("exec_grants_revoke");
-  },
-  /**
-   * Bind a provider key to ONE non-canonical https origin. The vendor's own host needs no binding;
-   * anything else (a self-hosted or BYOK gateway) needs a human at a native dialog, because the
-   * page cannot be trusted to say where a key may go.
-   */
-  providerBindEndpoint: async (secretRef, baseUrl) => {
-    if (!useTauri()) throw new Error("Endpoint binding exists in the native desktop build only \u2014 the web edition holds no cloud keys.");
-    return tauriInvoke("provider_bind_endpoint", { secretRef, baseUrl });
-  },
-  providerEndpointsList: async () => {
-    if (!useTauri()) return [];
-    return tauriInvoke("provider_endpoints_list");
-  },
-  providerUnbindEndpoint: async (secretRef) => {
-    if (!useTauri()) return { unbound: false, secretRef };
-    return tauriInvoke("provider_unbind_endpoint", { secretRef });
-  },
-  // QA fix (audit C2): the native filesystem is sandboxed to the app data dir plus these
-  // user-registered workspace roots. Teams registers the runner repo when a run starts.
-  workspaceRootAdd: async (root) => {
-    if (!useTauri()) return { ok: false, path: root };
-    return tauriInvoke("workspace_root_add", { root });
-  },
-  workspaceRootRemove: async (root) => {
-    if (!useTauri()) return { ok: false, path: root };
-    return tauriInvoke("workspace_root_remove", { root });
-  },
-  workspaceRootList: async () => {
-    if (!useTauri()) return [];
-    return tauriInvoke("workspace_root_list");
-  },
-  mcpServerList: async () => {
-    if (useTauri()) return tauriInvoke("mcp_server_list");
-    return localDb.mcpList();
-  },
-  mcpServerSave: async (cfg) => {
-    if (useTauri()) return tauriInvoke("mcp_server_save", { cfg });
-    return localDb.mcpSave(cfg);
-  },
-  mcpServerRemove: async (serverId) => {
-    if (useTauri()) return tauriInvoke("mcp_server_remove", { serverId });
-    localDb.mcpRemove(serverId);
-  },
-  mcpConnectTest: async (serverId) => {
-    if (useTauri()) return tauriInvoke("mcp_connect_test", { serverId });
-    const s = localDb.mcpList().find((m) => m.id === serverId);
-    return {
-      serverId,
-      connected: false,
-      lastError: "Connect from the native desktop build (stdio MCP).",
-      toolCount: 0,
-      name: s?.name
-    };
-  },
-  mcpCall: async (serverId, tool, args) => {
-    if (useTauri()) return tauriInvoke("mcp_call", { serverId, tool, arguments: args });
-    throw new Error("MCP calls require the native desktop build.");
-  },
-  // V7 fix (bug V): these browser fallbacks invented a session id, a page title and an engine
-  // name. An agent or a page reading them would conclude a real navigation had happened. Every
-  // one of them now reports the same notAttached shape the Rust side does.
-  /**
-   * `key` is what makes browser use autonomous: pass a stable key (a node key, a workflow id) and
-   * the same session comes back, so a loop that navigates repeatedly drives one tab with its
-   * history and cookies intact instead of leaking a fresh browser context on every call.
-   */
-  browserSessionCreate: async (key) => {
-    if (useTauri()) return tauriInvoke("browser_session_create", { key });
-    return { ok: false, notAttached: true, engine: null, sessionId: null, reason: browserReason };
-  },
-  browserSessionClose: async (sessionId) => {
-    if (useTauri()) return tauriInvoke("browser_session_close", { sessionId });
-  },
-  browserSessions: async () => {
-    if (useTauri()) return tauriInvoke("browser_sessions");
-    return [];
-  },
-  browserNavigate: async (sessionId, url2, timeoutMs = 3e4) => {
-    if (useTauri()) return tauriInvoke("browser_navigate", { sessionId, url: url2, timeoutMs });
-    return { ok: false, notAttached: true, url: url2, title: null, engine: null, reason: browserReason };
-  },
-  browserAct: async (args) => {
-    if (useTauri()) return tauriInvoke("browser_act", args);
-    return { ok: false, notAttached: true, reason: browserReason };
-  },
-  browserScreenshot: async (sessionId, fullPage = false) => {
-    if (useTauri()) return tauriInvoke("browser_screenshot", { sessionId, fullPage });
-    return { ok: false, notAttached: true, path: null, reason: browserReason };
-  },
-  browserConsole: async (sessionId) => {
-    if (useTauri()) return tauriInvoke("browser_console", { sessionId });
-    return { ok: false, notAttached: true, console: [], networkFailures: [], reason: browserReason };
-  },
-  /* There is no external execution bridge.
-   *
-   * Every agent runs in-process on the owner's own provider key. Nothing in this
-   * bridge can spawn a third-party process, and the methods that once did are
-   * gone rather than stubbed — there is no native command left to call.
-   * probe/noExternalCli.test.ts pins the absence.
-   */
-  /* -------------------------------------------------------------- git
-   * Every one of these throws in a browser build rather than returning an empty result. A git panel
-   * that renders "no changes" when it never spoke to git is the exact false-success pattern the product forbids:
-   * the user cannot tell "clean tree" from "never checked". The thrown message is the label.
-   */
-  gitIsRepo: async (cwd) => {
-    if (useTauri()) return tauriInvoke("git_is_repo", { cwd });
-    throw new Error("git needs the native desktop build: a browser cannot see your repository.");
-  },
-  gitStatus: async (cwd) => {
-    if (useTauri()) return tauriInvoke("git_status", { cwd });
-    throw new Error("git needs the native desktop build: a browser cannot see your repository.");
-  },
-  gitDiff: async (cwd, staged = false, budget) => {
-    if (useTauri()) return tauriInvoke("git_diff", { cwd, staged, budget: budget ?? null });
-    throw new Error("git needs the native desktop build: a browser cannot see your repository.");
-  },
-  gitHead: async (cwd) => {
-    if (useTauri()) return tauriInvoke("git_head", { cwd });
-    throw new Error("git needs the native desktop build: a browser cannot see your repository.");
-  },
-  gitBranch: async (cwd) => {
-    if (useTauri()) return tauriInvoke("git_branch", { cwd });
-    throw new Error("git needs the native desktop build: a browser cannot see your repository.");
-  },
-  /**
-   * Did a seat that was told to be read-only actually refrain from writing?
-   * A harness flag is a promise; this is the check. Three-way on purpose — see `git.rs`.
-   */
-  gitReadOnlyCheck: async (cwd) => {
-    if (useTauri()) return tauriInvoke("git_read_only_check", { cwd });
-    throw new Error("git needs the native desktop build: a browser cannot see your repository.");
-  },
-  packageExport: async (workflowId, includeHistory) => {
-    if (useTauri()) return tauriInvoke("package_export", { workflowId, includeHistory });
-    const wf = localDb.workflowGet(workflowId);
-    return {
-      packageFormat: 1,
-      exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      application: "SelfImpulse",
-      version: ENGINE_VERSION,
-      workflow: { name: wf.name, description: wf.description, graph: wf.graph },
-      history: [],
-      secretsIncluded: false
-    };
-  },
-  packageImport: async (pkg) => {
-    if (useTauri()) return tauriInvoke("package_import", { pkg });
-    const p = pkg;
-    if (p.application !== "SelfImpulse" && p.application !== "VH" || !p.workflow) throw new Error("package rejected");
-    const created = localDb.workflowCreate(`${p.workflow.name} (imported)`, p.workflow.description ?? "");
-    localDb.workflowSave(created.id, `${p.workflow.name} (imported)`, p.workflow.description ?? "", p.workflow.graph);
-    return { id: created.id, validated: true };
-  },
-  controlValidate: async (workflowId) => {
-    if (useTauri()) return tauriInvoke("control_validate_graph", { workflowId });
-    return { valid: true, errors: [] };
-  },
-  controlConnectPorts: async (args) => {
-    if (useTauri()) return tauriInvoke("control_connect_ports", args);
-    throw new Error("use graph store connect");
-  }
-};
-
 // src/engine/nativeProvider.ts
+init_client();
 var CANONICAL = {
   openai: "https://api.openai.com",
   anthropic: "https://api.anthropic.com",
@@ -36376,6 +36438,7 @@ async function callNativeProvider(cfg, system, user, opts = {}) {
 }
 
 // src/engine/providers.ts
+init_client();
 var DEFAULT_TIMEOUT_MS = 3e4;
 function redactSecrets(text, known = []) {
   let out = text;
@@ -37453,17 +37516,17 @@ async function tauriOwnerStorage() {
   const w = globalThis;
   const invoke2 = w.__TAURI__?.core?.invoke;
   if (typeof invoke2 !== "function") return null;
-  let cached2 = null;
+  let cached3 = null;
   try {
     const r2 = await invoke2("secret_get", { secretRef: OWNER_KEY_REF });
-    cached2 = r2?.present && typeof r2.value === "string" ? r2.value : null;
+    cached3 = r2?.present && typeof r2.value === "string" ? r2.value : null;
   } catch {
-    cached2 = null;
+    cached3 = null;
   }
   return {
-    get: () => cached2,
+    get: () => cached3,
     set: (v) => {
-      cached2 = v;
+      cached3 = v;
       void invoke2("secret_set", { secretRef: OWNER_KEY_REF, value: v }).catch(() => {
       });
     }
@@ -46746,7 +46809,11 @@ function officeSnapshot(office) {
   };
 }
 
+// src/engine/memory.ts
+init_id();
+
 // src/engine/dreaming.ts
+init_id();
 var DURABLE_KEY = "engine.dream.mem.v1";
 var RETIRE_BELOW = 0.25;
 function storage10() {
@@ -46822,6 +46889,12 @@ var STOP = /* @__PURE__ */ new Set([
 function keywords(text) {
   const words = (text || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 2 && !STOP.has(w));
   return Array.from(new Set(words)).sort();
+}
+function similarity(a, b2) {
+  if (a.size === 0 || b2.size === 0) return 0;
+  let shared = 0;
+  for (const w of a) if (b2.has(w)) shared += 1;
+  return shared / (a.size + b2.size - shared);
 }
 function topMemories(k = 3, userId = "default") {
   return loadDurable(userId).filter((m) => !m.retired && m.strength >= RETIRE_BELOW).sort((a, b2) => b2.strength - a.strength).slice(0, k).map((m) => ({ statement: m.statement, kind: m.kind, strength: m.strength, score: Number(m.strength.toFixed(4)) }));
@@ -46908,6 +46981,24 @@ function memoryBriefing(userId = "default", maxLines = 4, query = "") {
   }
   return lines;
 }
+
+// src/mission/knowledgeSkills.ts
+init_id();
+var LS_KEY = "vh.knowledgeSkills.v1";
+function loadKnowledgeProposals() {
+  try {
+    const raw = globalThis.localStorage?.getItem(LS_KEY);
+    if (raw) {
+      const p = JSON.parse(raw);
+      if (Array.isArray(p)) return p;
+    }
+  } catch {
+  }
+  return [];
+}
+
+// src/engine/teamEvolve.ts
+init_id();
 
 // src/engine/secureKeys.ts
 var enc = new TextEncoder();
@@ -47036,6 +47127,7 @@ function applyTeamPreference(teamId, selected) {
 }
 
 // src/engine/exam.ts
+init_id();
 var AUTONOMY_KEY = "engine.autonomy.v1";
 function storage13() {
   try {
@@ -47062,6 +47154,136 @@ function loadGrant(userId = "default", category) {
 function autonomyCovers(userId, category) {
   if (loadGrant(userId).granted) return true;
   return category ? loadGrant(userId, category).granted : false;
+}
+
+// src/engine/pureHash.ts
+var K = [
+  1116352408,
+  1899447441,
+  3049323471,
+  3921009573,
+  961987163,
+  1508970993,
+  2453635748,
+  2870763221,
+  3624381080,
+  310598401,
+  607225278,
+  1426881987,
+  1925078388,
+  2162078206,
+  2614888103,
+  3248222580,
+  3835390401,
+  4022224774,
+  264347078,
+  604807628,
+  770255983,
+  1249150122,
+  1555081692,
+  1996064986,
+  2554220882,
+  2821834349,
+  2952996808,
+  3210313671,
+  3336571891,
+  3584528711,
+  113926993,
+  338241895,
+  666307205,
+  773529912,
+  1294757372,
+  1396182291,
+  1695183700,
+  1986661051,
+  2177026350,
+  2456956037,
+  2730485921,
+  2820302411,
+  3259730800,
+  3345764771,
+  3516065817,
+  3600352804,
+  4094571909,
+  275423344,
+  430227734,
+  506948616,
+  659060556,
+  883997877,
+  958139571,
+  1322822218,
+  1537002063,
+  1747873779,
+  1955562222,
+  2024104815,
+  2227730452,
+  2361852424,
+  2428436474,
+  2756734187,
+  3204031479,
+  3329325298
+];
+var rotr = (x, n) => (x >>> n | x << 32 - n) >>> 0;
+var utf8 = (text) => new TextEncoder().encode(text);
+function sha256Bytes(data) {
+  const bitLen = data.length * 8;
+  const padded = new Uint8Array((data.length + 8 >> 6 << 6) + 64);
+  padded.set(data);
+  padded[data.length] = 128;
+  const dv = new DataView(padded.buffer);
+  dv.setUint32(padded.length - 4, bitLen >>> 0);
+  dv.setUint32(padded.length - 8, Math.floor(bitLen / 4294967296));
+  let h0 = 1779033703, h1 = 3144134277, h2 = 1013904242, h3 = 2773480762;
+  let h4 = 1359893119, h5 = 2600822924, h6 = 528734635, h7 = 1541459225;
+  const w = new Uint32Array(64);
+  for (let off = 0; off < padded.length; off += 64) {
+    for (let i = 0; i < 16; i++) w[i] = dv.getUint32(off + i * 4);
+    for (let i = 16; i < 64; i++) {
+      const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ w[i - 15] >>> 3;
+      const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ w[i - 2] >>> 10;
+      w[i] = w[i - 16] + s0 + w[i - 7] + s1 >>> 0;
+    }
+    let a = h0, b2 = h1, c = h2, d = h3, e = h4, f2 = h5, g = h6, h = h7;
+    for (let i = 0; i < 64; i++) {
+      const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+      const ch = e & f2 ^ ~e & g;
+      const t1 = h + S1 + ch + K[i] + w[i] >>> 0;
+      const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+      const maj = a & b2 ^ a & c ^ b2 & c;
+      const t2 = S0 + maj >>> 0;
+      h = g;
+      g = f2;
+      f2 = e;
+      e = d + t1 >>> 0;
+      d = c;
+      c = b2;
+      b2 = a;
+      a = t1 + t2 >>> 0;
+    }
+    h0 = h0 + a >>> 0;
+    h1 = h1 + b2 >>> 0;
+    h2 = h2 + c >>> 0;
+    h3 = h3 + d >>> 0;
+    h4 = h4 + e >>> 0;
+    h5 = h5 + f2 >>> 0;
+    h6 = h6 + g >>> 0;
+    h7 = h7 + h >>> 0;
+  }
+  const out = new Uint8Array(32);
+  const ov = new DataView(out.buffer);
+  ov.setUint32(0, h0);
+  ov.setUint32(4, h1);
+  ov.setUint32(8, h2);
+  ov.setUint32(12, h3);
+  ov.setUint32(16, h4);
+  ov.setUint32(20, h5);
+  ov.setUint32(24, h6);
+  ov.setUint32(28, h7);
+  return out;
+}
+var toHex = (bytes) => Array.from(bytes, (b2) => b2.toString(16).padStart(2, "0")).join("");
+function pureSha256(text) {
+  return toHex(sha256Bytes(utf8(text)));
 }
 
 // src/engine/reach/delegationGrant.ts
@@ -47331,6 +47553,161 @@ async function regulatedRoutingVerdict(ids, now = Date.now()) {
 }
 var REGULATED_DOMAIN_SLUGS = REGULATED_BATCH_DOMAINS.map((d) => d.slug);
 
+// src/security/actionGraph.ts
+function stableStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const entries = Object.entries(value).filter(([, v]) => v !== void 0).sort(([a], [b2]) => a < b2 ? -1 : a > b2 ? 1 : 0);
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(",")}}`;
+}
+
+// src/mission/signing.ts
+var STORAGE_KEY = "vh.issuerkey.v1";
+var KEYCHAIN_REF = "vh.issuerkey.v1";
+async function keychainBridge() {
+  try {
+    const native = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+    if (!native) return null;
+    const { ipc: ipc2 } = await Promise.resolve().then(() => (init_client(), client_exports));
+    return {
+      get: async () => {
+        try {
+          const r2 = await ipc2.secretGet(KEYCHAIN_REF);
+          return r2?.present && r2.value ? r2.value : null;
+        } catch {
+          return null;
+        }
+      },
+      set: async (json2) => {
+        try {
+          const r2 = await ipc2.secretSet(KEYCHAIN_REF, json2);
+          return Boolean(r2?.stored);
+        } catch {
+          return false;
+        }
+      }
+    };
+  } catch {
+    return null;
+  }
+}
+var cached2 = null;
+function toHex2(bytes) {
+  return [...bytes].map((b2) => b2.toString(16).padStart(2, "0")).join("");
+}
+function fromHex(hex3) {
+  const out = new Uint8Array(new ArrayBuffer(hex3.length / 2));
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex3.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+function ed25519Available() {
+  try {
+    return typeof crypto !== "undefined" && Boolean(crypto.subtle) && typeof crypto.subtle.generateKey === "function";
+  } catch {
+    return false;
+  }
+}
+async function ensureIssuerIdentity() {
+  if (cached2) return cached2;
+  if (!ed25519Available()) return null;
+  const bridge = await keychainBridge();
+  try {
+    const raw = bridge ? await bridge.get() : globalThis.localStorage?.getItem(STORAGE_KEY);
+    if (raw) {
+      const stored = JSON.parse(raw);
+      if (stored?.publicKeyHex && stored?.privateJwk) {
+        const privateKey = await crypto.subtle.importKey("jwk", stored.privateJwk, { name: "Ed25519" }, true, ["sign"]);
+        const identity = {
+          keyId: `si-issuer-${stored.publicKeyHex.slice(0, 12)}`,
+          publicKeyHex: stored.publicKeyHex,
+          createdAt: stored.createdAt ?? (/* @__PURE__ */ new Date(0)).toISOString()
+        };
+        cached2 = { identity, privateKey };
+        return cached2;
+      }
+    }
+  } catch {
+  }
+  try {
+    const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+    const rawPub = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
+    const publicKeyHex = toHex2(rawPub);
+    const identity = {
+      keyId: `si-issuer-${publicKeyHex.slice(0, 12)}`,
+      publicKeyHex,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    const privateJwk = await crypto.subtle.exportKey("jwk", pair.privateKey);
+    const persisted = JSON.stringify({ publicKeyHex, privateJwk, createdAt: identity.createdAt });
+    try {
+      if (bridge) await bridge.set(persisted);
+    } catch {
+    }
+    try {
+      globalThis.localStorage?.setItem(STORAGE_KEY, persisted);
+    } catch {
+    }
+    cached2 = { identity, privateKey: pair.privateKey };
+    return cached2;
+  } catch {
+    return null;
+  }
+}
+async function signHexDigest(hexDigest) {
+  const holder = await ensureIssuerIdentity();
+  if (!holder) return null;
+  try {
+    const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, holder.privateKey, fromHex(hexDigest)));
+    return { alg: "EdDSA", keyId: holder.identity.keyId, publicKeyHex: holder.identity.publicKeyHex, sigHex: toHex2(sig) };
+  } catch {
+    return null;
+  }
+}
+async function signChainHash(chainHashHex) {
+  return signHexDigest(chainHashHex);
+}
+
+// src/security/approvalEvidence.ts
+var GATE_EVIDENCE_PREDICATE = "https://selfimpulse.local/gate-approval/v1";
+var APPROVAL_GENESIS = "0".repeat(64);
+function canonicalGateDigest(ask) {
+  return pureSha256(`${GATE_EVIDENCE_PREDICATE}
+gate-ask/1
+${stableStringify(ask)}`);
+}
+function canonicalRecordDigest(rec) {
+  return pureSha256(`${GATE_EVIDENCE_PREDICATE}
+gate-approval-record/1
+${stableStringify(rec)}`);
+}
+function recordGateApproval(ask, decision, meta3) {
+  const approved = decision.approved === true;
+  return {
+    format: "si-gate-approval/1",
+    askDigest: canonicalGateDigest(ask),
+    ask,
+    decision: { approved, reason: approved ? null : decision.reason ?? null },
+    decidedBy: meta3.decidedBy,
+    decidedAt: meta3.decidedAt ?? (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+var UNSIGNED_NOTE = "This runtime has no Ed25519 (WebCrypto refused or is absent). The approval is tamper-EVIDENT via its digest but NOT issuer-signed \u2014 do not treat it as attested by a key.";
+async function sealGateApprovalReceipt(record2, prev = APPROVAL_GENESIS) {
+  const digest = canonicalRecordDigest(record2);
+  const sig = await signChainHash(digest);
+  if (sig) {
+    return {
+      format: "si-gate-approval-receipt/1",
+      record: record2,
+      digest,
+      prev,
+      issuer: { keyId: sig.keyId, publicKeyHex: sig.publicKeyHex },
+      signature: sig.sigHex
+    };
+  }
+  return { format: "si-gate-approval-receipt/1", record: record2, digest, prev, issuer: null, signature: null, signatureNote: UNSIGNED_NOTE };
+}
+
 // src/engine/generalist.ts
 async function sha256Hex2(text) {
   const buf = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -47351,6 +47728,65 @@ async function mapBounded(items, limit, fn) {
   });
   await Promise.all(lanes);
   return out;
+}
+var KNOWLEDGE_ENTRY_CAP = 640;
+var KNOWLEDGE_MAX_ENTRIES = 5;
+var KNOWLEDGE_TOTAL_CAP = 3200;
+function knowledgeDecidedAt(p) {
+  const t = Date.parse(p.decidedAt ?? p.provenance?.distilledAt ?? "");
+  return Number.isFinite(t) ? t : 0;
+}
+function approvedKnowledgeBriefing(query) {
+  const approved = loadKnowledgeProposals().filter((p) => p.status === "approved");
+  if (approved.length === 0) return [];
+  const q = new Set(keywords(query));
+  const scored = approved.map((p) => ({
+    p,
+    at: knowledgeDecidedAt(p),
+    relevance: q.size === 0 ? 0 : similarity(new Set(keywords(`${p.title} ${p.summary} ${p.procedure}`)), q)
+  }));
+  const anyMatch = scored.some((s) => s.relevance > 0);
+  scored.sort((a, b2) => (anyMatch ? b2.relevance - a.relevance : 0) || b2.at - a.at);
+  const head = "[knowledge] Approved document knowledge the owner brought into this workspace. This is human-approved guidance distilled from files in Docs \u2014 apply it where it names something. It is NOT a measured result and NOT a preference this user expressed through accept/reject:";
+  const lines = [];
+  let used = head.length;
+  let withheld = 0;
+  let pastEntryCap = 0;
+  let pastCharCap = 0;
+  for (const s of scored) {
+    if (lines.length >= KNOWLEDGE_MAX_ENTRIES) {
+      pastEntryCap += 1;
+      continue;
+    }
+    const body = sanitizeText(s.p.procedure, KNOWLEDGE_ENTRY_CAP);
+    if (!body.trim()) {
+      withheld += 1;
+      continue;
+    }
+    if (scanForInjection(body).tier === "critical") {
+      withheld += 1;
+      continue;
+    }
+    const source = s.p.provenance?.sourceName ?? "a document in Docs";
+    const day = (s.p.decidedAt ?? s.p.provenance?.distilledAt ?? "").slice(0, 10);
+    const line = `\u2022 ${s.p.title} (from ${source}${day ? `, approved ${day}` : ""}): ${body}`;
+    if (used + line.length + 1 > KNOWLEDGE_TOTAL_CAP) {
+      pastCharCap += 1;
+      continue;
+    }
+    used += line.length + 1;
+    lines.push(line);
+  }
+  if (lines.length === 0) return [];
+  const turned = [
+    withheld > 0 ? `${withheld} withheld by the content gate` : null,
+    pastEntryCap > 0 ? `${pastEntryCap} past the ${KNOWLEDGE_MAX_ENTRIES}-document limit for one answer` : null,
+    pastCharCap > 0 ? `${pastCharCap} past the ${Math.round(KNOWLEDGE_TOTAL_CAP / 1e3)}k-char briefing budget` : null
+  ].filter(Boolean).join("; ");
+  const tail = `(${lines.length} approved document(s) in this briefing${turned ? ` \u2014 not sent: ${turned}` : ""})`;
+  return [`${head}
+${lines.join("\n")}
+${tail}`];
 }
 function responseCanonical(r2) {
   return JSON.stringify({
@@ -47533,12 +47969,17 @@ async function askSelfImpulse19(args, deps = {}) {
         note: `risk tier "${worstTier}" requires the human gate; wire one or re-route`
       });
     }
-    const decision = await deps.gate({
+    const ask = {
       action: `Captain routed "${text.slice(0, 120)}" to ${specialists.map((s) => s.name).join(", ")}`,
       riskTier: worstTier,
       specialistIds: specialists.map((s) => s.id),
       summary: routed.selected.flatMap((c) => c.reasons).slice(0, 4).join("; ")
-    });
+    };
+    const decision = await deps.gate(ask);
+    const approvalReceipt = await sealGateApprovalReceipt(
+      recordGateApproval(ask, decision, { decidedBy: "human-gate" })
+    );
+    deps.onGateApproval?.(approvalReceipt);
     if (!decision.approved) {
       return finish({
         reply: `You (or the standing policy) declined this at the gate: ${decision.reason}`,
@@ -47553,20 +47994,36 @@ async function askSelfImpulse19(args, deps = {}) {
   if (!provider) {
     const plan = specialists.length ? specialists.map((s) => `${s.name} (${s.id}): ${s.capabilities[0]}`).join("\n") : `no specialist cleared the routing bar \u2014 the ${TITLES.captain} would handle this directly once a provider is configured`;
     return finish({
+      /* The routing record used to be concatenated into this sentence, so the one
+         bubble a person reads for an answer opened with "Routing: multi via
+         deterministic (3 of 1500 specialists considered). Agentic MoE v2:
+         tier=complex, crew 3/3 from a 674-specialist pool across 8 domain(s) ·
+         9 bench reserve(s) staged for failover · 671 pruned with reasons." —
+         internal vocabulary at full volume. The counts are kept, in words; the
+         machine record stays on the Work door, which renders it as a step you can
+         open instead of a paragraph you have to decode. */
       reply: `No provider key is configured, so nothing was executed. Here is the plan I would run:
 
 ${plan}
 
-Routing: ${routed.strategy} via ${routed.routedBy} (${routed.selected.length} of ${routed.considered} specialists considered). ` + (moeV2 ? moeV2Line(moeV2) : moeReport ? moeLine(moeReport) : "") + (officeSnap ? ` ${officeSnap.line}` : "") + (routed.fallbackReason ? ` Note: ${routed.fallbackReason}.` : ""),
+${routed.selected.length} of ${routed.considered} specialists were weighed for this and ${routed.selected.length} were chosen.` + /* The workspace and who chose the crew stay IN the answer, because that is a
+         transparency property and not decoration — an operator has to be able to
+         tell a self-assembled crew from one they picked. What left is the machine
+         register it used to be stated in ("floor 3/25 sub-agents of 1500 · 60
+         domain specialists (Adept+HR) across 30 desks"). */
+      (officeSnap ? ` The Captain assembled this crew itself: 11WORKSPACE opened ${officeSnap.desks.length} desk${officeSnap.desks.length === 1 ? "" : "s"} and put ${officeSnap.floor.length} on the floor \u2014 you did not pick the team.` : "") + (routed.fallbackReason ? ` One note: ${routed.fallbackReason}.` : ""),
       routed,
       executed: false,
       outcome: "planned",
       specialistIds: specialists.map((s) => s.id),
-      note: "provider not configured \u2014 plan only, nothing executed"
+      /* The machine record goes here instead: `note` is rendered as a hint line on
+         the Work door's answer step, which is where a person goes to inspect a run,
+         not the bubble they read for an answer. */
+      note: `provider not configured \u2014 plan only, nothing executed. Routing: ${routed.strategy} via ${routed.routedBy}. ` + (moeV2 ? moeV2Line(moeV2) : moeReport ? moeLine(moeReport) : "") + (officeSnap ? ` ${officeSnap.line}` : "")
     });
   }
   const gateLine = "You operate behind a human gate; risky actions are paused for approval. Never claim work you did not do.";
-  const briefing = memoryBriefing(userId);
+  const briefing = [...memoryBriefing(userId), ...approvedKnowledgeBriefing(text)];
   const memberToolCtx = deps.workspaceRoot ? { workspaceRoot: deps.workspaceRoot, gate: deps.gate, fetchImpl: deps.fetchImpl, fsImpl: deps.fsImpl } : void 0;
   const reachPc = { missionId, policy: { allowlist: ["ls", "cat", "echo", "grep"], maxRuntimeMs: 5e3, maxOutputBytes: 64 * 1024 } };
   const ctxFor = (s) => memberToolCtx && s.provenance === "si-19.5.1-reach" ? { ...memberToolCtx, pc: reachPc } : memberToolCtx;

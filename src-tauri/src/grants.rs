@@ -158,6 +158,144 @@ pub fn valid_provider_id(s: &str) -> bool {
         && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'.' | b'_' | b'-'))
 }
 
+/* ─────────────────── vendor identity, read off the secret ─────────────────── */
+
+/// The vendor a provider key belongs to, taken from the KEY'S OWN reference.
+///
+/// WHY THIS EXISTS (P1). `llm_chat` used to take both halves of the pairing from the
+/// page: `secret_ref` (which key) and `provider` (which vendor's endpoint, wire
+/// contract and — through `canonical_origin` — which host the destination policy
+/// approves). Nothing checked the two belonged together, so a compromised page could
+/// send `provider:"openai"` with `secret_ref:"vh.providerkey.anthropic"` and have the
+/// Anthropic key ride to api.openai.com, an origin the policy waved through because it
+/// was reading the vendor off the attacker's own string. The reference is the half the
+/// page cannot re-name without pointing at a different key, so the reference is made
+/// the authority on vendor identity, in Rust, where the page has no say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefVendor {
+    OpenAi,
+    Anthropic,
+    Google,
+    Groq,
+    OpenRouter,
+    Ollama,
+    /// The vendor-neutral slot the Settings page writes every key for a vendor that
+    /// speaks the OpenAI chat-completions contract into (`vh.providerkey.openai-compatible`).
+    /// One key lives here no matter which vendor it is for, so it names a PROTOCOL, not
+    /// a vendor: it may be pointed at any OpenAI-compatible endpoint, and only at one.
+    OpenAiCompatibleAny,
+    /// The reference names no vendor this build knows (`vh.providerkey.gw`,
+    /// `provider.mistral.production`, a registry slug). There is no native ground truth
+    /// to check the page against here — the honest limit, stated rather than papered over.
+    Unnamed,
+}
+
+impl RefVendor {
+    /// The spelling `llm_chat`'s endpoint table and `canonical_origin` key off. `None`
+    /// for the two variants that name no single vendor: there, the vendor can only come
+    /// from the page's own string (having already been vetted by `provider_kind_for_call`).
+    pub fn slug(self) -> Option<&'static str> {
+        match self {
+            RefVendor::OpenAi => Some("openai"),
+            RefVendor::Anthropic => Some("anthropic"),
+            RefVendor::Google => Some("google"),
+            RefVendor::Groq => Some("groq"),
+            RefVendor::OpenRouter => Some("openrouter"),
+            RefVendor::Ollama => Some("ollama"),
+            RefVendor::OpenAiCompatibleAny | RefVendor::Unnamed => None,
+        }
+    }
+
+    /// Can this slot hold a key that is being used for `other`? Only the generic
+    /// OpenAI-compatible one: it is one key shared across every vendor that speaks that
+    /// contract, so it deliberately does not name a vendor of its own.
+    fn covers(self, other: RefVendor) -> bool {
+        matches!(
+            (self, other),
+            (RefVendor::OpenAiCompatibleAny, RefVendor::OpenAi | RefVendor::Groq | RefVendor::OpenRouter | RefVendor::Unnamed)
+        )
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            RefVendor::OpenAi => "OpenAI",
+            RefVendor::Anthropic => "Anthropic",
+            RefVendor::Google => "Google (Gemini)",
+            RefVendor::Groq => "Groq",
+            RefVendor::OpenRouter => "OpenRouter",
+            RefVendor::Ollama => "Ollama (local)",
+            RefVendor::OpenAiCompatibleAny => "an OpenAI-compatible vendor",
+            RefVendor::Unnamed => "no vendor this app recognises",
+        }
+    }
+}
+
+/// A vendor name as one of its spellings says it. Shared by the reference side and the
+/// page side so the two are compared on the same ground, aliases and all.
+fn vendor_of_name(name: &str) -> RefVendor {
+    match name {
+        "openai" => RefVendor::OpenAi,
+        "anthropic" | "claude" => RefVendor::Anthropic,
+        "google" | "gemini" => RefVendor::Google,
+        "groq" => RefVendor::Groq,
+        "openrouter" => RefVendor::OpenRouter,
+        "ollama" => RefVendor::Ollama,
+        "openai-compatible" | "openai-compat" | "compatible" => RefVendor::OpenAiCompatibleAny,
+        _ => RefVendor::Unnamed,
+    }
+}
+
+/// The trailing namespaced segment of a provider reference — `anthropic` for
+/// `vh.providerkey.anthropic`, `openai` for `provider.openai.production`.
+fn ref_namespace_tail(secret_ref: &str) -> Option<&str> {
+    let tail = PROVIDER_PREFIXES
+        .iter()
+        .find(|p| secret_ref.starts_with(*p) && secret_ref.len() > p.len())
+        .map(|p| &secret_ref[p.len()..])?;
+    // A slug may hold dots, and an environment may follow the vendor
+    // (`provider.ollama.local`), so the vendor is the first part of the tail.
+    tail.split('.').next().filter(|s| !s.is_empty())
+}
+
+/// The vendor this reference names. Never influenced by the page: derived from the
+/// reference alone.
+pub fn vendor_of_ref(secret_ref: &str) -> RefVendor {
+    ref_namespace_tail(secret_ref).map(vendor_of_name).unwrap_or(RefVendor::Unnamed)
+}
+
+/// The kind a provider call may actually be made as, cross-checked against the secret
+/// it is about to attach, and returned so the caller stops trusting the page for it.
+///
+/// Ok(kind) when:
+///   • the reference names a vendor — then THAT vendor wins, even over the page's
+///     spelling (`gemini` for `google`), because the two have just been proven to agree;
+///   • the reference is the generic OpenAI-compatible slot and the page names an
+///     OpenAI-compatible vendor — that slot is shared across those vendors by design;
+///   • the reference names nothing this build knows — no native ground truth exists, so
+///     the page's vendor stands, still confined by `key_destination_allowed` to that
+///     vendor's own origin or to one a human bound at a native dialog.
+///
+/// Err otherwise, and loudly: a mismatch means the page paired one vendor's key with
+/// another vendor's endpoint, which is exactly the shape of the P1 exploit. Coercing it
+/// into something safe would hide the event, so it is refused instead.
+pub fn provider_kind_for_call(page_provider: &str, secret_ref: &str) -> Result<String, String> {
+    let by_ref = vendor_of_ref(secret_ref);
+    let by_page = vendor_of_name(page_provider);
+    if by_ref == by_page {
+        return Ok(by_ref.slug().unwrap_or(page_provider).to_string());
+    }
+    if by_ref.covers(by_page) {
+        return Ok(page_provider.to_string());
+    }
+    if by_ref == RefVendor::Unnamed {
+        return Ok(page_provider.to_string());
+    }
+    Err(format!(
+        "the key stored as {secret_ref:?} is {}'s, but this call names provider {page_provider:?} — a provider key is only ever attached to the vendor it belongs to, so the vendor is taken from the key's own reference, not from the page",
+        by_ref.label()
+    ))
+}
+
 /* ───────────────────────────── execution grants ──────────────────────────── */
 
 /// The dev-tool seat a grant may cover. One list, shared with `shell_exec`.
@@ -414,6 +552,66 @@ mod tests {
         // …and the binding is for that exact origin, not for the host family
         assert!(key_destination_allowed("mistral", "https://evil.example/", Some("https://api.mistral.ai")).is_err());
         assert!(key_destination_allowed("mistral", "https://api.mistral.ai:8443/", Some("https://api.mistral.ai")).is_err());
+    }
+
+    #[test]
+    fn the_vendor_is_read_off_the_secret_reference_not_off_the_page() {
+        // the Settings page's three real slots (src/engine/nativeProvider.ts)
+        assert_eq!(vendor_of_ref("vh.providerkey.anthropic"), RefVendor::Anthropic);
+        assert_eq!(vendor_of_ref("vh.providerkey.gemini"), RefVendor::Google);
+        assert_eq!(vendor_of_ref("vh.providerkey.openai-compatible"), RefVendor::OpenAiCompatibleAny);
+        // the Hermes / mission family: provider.<vendor>.<env>, dots and all
+        assert_eq!(vendor_of_ref("provider.anthropic.production"), RefVendor::Anthropic);
+        assert_eq!(vendor_of_ref("provider.ollama.local"), RefVendor::Ollama);
+        assert_eq!(vendor_of_ref("selfimpulse.providerkey.groq"), RefVendor::Groq);
+        // a slug the native side cannot place names no vendor — there is nothing to check against
+        assert_eq!(vendor_of_ref("vh.providerkey.gw"), RefVendor::Unnamed);
+        assert_eq!(vendor_of_ref("vh.providerkey.openai-main"), RefVendor::Unnamed);
+        assert_eq!(vendor_of_ref("provider."), RefVendor::Unnamed);
+        assert_eq!(vendor_of_ref("not-a-provider-ref"), RefVendor::Unnamed);
+    }
+
+    #[test]
+    fn p1_the_page_cannot_pair_one_vendors_key_with_another_vendors_endpoint() {
+        // THE AUDIT'S EXPLOIT, in both directions: an Anthropic key pointed at OpenAI.
+        let e = provider_kind_for_call("openai", "vh.providerkey.anthropic").unwrap_err();
+        assert!(e.contains("Anthropic") && e.contains("openai"), "{e}");
+        assert!(provider_kind_for_call("anthropic", "vh.providerkey.openai").is_err());
+        // a vendor-named key cannot ride the generic slot's other vendors either
+        assert!(provider_kind_for_call("groq", "vh.providerkey.anthropic").is_err());
+        assert!(provider_kind_for_call("google", "vh.providerkey.openai-compatible").is_err());
+        assert!(provider_kind_for_call("anthropic", "vh.providerkey.gemini").is_err());
+        // one vendor's key may not be smuggled in under a vendor this build does not know
+        assert!(provider_kind_for_call("mistral", "provider.anthropic.production").is_err());
+    }
+
+    #[test]
+    fn every_call_the_desktop_actually_makes_still_goes_through() {
+        // anthropic: the page says the vendor, the reference says the vendor, they agree
+        assert_eq!(provider_kind_for_call("anthropic", "vh.providerkey.anthropic").unwrap(), "anthropic");
+        // gemini is stored under its own name and told to native as "google" — an alias, not a mismatch
+        assert_eq!(provider_kind_for_call("google", "vh.providerkey.gemini").unwrap(), "google");
+        // the generic slot is shared by design across every OpenAI-compatible vendor
+        for vendor in ["openai", "groq", "openrouter"] {
+            assert_eq!(provider_kind_for_call(vendor, "vh.providerkey.openai-compatible").unwrap(), vendor);
+        }
+        // …and a gateway only needs the human binding downstream, not a vendor this build knows
+        assert_eq!(provider_kind_for_call("custom", "vh.providerkey.openai-compatible").unwrap(), "custom");
+        assert_eq!(provider_kind_for_call("mistral", "vh.providerkey.openai-compatible").unwrap(), "mistral");
+        // the provider.<vendor>.<env> family names its vendor in the reference itself
+        assert_eq!(provider_kind_for_call("openai", "provider.openai.production").unwrap(), "openai");
+        assert_eq!(provider_kind_for_call("anthropic", "provider.anthropic.production").unwrap(), "anthropic");
+        // an unknown reference carries no ground truth; its destination check still does
+        assert_eq!(provider_kind_for_call("mistral", "provider.mistral.production").unwrap(), "mistral");
+        assert_eq!(provider_kind_for_call("openai", "vh.providerkey.gw").unwrap(), "openai");
+    }
+
+    #[test]
+    fn a_reference_naming_a_vendor_decides_the_kind_even_over_the_pages_spelling() {
+        // the returned kind is what `llm_chat` selects the endpoint and the wire
+        // contract from, so an alias must normalise rather than fall through to OpenAI
+        assert_eq!(provider_kind_for_call("gemini", "vh.providerkey.gemini").unwrap(), "google");
+        assert_eq!(provider_kind_for_call("claude", "provider.anthropic.production").unwrap(), "anthropic");
     }
 
     #[test]

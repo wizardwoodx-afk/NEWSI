@@ -1,6 +1,6 @@
 SelfImpulse -- version of record
-Product release: 1.9.1
-Engine release: MJ 19.7.15 ("SelfImpulse")
+Product release: 1.9.2
+Engine release: MJ 19.7.16 ("SelfImpulse")
 Org: User -> Captain -> 30 desks (Lead+HR = 60) -> 1,500 workers
 Floor: 11WORKSPACE, Agentic MoE cap 25
 Source: packed from the working tree including 11WORKSPACE.

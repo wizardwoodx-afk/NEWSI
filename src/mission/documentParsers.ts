@@ -319,18 +319,29 @@ function clip(line: string): string {
 
 /* ── the shared OOXML walk (xlsx + pptx are zips of XML) ─────────────────── */
 
-async function openParts(bytes: Uint8Array): Promise<{ zip: JSZip; text(name: string): Promise<string | null> } | null> {
+/** An opened container, or the reason it would not open. `null` was the old
+ *  shape and it is the reason this reads as a defect: an empty
+ *  `catch { return null }` threw the JSZip error away, so every way a workbook
+ *  can fail to inflate — truncated, encrypted, a bad central directory, a
+ *  QuotaExceeded from the inflate buffer — produced one identical message with
+ *  no cause in it, and nothing anywhere recorded what actually went wrong. */
+type OpenedParts =
+  | { ok: true; zip: JSZip; text(name: string): Promise<string | null> }
+  | { ok: false; reason: string };
+
+async function openParts(bytes: Uint8Array): Promise<OpenedParts> {
   try {
     const zip = await JSZip.loadAsync(bytes);
     return {
+      ok: true,
       zip,
       text: async (name: string) => {
         const f = zip.file(name);
         return f ? utf8.decode(await f.async("uint8array")) : null;
       },
     };
-  } catch {
-    return null;
+  } catch (e) {
+    return { ok: false, reason: String(e instanceof Error ? e.message : e).slice(0, 160) || "the archive reader gave no reason" };
   }
 }
 
@@ -381,6 +392,10 @@ function columnIndexOf(ref: string | null): number {
 
 const MAX_SHEETS = 40;
 const SAMPLE_ROWS = 12;
+/** Rows `rowValues` reads per sheet. This is a READING cap, not a count of what
+ *  the sheet holds, and the wording at the call site has to say so — see the
+ *  note there on why `rows.length - SAMPLE_ROWS` was a lie past 400 rows. */
+const MAX_SHEET_ROWS = 400;
 
 /**
  * Sheet names and the header row are the structure a spreadsheet carries; the
@@ -390,7 +405,7 @@ const SAMPLE_ROWS = 12;
  */
 export async function parseXlsx(bytes: Uint8Array, maxChars: number): Promise<ParseResult> {
   const parts = await openParts(bytes);
-  if (!parts) return refuse("unrecognised-binary", "that .xlsx would not open as a spreadsheet.");
+  if (!parts.ok) return refuse("corrupt-archive", `that .xlsx would not open as a spreadsheet: ${parts.reason}`);
   const workbook = await parts.text("xl/workbook.xml");
   if (!workbook) return refuse("unrecognised-binary", "this .xlsx has no xl/workbook.xml, so it is not a workbook.");
   const rels = relTargets(await parts.text("xl/_rels/workbook.xml.rels"));
@@ -406,7 +421,7 @@ export async function parseXlsx(bytes: Uint8Array, maxChars: number): Promise<Pa
     const xml = await parts.text(path);
     if (!xml) { notes.push(`sheet "${name}" has no readable part at ${path}`); continue; }
     lines.push(`## Sheet: ${name}`);
-    const rows = rowValues(xml, shared);
+    const { rows, hitRowCap } = rowValues(xml, shared);
     if (rows.length === 0) { lines.push("(empty sheet)"); continue; }
     const header = rows[0];
     const width = Math.max(...rows.slice(0, SAMPLE_ROWS).map((r) => r.length), 1);
@@ -415,8 +430,20 @@ export async function parseXlsx(bytes: Uint8Array, maxChars: number): Promise<Pa
       const cells = r.map((c) => c || "").join(" · ").trim();
       if (cells.replace(/[ ·]/g, "")) lines.push(`- ${clip(cells)}`);
     }
-    if (rows.length > SAMPLE_ROWS) lines.push(`- …and ${rows.length - SAMPLE_ROWS} further rows on this sheet`);
-    notes.push(`sheet "${name}": ${rows.length} row${rows.length === 1 ? "" : "s"} × ${width} column${width === 1 ? "" : "s"}`);
+    /* THE CAP IS STATED AS A CAP. This line used to print
+     * `rows.length - SAMPLE_ROWS` "further rows" unconditionally, and `rowValues`
+     * stops collecting at MAX_SHEET_ROWS — so a 12,000-row sheet was reported as
+     * having "388 further rows". That is not a rounding, it is a floorless claim
+     * about a number the reader never counted, and it under-reported the sheet by
+     * however much the owner most needed to know. Past the cap the honest sentence
+     * names the cap and says the rest was not counted. */
+    if (hitRowCap) {
+      lines.push(`- …and more rows beyond the ${MAX_SHEET_ROWS}-row reading cap for one sheet — this reader stopped counting at ${MAX_SHEET_ROWS}, so the rows after it were not read and their number is not known here`);
+      notes.push(`sheet "${name}" was read to its ${MAX_SHEET_ROWS}-row cap; rows beyond it were not read and are not counted`);
+    } else if (rows.length > SAMPLE_ROWS) {
+      lines.push(`- …and ${rows.length - SAMPLE_ROWS} further row${rows.length - SAMPLE_ROWS === 1 ? "" : "s"} on this sheet (${rows.length} in total, all of them read)`);
+    }
+    notes.push(`sheet "${name}": ${rows.length} row${rows.length === 1 ? "" : "s"} × ${width} column${width === 1 ? "" : "s"}${hitRowCap ? " (at the read cap)" : ""}`);
     if (lines.join("\n").length > maxChars) {
       return refuse("parsed-too-large", `this workbook is larger than one proposal can hold (${Math.round(maxChars / 1000)}k characters of structure). Drop the sheet that matters.`);
     }
@@ -431,7 +458,10 @@ function columnLabel(index: number): string {
   return s;
 }
 
-function rowValues(xml: string, shared: string[]): string[][] {
+/** Rows, and whether the read stopped at `MAX_SHEET_ROWS`. The flag is the whole
+ *  point: without it the caller cannot tell "this sheet has 400 rows" from "this
+ *  sheet has more rows than were counted", and those two are different claims. */
+function rowValues(xml: string, shared: string[]): { rows: string[][]; hitRowCap: boolean } {
   const rows: string[][] = [];
   for (const rowMatch of xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
     const cells: string[] = [];
@@ -452,9 +482,9 @@ function rowValues(xml: string, shared: string[]): string[][] {
       cells[index] = text;
     }
     if (cells.some((c) => c !== "")) rows.push(cells);
-    if (rows.length >= 400) break;
+    if (rows.length >= MAX_SHEET_ROWS) return { rows, hitRowCap: true };
   }
-  return rows;
+  return { rows, hitRowCap: false };
 }
 
 /* ── PPTX ────────────────────────────────────────────────────────────────── */
@@ -464,7 +494,7 @@ const MAX_SLIDES = 200;
 /** One heading per slide, the title as its own heading, the rest as bullets. */
 export async function parsePptx(bytes: Uint8Array, maxChars: number): Promise<ParseResult> {
   const parts = await openParts(bytes);
-  if (!parts) return refuse("unrecognised-binary", "that .pptx would not open as a deck.");
+  if (!parts.ok) return refuse("corrupt-archive", `that .pptx would not open as a deck: ${parts.reason}`);
   const presentation = await parts.text("ppt/presentation.xml");
   const presRels = relTargets(await parts.text("ppt/_rels/presentation.xml.rels"));
   const ordered: string[] = [];

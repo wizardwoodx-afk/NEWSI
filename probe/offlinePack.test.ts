@@ -26,6 +26,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { ENGINE_VERSION } from "../src/version";
 import { buildOfflinePack } from "../tools/build-offline-verify.mjs";
 import { listProbeSuites } from "../tools/probe-list.mjs";
 
@@ -147,9 +148,13 @@ ok("BUILD-INFO.txt's gate line is machine-generated, not hand-typed",
   (buildInfo.match(/^gate: .*/m) ?? ["no gate line"])[0]);
 ok("the record does not carry a stale hard-coded pass count",
   !/42 passed, 0 failed/.test(buildInfo), "a fixed count from an old build is still in the record");
+/* This compared the manifest against the literal "19.7.15", so every engine bump
+   failed it until someone remembered to edit a probe. The thing being verified is
+   that the pack names the SAME release the source does, so read the release from
+   the source of truth instead of pinning a copy of it here. */
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { version: string };
-ok(`the manifest names this release and the exact esbuild that built it (product ${pkg.version}, engine MJ ${manifest.mjVersion})`,
-  manifest.productVersion === pkg.version && manifest.mjVersion === "19.7.15" && typeof manifest.esbuild === "string" && manifest.esbuild.length > 0 && manifest.suiteCount === packed.length,
+ok(`the manifest names this release and the exact esbuild that built it (product ${pkg.version}, engine MJ ${ENGINE_VERSION})`,
+  manifest.productVersion === pkg.version && manifest.mjVersion === ENGINE_VERSION && typeof manifest.esbuild === "string" && manifest.esbuild.length > 0 && manifest.suiteCount === packed.length,
   `manifest: product ${manifest.productVersion}, engine MJ ${manifest.mjVersion}, esbuild ${manifest.esbuild}, ${manifest.suiteCount} suites`);
 fs.rmSync(tmp, { recursive: true, force: true });
 

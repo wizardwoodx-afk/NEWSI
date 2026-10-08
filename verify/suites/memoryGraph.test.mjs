@@ -386,9 +386,28 @@ function graph() {
   return loadGraph();
 }
 function titleFromMessages(messages) {
-  const first = messages.find((m) => m.role === "user")?.text ?? messages[0]?.text ?? "a conversation";
-  const t = first.replace(/\s+/g, " ").trim();
-  return t.length > 52 ? `${t.slice(0, 49)}\u2026` : t || "a conversation";
+  const first = messages.find((m) => m.role === "user")?.text ?? messages[0]?.text ?? "";
+  let chars = Array.from(first.replace(/\s+/g, " ").trim());
+  if (chars.length === 0) return "a conversation";
+  const whole = chars.join("");
+  for (let i = 0; i < 4; i += 1) {
+    const s3 = chars.join("");
+    const next = Array.from(s3.replace(FILLER, "").replace(ASK, "").replace(/^[\s,!.:;]+/, "").trim());
+    if (next.length === 0 || next.length === chars.length) break;
+    chars = next;
+  }
+  const cap = (v) => v.charAt(0).toUpperCase() + v.slice(1);
+  let s2 = chars.join("").replace(/[?!.,;:]+$/g, "").replace(/\s+/g, " ").trim();
+  if (s2 && Array.from(s2.replace(FILLER, "").replace(ASK, "").replace(/^[\s,!.:;]+/, "").trim()).length === 0) {
+    s2 = whole.replace(/[?!.,;:]+$/g, "").replace(/\s+/g, " ").trim();
+  }
+  if (!s2) s2 = whole.replace(/[?!.,;:]+$/g, "").trim();
+  if (!s2) return "a conversation";
+  chars = Array.from(s2);
+  if (chars.length <= 48) return cap(s2);
+  const head = chars.slice(0, 48).join("");
+  const at2 = Math.max(head.lastIndexOf(" "), head.lastIndexOf(","));
+  return `${cap((at2 > 20 ? head.slice(0, at2) : head).replace(/[?!.,;:]+$/g, ""))}\u2026`;
 }
 function ingestSession(messages, opts) {
   if (!memoryEnabled()) {
@@ -610,7 +629,7 @@ function graphStats() {
   const g2 = loadGraph();
   return { sessions: g2.sessions.length, nodes: g2.nodes.length, edges: g2.edges.length, evicted: g2.evicted ?? null };
 }
-var GRAPH_KEY, ENABLED_KEY, NODE_CAP, EDGE_CAP, SESSION_CAP, MSG_CAP_PER_SESSION, STOP, EMPTY, memCache, lockedAtBoot, saveToken, persistNote, persistInFlight, ALIAS_GROUPS, ALIAS_OF, escapeRe, MONTHS, REHYDRATION_MARK;
+var GRAPH_KEY, ENABLED_KEY, NODE_CAP, EDGE_CAP, SESSION_CAP, MSG_CAP_PER_SESSION, STOP, EMPTY, memCache, lockedAtBoot, saveToken, persistNote, persistInFlight, FILLER, ASK, ALIAS_GROUPS, ALIAS_OF, escapeRe, MONTHS, REHYDRATION_MARK;
 var init_memoryGraph = __esm({
   "src/engine/memoryGraph.ts"() {
     "use strict";
@@ -631,6 +650,8 @@ var init_memoryGraph = __esm({
     saveToken = 0;
     persistNote = null;
     persistInFlight = Promise.resolve();
+    FILLER = /^(?:hey|hi|hello|yo|so|ok|okay|right|well|now|please|pls|kindly|thanks|thank you)\b[\s,!.:;]*/i;
+    ASK = /^(?:(?:can|could|would|will|shall)\s+(?:you|u|we|i)\b|(?:i\s+)?(?:want|need|wanna|would like)\s+(?:u|you|me|to)\b|let'?s)\s+[\s,!.:;]*/i;
     ALIAS_GROUPS = [
       ["sandbox", "sandboxed", "isolation", "isolate", "jail", "confinement", "container"],
       ["database", "db", "sql", "postgres", "postgresql", "sqlite", "query", "storage"],

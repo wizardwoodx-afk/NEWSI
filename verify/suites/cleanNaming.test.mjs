@@ -29,6 +29,15 @@ var SKIP_PATHS = /* @__PURE__ */ new Set([
   // exempt here and policed instead by probe/legacyCompat.test.ts, which checks
   // that every name in it is allowlisted and still in use.
   path.join("docs", "internal", "LEGACY-COMPAT.md"),
+  // The third-party notices file has exactly one job: to NAME the outside
+  // projects whose licences this product carries, with their real URLs, because
+  // an attribution that does not identify its source is not an attribution. It is
+  // the licence-condition document the owner's policy points at ("the license goes
+  // in the notices; the code stays ours"), so scanning it for outside names makes
+  // this gate fail at its own purpose. LICENSES/ is exempt on the same grounds —
+  // both are shipped precisely so the names travel with the code.
+  "docs_legal_THIRD-PARTY-NOTICES.md",
+  path.join("LICENSES") + path.sep,
   path.join("protocol") + path.sep
 ]);
 var BANNED = new RegExp(

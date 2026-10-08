@@ -817,6 +817,7 @@ pub async fn llm_chat(state: State<'_, Arc<AppState>>, req: Value) -> Result<Val
             &target,
             true,
         ).await?.build().map_err(|e| format!("ollama client: {e}"))?;
+        let started = std::time::Instant::now();
         let r = client.post(&target).json(&body).send().await;
         return match r {
             Ok(resp) => {
@@ -824,7 +825,10 @@ pub async fn llm_chat(state: State<'_, Arc<AppState>>, req: Value) -> Result<Val
                     return Err(format!("ollama returned HTTP {} — is the model pulled?", resp.status().as_u16()));
                 }
                 let j: Value = resp.json().await.unwrap_or(json!({}));
-                Ok(json!({ "content": j.pointer("/message/content").cloned().unwrap_or(json!("")), "model": model, "usage": {"input_tokens": 0, "output_tokens": 0}, "duration_ms": 0 }))
+                // P3 fix: measured, not the hardcoded 0 this used to report — a fabricated
+                // zero reads as real data to anything that graphs latency.
+                let duration_ms = started.elapsed().as_millis() as u64;
+                Ok(json!({ "content": j.pointer("/message/content").cloned().unwrap_or(json!("")), "model": model, "usage": {"input_tokens": 0, "output_tokens": 0}, "duration_ms": duration_ms }))
             }
             Err(e) => Err(format!("ollama: {e}")),
         };
@@ -841,13 +845,23 @@ pub async fn llm_chat(state: State<'_, Arc<AppState>>, req: Value) -> Result<Val
             "llm_chat attaches provider keys only (vh.providerkey.* / provider.*); {secret_ref:?} is not one — nothing was sent and no key left this machine."
         ));
     }
+    // P1 fix (audit): THE VENDOR IS READ OFF THE KEY, NOT OFF THE PAGE. The page names both
+    // halves of the pairing — `secret_ref` (which key) and `provider` (which vendor) — and
+    // nothing used to check they belonged together, so `provider:"openai"` sent with
+    // `secret_ref:"vh.providerkey.anthropic"` shipped the Anthropic key to api.openai.com,
+    // an origin the destination policy then approved out of the attacker's own string.
+    // `kind` is derived natively from the reference and the page's claim must agree with it
+    // (refuses loudly — see grants::provider_kind_for_call); below, the endpoint, the wire
+    // contract and the allowed origin all come from `kind`, never from `provider`.
+    let kind = grants::provider_kind_for_call(provider, secret_ref)
+        .map_err(|e| format!("{e} — nothing was sent and no key left this machine."))?;
     // 16.10.1 (external review — the "universal providers" gap, closed): each
     // kind now has its REAL default endpoint — groq was falling through to the
     // OpenAI URL — and base_url is honored for EVERY cloud kind (BYOK gateways
     // and self-hosted gateways), not just ollama. Anthropic speaks its actual
     // Messages contract: top-level `system`, never a system role message, and
     // its REQUIRED max_tokens is always present.
-    let (default_url, header, is_anthropic) = match provider {
+    let (default_url, header, is_anthropic) = match kind.as_str() {
         "anthropic" => ("https://api.anthropic.com/v1/messages", "x-api-key", true),
         "google" => ("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", "Authorization", false),
         "groq" => ("https://api.groq.com/openai/v1/chat/completions", "Authorization", false),
@@ -861,7 +875,7 @@ pub async fn llm_chat(state: State<'_, Arc<AppState>>, req: Value) -> Result<Val
         let conn = lock_db(&state)?;
         db::provider_endpoint_get(&conn, secret_ref).map_err(|e| e.to_string())?
     }; // the lock is released before any await
-    grants::key_destination_allowed(provider, &url, bound.as_deref())
+    grants::key_destination_allowed(&kind, &url, bound.as_deref())
         .map_err(|e| format!("{e} — nothing was sent and no key left this machine."))?;
     let key = state.secrets.get(secret_ref).ok_or_else(|| format!("secret not found: {secret_ref}"))?;
     // Second gate: resolve once, classify every answer, and PIN the address so
@@ -895,8 +909,17 @@ pub async fn llm_chat(state: State<'_, Arc<AppState>>, req: Value) -> Result<Val
         if let Some(arr) = messages.as_array() {
             msgs.extend(arr.iter().cloned());
         }
-        json!({"model": model, "messages": msgs, "max_tokens": req["max_tokens"]})
+        let mut b = json!({"model": model, "messages": msgs});
+        // P2 fix: this used to write `"max_tokens": null` whenever the caller left it out.
+        // `null` is not "absent" to a strict OpenAI-compatible endpoint — Groq and several
+        // others answer 400 for it, so an optional setting became a hard failure. The key is
+        // only set when there is a real number behind it, and left out otherwise.
+        if let Some(max_tokens) = req["max_tokens"].as_u64() {
+            b["max_tokens"] = json!(max_tokens);
+        }
+        b
     };
+    let started = std::time::Instant::now();
     let mut reqb = client.post(&url).json(&body);
     reqb = if header == "Authorization" { reqb.bearer_auth(&key) } else { reqb.header(header, key.as_str()).header("anthropic-version", "2023-06-01") };
     let resp = reqb.send().await.map_err(|e| e.to_string())?;
@@ -912,7 +935,13 @@ pub async fn llm_chat(state: State<'_, Arc<AppState>>, req: Value) -> Result<Val
     }
     let j: Value = serde_json::from_str(&text).map_err(|e| format!("provider returned a non-JSON body: {e}"))?;
     let content = j.pointer("/choices/0/message/content").or_else(|| j.pointer("/content/0/text")).cloned().unwrap_or(json!(""));
-    Ok(json!({ "content": content, "model": model, "usage": j.get("usage").cloned().unwrap_or(json!({})), "duration_ms": 0 }))
+    // P3 fix: `duration_ms` was a hardcoded 0, which the usage ledger then recorded as a real
+    // latency (a 0ms provider round trip is not a thing). It is now measured around the actual
+    // request — send through response body — so what the Settings page and the cost ledger show
+    // is what the network took. `started.elapsed()` covers the provider round trip only, not the
+    // queueing before it.
+    let duration_ms = started.elapsed().as_millis() as u64;
+    Ok(json!({ "content": content, "model": model, "usage": j.get("usage").cloned().unwrap_or(json!({})), "duration_ms": duration_ms }))
 }
 
 // ---------------------------------------------------------------------------
@@ -1052,12 +1081,12 @@ fn refuse_uncontainable_root(root: &str) -> Option<String> {
     let comps = path_components_lower(&c);
 
     // A drive root (C:\, D:\, \\server\share) is the whole volume, not a folder.
-    let is_drive_root = comps.len() == 1 && comps[0].ends_with(':');
-    // UNC detection reads the RAW input too: normalize_path_str collapses
-    // `\\server\share` to `server/share`, so a lexical-only check on `c`
-    // never sees the leading double backslash at all (C-3 companion).
-    let is_unc_root = (c.starts_with("\\") || root.starts_with("\\")) && comps.len() <= 2;
-    if is_drive_root || is_unc_root {
+    // Read from the RAW input, never from `c`: normalize_path_str folds `C:\` to
+    // `C:`, and Windows resolves a bare `C:` as DRIVE-RELATIVE (that drive's
+    // current directory), so canonicalizing the folded string handed back the
+    // caller's cwd and this refusal silently stopped firing — the check passed
+    // only because the bug cancelled itself out on the machine that wrote it.
+    if is_volume_root(root) {
         return Some(format!(
             "\"{norm}\" is a filesystem/volume root. The workspace boundary would be the entire machine, so it is refused. Pick a project folder inside it instead."
         ));
@@ -1112,6 +1141,22 @@ fn refuse_uncontainable_root(root: &str) -> Option<String> {
     None
 }
 
+/// True when the input names a volume, not a folder: `C:`, `C:\`, `C:/`, the
+/// `\\?\C:\` extended form, or a UNC server/share root. Purely lexical on
+/// purpose — the canonical form of a drive root is not recoverable, because
+/// folding `C:\` to `C:` hands Windows the current directory on that drive.
+fn is_volume_root(raw: &str) -> bool {
+    let comps = path_components_lower(raw);
+    if comps.len() == 1 && comps[0].ends_with(':') {
+        return true;
+    }
+    // The UNC leading `\\` is gone after normalization, so read it off the raw
+    // input: `\\server`, `\\server\share` and their trailing-separator variants
+    // are all the whole namespace.
+    let unslashed = raw.replace('/', "\\");
+    unslashed.starts_with("\\\\") && comps.len() <= 2
+}
+
 /// Lowercased path components — tolerant of `\` vs `/`, empty segments, `.`,
 /// and the Windows extended-length prefix (`\\?\C:\...`, `\\?\UNC\server\share`).
 /// Both sides of every comparison in `refuse_uncontainable_root` go through
@@ -1139,7 +1184,10 @@ pub fn workspace_root_add(app: AppHandle, state: State<'_, Arc<AppState>>, root:
         return Err(format!("sandbox: '{root}' is not an existing directory"));
     }
     // 11.14.4 — the containment boundary may not be widened by the WebView.
-    if let Some(why) = refuse_uncontainable_root(&normalized) {
+    // The RAW root goes in, not the normalized one: normalization erases the
+    // `\\` of a UNC root and the trailing `\` of a drive root, and both refusals
+    // key off exactly those bytes.
+    if let Some(why) = refuse_uncontainable_root(&root) {
         return Err(format!("sandbox: {why} Nothing was registered; the existing roots are unchanged."));
     }
     // Archive-6 audit: the check above refuses system and credential roots, but it left EVERY other
@@ -2111,7 +2159,7 @@ use tauri::Emitter;
  * ────────────────────────────────────────────────────────────────────────── */
 #[cfg(test)]
 mod c3_credential_path_tests {
-    use super::{path_components_lower, refuse_uncontainable_root};
+    use super::{normalize_path_str, path_components_lower, refuse_uncontainable_root};
 
     fn refused(root: &str) -> bool {
         refuse_uncontainable_root(root).is_some()
@@ -2163,6 +2211,21 @@ mod c3_credential_path_tests {
         assert!(refused(r"C:\Windows\System32"), "system32 by components");
         assert!(refused(r"C:\"), "drive root");
         assert!(refused(r"\\server\share"), "UNC share root");
+    }
+
+    #[test]
+    fn a_drive_root_is_refused_in_every_spelling() {
+        // normalize_path_str folds `C:\` to `C:`, which Windows reads as
+        // drive-relative, so the check used to canonicalize the caller's cwd
+        // instead of the volume and let the root through.
+        for spelling in [r"C:\", "C:/", "c:\\", r"D:\", "C:", r"\\?\C:\"] {
+            assert!(refused(spelling), "drive root {spelling:?} must be refused");
+        }
+        assert!(refused(r"\\server"), "UNC server root");
+        assert!(refused(r"\\server\share\"), "UNC share root, trailing separator");
+        // ...and the check reads the raw input, so the folded form the
+        // caller actually stores is refused too.
+        assert!(refused(&normalize_path_str(r"C:\")), "folded drive root");
     }
 
     #[test]

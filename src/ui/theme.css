@@ -1,0 +1,460 @@
+/* SelfImpulse design layer — the visual language of the app.
+ *
+ * This file owns every colour, elevation, focus and motion decision. The
+ * structural sheet (ink.css) supplies layout and component geometry; it
+ * deliberately carries no opinion about what the product looks like, because
+ * everything below overrides its :root palette by being imported after it.
+ *
+ * The ground is Vantablack — #000100, which is the darkest thing a screen can
+ * be asked to show — and that single decision dictates everything below it.
+ * At that bottom there is no room for shadow: a black drop on a black ground
+ * is arithmetically nothing, so depth here is NOT carried by elevation. It is
+ * carried by the surface ramp and by a lit top edge on every control, which is
+ * why the buttons in this app are bevelled objects rather than outlined ones.
+ * Because the void cannot be separated from a panel by darkness, the ramp is
+ * wide — the first surface step is far larger than a lighter finish would need.
+ *
+ * The brand is Pantone 19-3737 TCX Heliotrope. The swatch itself (#4F3872) is
+ * too dark to function as an accent on this ground — 2.1:1, under even the 3:1
+ * non-text bar — so the ramp is anchored to it and lifted: --accent and
+ * --accent-hi hold its hue and its saturation and only its lightness moves,
+ * which is the correct way to lose a Pantone reference rather than replace it.
+ *
+ * That last part is the default finish's decision, not a law for the others.
+ * Every finish below is its own pigment with its own ramp, and none of them is
+ * this one shifted.
+ */
+
+/* The default finish is addressable as a selector as well as by being the root,
+   so a swatch in the Appearance picker can paint itself with the real Dark tokens
+   instead of a hand-copied hex table that goes stale the first time the palette
+   moves — which is exactly what the table in Settings.tsx used to be. */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* ── ground and surfaces ─────────────────────────────────────────────── */
+  --ground: #000100;
+  --surface-1: #0A0B10;
+  --surface-2: #13151C;
+  --surface-3: #1C1F28;
+  --surface-4: #272B37;
+
+  /* ── ink ─────────────────────────────────────────────────────────────── */
+  --ink-1: #EDEFF6;
+  --ink-2: #B7BCCB;
+  --ink-3: #868DA0;
+  --ink-4: #6C7386;
+
+  --line: rgba(236, 240, 252, 0.08);
+  --line-2: rgba(236, 240, 252, 0.16);
+
+  /* The hover wash is a token rather than a literal because a finish that is
+     not this dark cannot borrow it: four percent of light ink over a pale
+     ground is not a hover state, it is nothing at all. */
+  --wash: rgba(236, 240, 252, 0.05);
+
+  /* ── brand ───────────────────────────────────────────────────────────── */
+  /* Each finish's --brand is ITS anchor pigment — the deep, unusable-at-UI-
+     lightness version of the colour the finish is named for — and --accent /
+     --accent-hi are that same hue moved in lightness only. That is what makes a
+     ramp look authored rather than sampled, and probe/theme.test.ts measures the
+     hue angle to hold it. Heliotrope overrides all three; it does not inherit
+     this one. */
+  --brand: #92BF3E;
+  /* Acid lime, taken from the reference card the owner named. On a Vantablack
+     ground it is 15.5:1, which means it can be used as text, as a fill, and as
+     the plate under a card without a single contrast compromise — the opposite
+     of the violet it replaces, which had to be lifted off its own swatch to be
+     legible. Ink on it is near-black, never white: white on lime is 1.4:1. */
+  --accent: #B7F04C;
+  --accent-ink: #0A0F02;
+  --accent-soft: rgba(183, 240, 76, 0.14);
+  --accent-line: rgba(183, 240, 76, 0.46);
+  --accent-hi: #BEF950;
+
+  /* Success has to move COOL now that the brand is a chartreuse: a mint and an
+     acid lime sit close enough on a black ground that "it worked" and "that is
+     the app" become the same dot. Teal, not green, is the verdict colour here. */
+  --ok: #3FD3B4;
+  --warn: #D9A83E;
+  --bad: #FF6B81;
+  --ok-soft: rgba(63, 211, 180, 0.13);
+  --warn-soft: rgba(217, 168, 62, 0.13);
+  --bad-soft: rgba(255, 107, 129, 0.14);
+
+  --ui: "Switzer", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --mono: "Fragment Mono", "Cascadia Mono", ui-monospace, monospace;
+
+  --t-12: 12px; --t-13: 13px; --t-15: 15px; --t-17: 17px; --t-22: 22px; --t-28: 28px;
+
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px;
+  --s-5: 20px; --s-6: 24px; --s-8: 32px; --s-10: 40px; --s-14: 56px;
+
+  /* Nearly oval — but ONLY on controls. --r-ctl is shared by ~40 selectors that
+     are not controls (rail rows, settings sub-nav, code blocks, warning panels),
+     and setting it to 999px turns a code block into a lens. So the squarical
+     radius stays the general-purpose token and the capsule is opted into,
+     explicitly, by the rules that draw something you press or type into. */
+  --r-ctl: 10px; --r-card: 18px; --r-sheet: 26px; --r-pill: 999px;
+  --r-oval: 999px;
+  --r-row: 12px;
+
+  /* The hard offset plate the reference card puts under its panel: a flat slab of
+     brand, shifted down and right, with no blur and no gradient. It is the single
+     most recognisable thing in that image, and it is one box-shadow. */
+  --plate: 10px 12px 0 -2px var(--accent);
+  --plate-sm: 6px 7px 0 -2px var(--accent);
+
+  /* Shadows only earn their keep where they fall ON a surface, so the alpha is
+     high and the blur is tight. On the void itself they are invisible by
+     definition; that job is done by --ctl-hi below. */
+  --el-1: 0 1px 2px rgba(0, 0, 0, 0.70);
+  --el-2: 0 6px 20px rgba(0, 0, 0, 0.62);
+  --el-3: 0 20px 56px rgba(0, 0, 0, 0.72);
+
+  /* ── the haptic recipe ───────────────────────────────────────────────────
+     One spec, used by every raised control, so a button, a chip and the
+     composer all catch the light the same way. Three layers, and each does a
+     different job: --ctl-face is the specular sweep down the front face,
+     --ctl-hi is the lit top edge plus a hairline rim that separates the object
+     from the void, --ctl-drop is the contact shadow under it. Pressing swaps
+     the outer shadow for an inner one and the light comes from below, which is
+     what makes it feel pushed rather than merely recoloured. */
+  --ctl-face: linear-gradient(180deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.012) 46%, rgba(0, 0, 0, 0.14));
+  --ctl-hi: inset 0 1px 0 rgba(255, 255, 255, 0.14), inset 0 0 0 1px rgba(255, 255, 255, 0.045);
+  --ctl-drop: 0 1px 1px rgba(0, 0, 0, 0.75), 0 6px 14px -8px rgba(0, 0, 0, 0.95);
+  --ctl-hi-hover: inset 0 1px 0 rgba(255, 255, 255, 0.22), inset 0 0 0 1px rgba(255, 255, 255, 0.075);
+  --ctl-drop-hover: 0 2px 4px rgba(0, 0, 0, 0.75), 0 14px 28px -12px rgba(0, 0, 0, 1);
+  --ctl-press: inset 0 2px 6px rgba(0, 0, 0, 0.7), inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+  /* The brand face keeps the accent's own hue at its foot and its crown, so a
+     primary button is the pigment with a light on it. Derived rather than
+     literal: a finish that defines --accent must not have another finish's
+     violet painted into it. */
+  --brand-face: linear-gradient(180deg,
+      color-mix(in srgb, var(--accent) 76%, white),
+      var(--accent) 48%,
+      color-mix(in srgb, var(--accent) 80%, black));
+  --brand-drop: 0 1px 1px rgba(0, 0, 0, 0.7), 0 10px 22px -10px color-mix(in srgb, var(--accent) 58%, transparent);
+  --brand-press: inset 0 2px 6px rgba(0, 0, 0, 0.4), inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  --ctl-travel: 1px;
+
+  --fast: 130ms; --base: 200ms; --ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --z-base: 0; --z-sticky: 10; --z-rail: 20; --z-overlay: 40; --z-modal: 100; --z-chrome: 1000;
+
+  --bg: var(--ground); --s1: var(--surface-2); --s2: var(--surface-3); --s3: var(--surface-4);
+  --fg: var(--ink-1); --fg-2: var(--ink-2); --fg-3: var(--ink-3); --fg-4: var(--ink-4);
+  --accent-2: var(--accent); --line-3: var(--line-2);
+  --r: var(--r-ctl); --r2: var(--r-card); --r3: var(--r-sheet);
+  --shadow-1: var(--el-1); --shadow-2: var(--el-2); --shadow-3: var(--el-3);
+  --sp1: var(--s-1); --sp2: var(--s-2); --sp3: var(--s-3); --sp4: var(--s-4);
+  --sp5: var(--s-5); --sp6: var(--s-6); --sp8: var(--s-8);
+
+  --font-ui: var(--ui); --font-mono: var(--mono);
+  --r-sm: var(--r-ctl); --r-md: var(--r-card); --r-lg: var(--r-sheet);
+  --border: var(--line); --border-strong: var(--line-2); --px-line: var(--line);
+  --text: var(--ink-1); --text-dim: var(--ink-2); --text-mute: var(--ink-3); --text-4: var(--ink-4);
+  --panel: var(--surface-1); --bg-panel: var(--surface-1); --bg-input: var(--surface-2);
+  --accent-dim: var(--accent-soft); --amber: var(--warn); --t-fast: var(--fast);
+}
+
+/* ── the other finishes ────────────────────────────────────────────────────
+ * A name is a pigment; which token it becomes is the decision. Charleston
+ * green, licorice and bistre each hold enough ink to be sat under a whole
+ * window, so they are grounds and they bring their own ramp. Glaucous is not:
+ * it is a mid-lightness blue, and poured under an app it leaves no room
+ * between a panel and the text standing on it — so it accents licorice, the
+ * only ground black enough to keep it AA. Field grey is the same problem
+ * mirrored: too dark to read as an accent on any of these blacks, too mid to
+ * be a ground, so it accents a pale finish whose ground is that pigment lifted
+ * until paper can carry it.
+ */
+
+/* Charleston — the house green, taken back to the pigment its name comes from,
+   and lit by the bee: the one hue on this list that cannot be mistaken for the
+   ground it sits on. */
+[data-theme="charleston"] {
+  --ground: #232B2B;
+  --surface-1: #292F2E;
+  --surface-2: #2F3635;
+  --surface-3: #353D3C;
+  --surface-4: #3C4443;
+
+  --ink-1: #E9EDEB;
+  --ink-2: #BDC6C2;
+  --ink-3: #9AA7A1;
+  --ink-4: #6E7B76;
+
+  --line: rgba(228, 240, 236, 0.08);
+  --line-2: rgba(228, 240, 236, 0.15);
+  --wash: rgba(228, 240, 236, 0.055);
+
+  --accent: #E0A32E;
+  --accent-ink: #17120A;
+  --accent-soft: rgba(224, 163, 46, 0.13);
+  --accent-line: rgba(224, 163, 46, 0.58);
+  --accent-hi: #F3CA7C;
+
+  /* Where the brand is honey, the warning cannot also be amber: a gate chip
+     and a primary action on the same hue tell nobody which one is a verdict.
+     Ember is a verdict because the brand stopped being one. */
+  --ok: #5CD0B4;
+  --warn: #FB8E50;
+  --bad: #FA8498;
+  --ok-soft: rgba(92, 208, 180, 0.13);
+  --warn-soft: rgba(251, 142, 80, 0.13);
+  --bad-soft: rgba(250, 132, 152, 0.13);
+}
+
+/* Licorice — the hottest and deepest of the three blacks, and the only ground
+   dark enough to carry glaucous as text. The raised step is what links use,
+   because a mid-lightness pigment loses its margin on a lifted surface. */
+[data-theme="licorice"] {
+  --ground: #1A1110;
+  --surface-1: #211817;
+  --surface-2: #291F1E;
+  --surface-3: #322725;
+  --surface-4: #3D302E;
+
+  --ink-1: #ECE7E5;
+  --ink-2: #B4ACA9;
+  --ink-3: #8E8683;
+  --ink-4: #615A58;
+
+  --line: rgba(238, 232, 230, 0.07);
+  --line-2: rgba(238, 232, 230, 0.13);
+  --wash: rgba(238, 232, 230, 0.045);
+
+  --accent: #6082B6;
+  --accent-ink: #0A0E14;
+  --accent-soft: rgba(96, 130, 182, 0.12);
+  --accent-line: rgba(96, 130, 182, 0.72);
+  --accent-hi: #8FB0DE;
+
+  --ok: #57BE9B;
+  --warn: #D9A83E;
+  --bad: #DE7A8D;
+  --ok-soft: rgba(87, 190, 155, 0.13);
+  --warn-soft: rgba(217, 168, 62, 0.13);
+  --bad-soft: rgba(222, 122, 141, 0.13);
+}
+
+/* Bistre — the honey a second time, on the warmest ground in the house. Its
+   ramp climbs less far than the others: the pigment is already light enough
+   that a taller one would run out of room before the ink started. */
+[data-theme="bistre"] {
+  --ground: #3D2B1F;
+  --surface-1: #443226;
+  --surface-2: #4A372B;
+  --surface-3: #513D30;
+  --surface-4: #574336;
+
+  --ink-1: #F2ECE6;
+  --ink-2: #D2C6BD;
+  --ink-3: #B3A59D;
+  --ink-4: #8D7D72;
+
+  --line: rgba(246, 236, 226, 0.08);
+  --line-2: rgba(246, 236, 226, 0.15);
+  --wash: rgba(246, 236, 226, 0.055);
+
+  --accent: #E0A32E;
+  --accent-ink: #1E130A;
+  --accent-soft: rgba(224, 163, 46, 0.13);
+  --accent-line: rgba(224, 163, 46, 0.62);
+  --accent-hi: #F5C877;
+
+  --ok: #62D6B8;
+  --warn: #FF9155;
+  --bad: #FD8CA1;
+  --ok-soft: rgba(98, 214, 184, 0.13);
+  --warn-soft: rgba(255, 145, 85, 0.13);
+  --bad-soft: rgba(253, 140, 161, 0.13);
+}
+
+/* Feldgrau — the pale finish. A light window cannot borrow the dark
+   elevation: a 45% black spread under a pale card is a bruise, not a shadow. */
+[data-theme="feldgrau"] {
+  color-scheme: light;
+
+  --ground: #E4E7E1;
+  --surface-1: #EDEFE9;
+  --surface-2: #DBDED7;
+  --surface-3: #D1D5CD;
+  --surface-4: #C4C9BE;
+
+  --ink-1: #1B211C;
+  --ink-2: #454F47;
+  --ink-3: #5C665E;
+  --ink-4: #828C84;
+
+  --line: rgba(27, 33, 28, 0.12);
+  --line-2: rgba(27, 33, 28, 0.20);
+  --wash: rgba(27, 33, 28, 0.06);
+
+  --accent: #4D5D53;
+  --accent-ink: #F2F5F0;
+  --accent-soft: rgba(77, 93, 83, 0.12);
+  --accent-line: rgba(77, 93, 83, 0.72);
+  --accent-hi: #3A463F;
+
+  --ok: #1F6B4E;
+  --warn: #6E4712;
+  --bad: #97304A;
+  --ok-soft: rgba(31, 107, 78, 0.10);
+  --warn-soft: rgba(110, 71, 18, 0.10);
+  --bad-soft: rgba(151, 48, 74, 0.10);
+
+  --el-1: 0 1px 2px rgba(20, 26, 20, 0.07);
+  --el-2: 0 6px 20px rgba(20, 26, 20, 0.09);
+  --el-3: 0 20px 56px rgba(20, 26, 20, 0.13);
+}
+
+/* Heliotrope — the same Vantablack void, lit by Pantone 19-3737 TCX instead of
+   lime. It is kept because the owner named it before naming the lime, and it is
+   a finish rather than the default: violet at the lightness a swatch prints at
+   is 2.1:1 on this ground, so it can only ever be an accent you look AT, not one
+   you read. The ramp and the ink are inherited from the default finish whole —
+   a finish that overrides only its brand is a legitimate finish, not an
+   incomplete one. */
+[data-theme="heliotrope"] {
+  --brand: #4F3872;
+  --accent: #7C5CBF;
+  --accent-ink: #FFFFFF;
+  --accent-soft: rgba(124, 92, 191, 0.16);
+  --accent-line: rgba(167, 139, 219, 0.46);
+  --accent-hi: #A78BDB;
+}
+
+/* The picker previews a finish the app is not wearing, so it cannot read the
+   live tokens — the ground is written out once per finish and used nowhere
+   else. Dark and light are painted inline by Settings and skip this. */
+.sw.charleston { background: #232B2B; }
+.sw.licorice { background: #1A1110; }
+.sw.bistre { background: #3D2B1F; }
+.sw.feldgrau { background: #E4E7E1; }
+
+/* ── the parts of "premium" that are not a palette ──────────────────────── */
+
+html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+
+body {
+  font-feature-settings: "cv05", "ss01";
+  letter-spacing: -0.006em;
+}
+
+::selection { background: var(--accent-soft); color: var(--ink-1); }
+
+/* One focus treatment for the whole app. A 1px ring that is the brand at 38%
+   with a 2px halo reads as deliberate; the browser default reads as unfinished. */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--accent-line), 0 0 0 4px var(--accent-soft);
+  border-radius: var(--r-ctl);
+}
+
+/* The rail is the one place the app should look carved rather than painted:
+   it is a darker object beside the content, not a bordered box. */
+.si-rail {
+  background: var(--ground);
+  border-right: 1px solid var(--line);
+}
+
+.si-brand { letter-spacing: -0.02em; font-weight: 640; }
+
+.si-nav-item {
+  border-radius: var(--r-ctl);
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+
+.si-nav-item:hover { background: var(--wash); }
+
+.si-nav-item[aria-current="page"],
+.si-nav-item.is-on {
+  background: var(--accent-soft);
+  color: var(--ink-1);
+}
+
+/* Active nav marks itself with the brand at rest and drops the mark on hover,
+   so the eye finds the current screen without a permanent coloured bar. */
+.si-nav-item.is-on::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  width: 2px;
+  height: 16px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+}
+
+.si-top {
+  background: color-mix(in srgb, var(--surface-1) 82%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+
+/* Buttons: the primary action is a quiet filled object, not a loud one. */
+button, .si-btn { transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease), color var(--fast) var(--ease); }
+
+/* Scrollbars are part of the surface, not an OS intrusion into it. */
+* { scrollbar-width: thin; scrollbar-color: var(--surface-4) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--surface-4); border: 3px solid transparent; background-clip: padding-box; border-radius: var(--r-pill); }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-4); border: 3px solid transparent; background-clip: padding-box; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* ── the shell's colour bridge ────────────────────────────────────────────
+   si.css paints the frame — rail, topbar, composer, cards, gate overlay —
+   entirely from the `--si-*` colour namespace. Those tokens were declared only
+   inside eight `[data-theme]` blocks named holst, obsidian, azure, platinum,
+   titanium, akaroa, caesar and stratos, and none of those ids is a live theme.
+   So every one of them was undefined at runtime, and a declaration like
+   `border: 1px solid var(--si-line-2)` is invalid at computed-value time: the
+   border falls back to `border-style: none` and the background to transparent.
+   The result was a composer with no box, cards with no edge and a topbar with
+   no seam — invisible furniture, not a missing design.
+
+   Mapping the namespace onto the tokens above rather than restating colours
+   means the frame now follows every finish for free, including the four new
+   ones, and cannot drift from them again. */
+:root {
+  --si-bg: var(--ground);
+  --si-bg-2: var(--surface-1);
+  --si-surface: var(--surface-1);
+  --si-surface-2: var(--surface-2);
+  --si-hover: var(--surface-3);
+  --si-ink-soft: var(--surface-2);
+
+  --si-line: var(--line);
+  --si-line-2: var(--line-2);
+  --si-line-3: var(--line-2);
+
+  --si-text: var(--ink-1);
+  --si-text-2: var(--ink-2);
+  --si-text-3: var(--ink-3);
+  --si-text-dim: var(--ink-3);
+
+  --si-accent: var(--accent);
+  --si-accent-2: var(--accent-hi);
+  --si-accent-3: var(--accent-line);
+  --si-accent-ink: var(--accent-ink);
+  --si-accent-soft: var(--accent-soft);
+
+  --si-ok: var(--ok);
+  --si-ok-soft: var(--ok-soft);
+  --si-warn: var(--warn);
+  --si-warn-soft: var(--warn-soft);
+  --si-bad: var(--bad);
+  --si-bad-soft: var(--bad-soft);
+
+  /* Geometry too, not only colour. The shell sheet declares its own 6px control
+     radius at :root; this block is later in the cascade, so the finish owns the
+     radius now and a control cannot be square in one sheet and round in another. */
+  --si-r-ctl: var(--r-ctl);
+  --si-r-card: var(--r-card);
+}

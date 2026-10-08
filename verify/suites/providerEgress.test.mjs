@@ -566,7 +566,7 @@ async function safeEgressFetch(raw, init = {}) {
 }
 
 // src/version.ts
-var ENGINE_VERSION = "19.7.15";
+var ENGINE_VERSION = "19.7.16";
 var ENGINE_SHORT = "19.7";
 var ENGINE_CODENAME = "SelfImpulse";
 var PRODUCT_TITLE = `SelfImpulse (engine MJ ${ENGINE_SHORT} "${ENGINE_CODENAME}")`;
@@ -1752,7 +1752,7 @@ async function loadNativeConfig() {
     const raw = globalThis.localStorage?.getItem(NATIVE_PROVIDER_CONFIG_KEY);
     if (!raw) return null;
     const c = JSON.parse(raw);
-    if (!c.secretRef || !c.kind || !c.baseUrl) return null;
+    if (!c || !c.secretRef || !c.kind || !c.baseUrl) return null;
     const have = (await ipc.secretExists([c.secretRef]))[c.secretRef];
     return have?.exists ? { ...c, apiKey: "" } : null;
   } catch {

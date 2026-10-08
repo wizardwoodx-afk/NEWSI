@@ -29,8 +29,13 @@ import ReactDOM from 'react-dom/client';
 import SelfImpulseApp from './App';
 import { ErrorBoundary } from './panels/ErrorBoundary';
 import { THEMES, DEFAULT_THEME } from './ui/store';
-// SelfImpulse — one stylesheet. The design system lives in src/ui/vh.css; nothing else is imported.
-import './ui/vh.css';
+// ink.css carries layout and component geometry; si.css is the shell's own
+// design system (the rail, the chips, the window controls) and was silently
+// never imported, so the shell rendered unstyled. theme.css loads last because
+// it overrides ink's :root palette.
+import './ui/ink.css';
+import './ui/si/si.css';
+import './ui/theme.css';
 /* §13 — pdf.js parses inside a Worker in the browser and will not start without
  * one. The URL comes from the bundler, so it cannot drift from the shipped
  * pdf.js build, and the seam that takes it imports nothing else — booting the
@@ -82,7 +87,7 @@ if (!(globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) {
   if (!sandboxed) {
     const meta = document.createElement('meta');
     meta.httpEquiv = 'Content-Security-Policy';
-    meta.content = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss: https:; base-uri 'self'; object-src 'none'";
+    meta.content = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; worker-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss: https:; base-uri 'self'; object-src 'none'";
     document.head.appendChild(meta);
   } else {
     console.info("[11h] sandboxed preview frame detected (opaque origin) — the strict CSP is relaxed here on purpose; scripts load from the dev server.");

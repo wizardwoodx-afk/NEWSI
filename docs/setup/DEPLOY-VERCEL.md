@@ -10,6 +10,32 @@ same code the desktop runs.
 `vercel.json`, `.vercelignore` and `.gitignore` are already in the repo. Vercel
 auto-detects the Vite framework; build = `npm ci && npm run build`, output = `dist/`.
 
+## What ships, precisely
+
+**The artifact is the static `dist/` directory.** It is plain files — HTML, JS,
+CSS, fonts, images — and it needs no server of its own: no Node process, no
+`npm start`, nothing to keep alive. Any static host serves it.
+
+Two commands, and the difference matters:
+
+| Command | Output | Use it for |
+|---|---|---|
+| `npm run build` | `dist/`, after `tsc --noEmit` | Anything you ship. A type error fails the build instead of reaching production. |
+| `npm run web:build` | `dist/`, plus a sync into `web-build/` | When you want the standalone web copy kept in step. No typecheck. |
+
+`npm run dev` on `localhost:5173` is a **development server only**. It is not
+the artifact and nothing in `dist/` depends on it running.
+
+`npm run web:build` works on Windows. It used to shell out to POSIX `rm -rf`
+and `cp`, which failed *after* a successful Vite build and exited 1 — a build
+that looked broken while the output was fine.
+
+**A2A federation is the only feature that binds a TCP port**
+(`src/mission/a2aServer.ts`). It defaults to `127.0.0.1` and refuses to widen
+itself: `0.0.0.0` is rejected in words, and a hostname is refused because a
+name can resolve anywhere. In the static `dist/` edition that listener does not
+exist at all, so the browser edition holds no port.
+
 ## Option A — GitHub → Vercel (recommended)
 
 1. Push this repository to GitHub.

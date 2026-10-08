@@ -1954,10 +1954,10 @@ var init_window = __esm({
        * @param count The badge count. Use `undefined` to remove the badge.
        * @return A promise indicating the success or failure of the operation.
        */
-      async setBadgeCount(count) {
+      async setBadgeCount(count2) {
         return invoke("plugin:window|set_badge_count", {
           label: this.label,
-          value: count
+          value: count2
         });
       }
       /**
@@ -2721,7 +2721,7 @@ var ENGINE_VERSION, ENGINE_SHORT, ENGINE_CODENAME, PRODUCT_TITLE;
 var init_version = __esm({
   "src/version.ts"() {
     "use strict";
-    ENGINE_VERSION = "19.7.15";
+    ENGINE_VERSION = "19.7.16";
     ENGINE_SHORT = "19.7";
     ENGINE_CODENAME = "SelfImpulse";
     PRODUCT_TITLE = `SelfImpulse (engine MJ ${ENGINE_SHORT} "${ENGINE_CODENAME}")`;
@@ -5211,6 +5211,72 @@ var DEFAULT_BOUNDARY = {
 
 // src/mission/flightRecorder.ts
 init_id();
+
+// src/security/auditScrub.ts
+var AUDIT_SCRUB_MARKER = "[redacted]";
+var AUDIT_SCRUB_MAX_DEPTH = 16;
+var SENSITIVE_MEMBER = /(?:access[_-]?token|api[_-]?key|authorization|auth[_-]?header|bearer|client[_-]?secret|cookie|credential|password|passphrase|private[_-]?key|provider[_-]?(?:credential|token)|refresh[_-]?token|secret|session[_-]?(?:cookie|token)|token|wallet|x-api[-_])$/i;
+var SAFE_REFERENCE_TAIL = /(?:ids?|refs?|references?|names?|kinds?|counts?|types?|prefixes)$/i;
+var UNSAFE_MEMBER = /^(?:__proto__|constructor|prototype)$/;
+var SECRET_SHAPES = [
+  // any `Authorization`-shaped header line, with or without the header name
+  /\bauthor(?:ization|isation)\s*:?\s*\S+|\bcookie\s*:\s*\S+/gi,
+  // bearer / basic / digest schemes, quoted with or without their scheme word
+  /\b(?:bearer|basic|digest)\s+[A-Za-z0-9._~+/=-]{6,}/gi,
+  // the long key idioms this product's providers actually issue
+  /\b(?:sk|sa|pd|np|sk-proj|sk-svcacct)-[A-Za-z0-9_-]{8,}/gi,
+  /\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{8,}/gi,
+  /\bxox[baprs]-[A-Za-z0-9-]{6,}/gi,
+  /\bAIza[0-9A-Za-z_-]{20,}/g,
+  /\bya29\.[A-Za-z0-9_=-]{10,}/g,
+  /\bAKIA[0-9A-Z]{12,}/g,
+  // a signed token, wherever it came from
+  /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}/g,
+  // an inline `key = value` / `token=value` assignment
+  /\b(?:api[_-]?key|secret|access[_-]?token|refresh[_-]?token|password|passwd|pwd|credential|auth[_-]?token)\s*[:=]\s*[^\s,;]{4,}/gi,
+  // a PEM private key body
+  /-----BEGIN (?:[A-Z ]*)PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z ]*)PRIVATE KEY-----/g
+];
+var CREDENTIAL_URL = /\b([a-z][a-z0-9+.-]*:\/\/)([^\s/:@'"]+):([^\s/@'"]+)@/gi;
+var CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/g;
+function scrubAuditText(text) {
+  if (!text) return text;
+  let out = text.replace(CREDENTIAL_URL, (_all, scheme, user) => `${scheme}${user}:${AUDIT_SCRUB_MARKER}@`);
+  for (const shape of SECRET_SHAPES) out = out.replace(shape, AUDIT_SCRUB_MARKER);
+  return out.replace(CONTROL_CHARACTER, " ");
+}
+function isSensitiveAuditMember(key2) {
+  return SENSITIVE_MEMBER.test(key2) && !SAFE_REFERENCE_TAIL.test(key2);
+}
+function scrubAuditValue(value, visited = /* @__PURE__ */ new WeakSet(), depth = 0) {
+  if (depth > AUDIT_SCRUB_MAX_DEPTH) return AUDIT_SCRUB_MARKER;
+  if (typeof value === "string") return scrubAuditText(value);
+  if (value === null || typeof value !== "object") {
+    return typeof value === "bigint" ? value.toString() : value;
+  }
+  if (visited.has(value)) return AUDIT_SCRUB_MARKER;
+  visited.add(value);
+  if (Array.isArray(value)) return value.map((entry) => scrubAuditValue(entry, visited, depth + 1));
+  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Error) return { name: value.name, reason: AUDIT_SCRUB_MARKER };
+  if (value instanceof Map) {
+    return Object.fromEntries(
+      [...value].map(([k, v2]) => [String(k), isSensitiveAuditMember(String(k)) ? AUDIT_SCRUB_MARKER : scrubAuditValue(v2, visited, depth + 1)])
+    );
+  }
+  if (value instanceof Set) return [...value].map((v2) => scrubAuditValue(v2, visited, depth + 1));
+  const scrubbed = {};
+  for (const [key2, entry] of Object.entries(value)) {
+    if (UNSAFE_MEMBER.test(key2)) continue;
+    scrubbed[key2] = isSensitiveAuditMember(key2) ? AUDIT_SCRUB_MARKER : scrubAuditValue(entry, visited, depth + 1);
+  }
+  return scrubbed;
+}
+function scrubAuditLines(lines) {
+  return (lines ?? []).map(scrubAuditText);
+}
+
+// src/mission/flightRecorder.ts
 var listeners = /* @__PURE__ */ new Set();
 var FlightRecorder = class {
   events = [];
@@ -5251,10 +5317,10 @@ var FlightRecorder = class {
       actor: input.actor,
       authority: input.authority,
       policy: input.policy || "none-required",
-      reason: input.reason,
-      evidence: input.evidence ?? [],
+      reason: scrubAuditText(input.reason),
+      evidence: scrubAuditLines(input.evidence),
       subjectId: input.subjectId ?? null,
-      data: input.data ?? {}
+      data: scrubAuditValue(input.data ?? {})
     };
     this.events.push(event);
     for (const fn of listeners) {
@@ -6533,8 +6599,8 @@ var OrganizationRuntime = class {
   agents() {
     return [...this.agentMap.values()];
   }
-  agentsInState(...states) {
-    const set = new Set(states);
+  agentsInState(...states2) {
+    const set = new Set(states2);
     return this.agents().filter((a) => set.has(a.state));
   }
   agent(id) {
@@ -6549,8 +6615,8 @@ var OrganizationRuntime = class {
   task(id) {
     return this.taskMap.get(id) ?? null;
   }
-  tasksInState(...states) {
-    const set = new Set(states);
+  tasksInState(...states2) {
+    const set = new Set(states2);
     return this.tasks_().filter((t) => set.has(t.state));
   }
   /** §24 Tasks whose dependencies are all DONE and which are not approval-gated. */
@@ -9319,11 +9385,16 @@ function asKV(store) {
   const m2 = store;
   return { get: (k) => m2.get(k) ?? null, set: (k, v2) => void m2.set(k, v2) };
 }
+var hostDefault = null;
 function defaultDurableKV() {
+  if (hostDefault) return hostDefault;
   const ls = globalThis.localStorage;
-  if (ls && typeof ls.getItem === "function") return asKV(ls);
-  const mem = /* @__PURE__ */ new Map();
-  return { get: (k) => mem.get(k) ?? null, set: (k, v2) => void mem.set(k, v2) };
+  if (ls && typeof ls.getItem === "function") hostDefault = asKV(ls);
+  else {
+    const mem = /* @__PURE__ */ new Map();
+    hostDefault = { get: (k) => mem.get(k) ?? null, set: (k, v2) => void mem.set(k, v2) };
+  }
+  return hostDefault;
 }
 var digestOf = (s) => pureSha256(s);
 var key = (missionId) => `vh.durable.${missionId}`;
@@ -9386,6 +9457,305 @@ var DoneLedger = class {
   }
 };
 
+// src/security/actionGraph.ts
+function stableStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const entries = Object.entries(value).filter(([, v2]) => v2 !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  return `{${entries.map(([k, v2]) => `${JSON.stringify(k)}:${stableStringify(v2)}`).join(",")}}`;
+}
+
+// src/mission/retryLanes.ts
+var RETRY_ACCOUNTING_FIELD = "siRetry";
+function count(value) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+var EMPTY_RETRY_ACCOUNTING = {
+  format: "si-retry-accounting/1",
+  failureRetries: 0,
+  continuations: 0,
+  humanWaits: 0,
+  busyWaits: 0,
+  lastLane: "continuation"
+};
+function savedRetryAccounting(state) {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return null;
+  const block = state[RETRY_ACCOUNTING_FIELD];
+  if (!block || typeof block !== "object" || Array.isArray(block)) return null;
+  const b = block;
+  if (b.format !== "si-retry-accounting/1") return null;
+  const failureRetries = count(b.failureRetries);
+  const continuations = count(b.continuations);
+  const humanWaits = count(b.humanWaits);
+  const busyWaits = count(b.busyWaits);
+  if (failureRetries === null || continuations === null || humanWaits === null || busyWaits === null) return null;
+  const lanes = ["failure", "awaiting-human", "busy", "continuation"];
+  const lastLane = lanes.includes(b.lastLane) ? b.lastLane : "failure";
+  return { format: "si-retry-accounting/1", failureRetries, continuations, humanWaits, busyWaits, lastLane };
+}
+function laneOfLabel(label) {
+  const l = (label ?? "").toLowerCase();
+  if (/awaiting[-_ ]human|human approval|approval gate|awaiting your|at the gate|decision expired|waiting on a human/.test(l)) return "awaiting-human";
+  if (/busy|rate[-_ ]limit|\b429\b|lane is full|dispatch lane|pool wait|resource exhausted|deadline/.test(l)) return "busy";
+  if (/wave settled|capability redeemed|after planning|after reorganization|resuming|resumed|rollback point|decision granted|settled a (?:new|fresh) budget/.test(l)) return "continuation";
+  return "failure";
+}
+function historicalFailureRetries(entries) {
+  return entries.reduce((n, e) => laneOfLabel(e.label) === "failure" ? n + 1 : n, 0);
+}
+function advanceRetryAccounting(prior, lane) {
+  const next = {
+    format: "si-retry-accounting/1",
+    failureRetries: prior.failureRetries,
+    continuations: prior.continuations,
+    humanWaits: prior.humanWaits,
+    busyWaits: prior.busyWaits,
+    lastLane: lane
+  };
+  if (lane === "failure") next.failureRetries = prior.failureRetries + 1;
+  else if (lane === "awaiting-human") next.humanWaits = prior.humanWaits + 1;
+  else if (lane === "busy") next.busyWaits = prior.busyWaits + 1;
+  else next.continuations = prior.continuations + 1;
+  return next;
+}
+function stateWithRetryAccounting(state, accounting) {
+  if (state !== null && typeof state === "object" && !Array.isArray(state)) {
+    return { ...state, [RETRY_ACCOUNTING_FIELD]: accounting };
+  }
+  return { payload: state ?? null, [RETRY_ACCOUNTING_FIELD]: accounting };
+}
+
+// src/mission/runCheckpoints.ts
+var RUN_JOURNAL_VERSION = 2;
+var RUN_JOURNAL_KEY = "vh.run.journal.v2";
+var chainOf = /* @__PURE__ */ new Map();
+var states = /* @__PURE__ */ new Map();
+var journalStore = null;
+function activeStore() {
+  journalStore ??= defaultDurableKV();
+  return journalStore;
+}
+var lastWriteRefusal = "";
+function lastJournalWriteRefusal() {
+  return lastWriteRefusal;
+}
+var digestOf2 = (s) => pureSha256(stableStringify(s ?? null));
+var entryDigestOf = (missionId, step, label, stateDigest, prevDigest, at) => pureSha256(`${missionId}|${step}|${label}|${stateDigest}|${prevDigest}|${at}`);
+function stateTable(runId) {
+  let table = states.get(runId);
+  if (!table) {
+    table = /* @__PURE__ */ new Map();
+    states.set(runId, table);
+  }
+  return table;
+}
+function checkpoint(runId, missionId, step, label, state) {
+  const chain = chainOf.get(runId) ?? [];
+  const prev = chain[chain.length - 1];
+  const at = Date.now();
+  const stateDigest = digestOf2(state);
+  const prevDigest = prev ? prev.entryDigest : "";
+  const entryDigest = entryDigestOf(missionId, step, label, stateDigest, prevDigest, at);
+  const cp = {
+    runId,
+    missionId,
+    step,
+    label,
+    stateDigest,
+    prevDigest,
+    entryDigest,
+    at
+  };
+  chain.push(cp);
+  chainOf.set(runId, chain);
+  stateTable(runId).set(stateDigest, stableStringify(state ?? null));
+  persistRunJournal();
+  return cp;
+}
+function retryAccounting(runId) {
+  const chain = chainOf.get(runId);
+  if (!chain || chain.length === 0) return { ...EMPTY_RETRY_ACCOUNTING };
+  const last = chain[chain.length - 1];
+  const raw = states.get(runId)?.get(last.stateDigest);
+  let saved = null;
+  if (raw) {
+    try {
+      saved = savedRetryAccounting(JSON.parse(raw));
+    } catch {
+      saved = null;
+    }
+  }
+  const historical = historicalFailureRetries(chain);
+  if (!saved) {
+    const labels = chain.map((cp) => ({ label: cp.label }));
+    return {
+      format: "si-retry-accounting/1",
+      failureRetries: historical,
+      continuations: labels.reduce((n, e) => laneOfLabel(e.label) === "continuation" ? n + 1 : n, 0),
+      humanWaits: labels.reduce((n, e) => laneOfLabel(e.label) === "awaiting-human" ? n + 1 : n, 0),
+      busyWaits: labels.reduce((n, e) => laneOfLabel(e.label) === "busy" ? n + 1 : n, 0),
+      lastLane: laneOfLabel(last.label)
+    };
+  }
+  return { ...saved, failureRetries: Math.max(saved.failureRetries, historical) };
+}
+function recordLaneCheckpoint(runId, missionId, step, lane, label, state) {
+  const accounting = advanceRetryAccounting(retryAccounting(runId), lane);
+  return checkpoint(runId, missionId, step, label, stateWithRetryAccounting(state, accounting));
+}
+function persistRunJournal() {
+  try {
+    const raw = runJournal();
+    asKV(activeStore()).set(RUN_JOURNAL_KEY, raw);
+    const parsed = JSON.parse(raw);
+    lastWriteRefusal = "";
+    return { ok: true, runs: Object.keys(parsed.runs).length, bytes: raw.length };
+  } catch (e) {
+    lastWriteRefusal = `the run journal could not be written (${e instanceof Error ? e.message : String(e)}) \xE2\u20AC\u201D a restart would have nothing to resume from.`;
+    return { ok: false, refused: lastWriteRefusal };
+  }
+}
+function verifyRunChain(runId) {
+  const chain = chainOf.get(runId);
+  if (!chain || chain.length === 0) return { ok: false, reason: "unknown-run", detail: `no checkpoints recorded for ${runId}` };
+  let prev = null;
+  for (let i = 0; i < chain.length; i++) {
+    const cp = chain[i];
+    const expectedPrev = prev ? prev.entryDigest : "";
+    if (cp.prevDigest !== expectedPrev) {
+      return { ok: false, reason: "broken-link", detail: `checkpoint ${i} (${cp.label}) points at ${cp.prevDigest.slice(0, 12)} but the previous entry digest is ${expectedPrev.slice(0, 12)}` };
+    }
+    const recompute = entryDigestOf(cp.missionId, cp.step, cp.label, cp.stateDigest, cp.prevDigest, cp.at);
+    if (cp.entryDigest !== recompute) {
+      return { ok: false, reason: "edited-entry", detail: `checkpoint ${i} (${cp.label}) does not match its own digest \xE2\u20AC\u201D a field was edited` };
+    }
+    if (cp.step < 0 || !cp.label) {
+      return { ok: false, reason: "malformed", detail: `checkpoint ${i} is malformed` };
+    }
+    prev = cp;
+  }
+  return { ok: true, length: chain.length };
+}
+function resumeRunFrom(runId) {
+  const verdict = verifyRunChain(runId);
+  if (!verdict.ok) return verdict;
+  const chain = chainOf.get(runId);
+  const last = chain[chain.length - 1];
+  const snapshot = states.get(runId)?.get(last.stateDigest);
+  if (snapshot === void 0) {
+    return {
+      ok: false,
+      reason: "state-missing",
+      detail: `the chain for ${runId} verifies, but the state snapshot for step ${last.step} ("${last.label}") is not in the journal \xE2\u20AC\u201D refusing to resume into a state nobody can prove.`
+    };
+  }
+  let parsedState;
+  try {
+    parsedState = JSON.parse(snapshot);
+  } catch {
+    return { ok: false, reason: "state-unreadable", detail: `the state snapshot for ${runId} step ${last.step} is not readable JSON \xE2\u20AC\u201D refused rather than resumed.` };
+  }
+  if (digestOf2(parsedState) !== last.stateDigest) {
+    return {
+      ok: false,
+      reason: "state-swapped",
+      detail: `the state snapshot for ${runId} step ${last.step} does not match the digest the chain committed to \xE2\u20AC\u201D it was swapped after the fact; refused.`
+    };
+  }
+  return {
+    ok: true,
+    runId,
+    missionId: last.missionId,
+    fromStep: last.step,
+    label: last.label,
+    state: parsedState,
+    checkpoints: chain.length,
+    failureRetries: retryAccounting(runId).failureRetries,
+    retryAccounting: retryAccounting(runId)
+  };
+}
+function runJournal(runId) {
+  const runs = {};
+  const stateDoc = {};
+  if (runId) {
+    runs[runId] = chainOf.get(runId) ?? [];
+    stateDoc[runId] = Object.fromEntries(states.get(runId) ?? /* @__PURE__ */ new Map());
+  } else {
+    for (const [rid, chain] of chainOf) {
+      runs[rid] = chain;
+      stateDoc[rid] = Object.fromEntries(states.get(rid) ?? /* @__PURE__ */ new Map());
+    }
+  }
+  const doc = { schemaVersion: RUN_JOURNAL_VERSION, savedAt: (/* @__PURE__ */ new Date()).toISOString(), runs, states: stateDoc };
+  return JSON.stringify(doc);
+}
+function restoreRunJournal(snapshot) {
+  let parsed;
+  try {
+    parsed = JSON.parse(snapshot);
+  } catch {
+    return { ok: false, reason: "malformed", detail: "the journal is not valid JSON" };
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return { ok: false, reason: "malformed", detail: "not a SelfImpulse run journal" };
+  }
+  const version = typeof parsed.schemaVersion === "number" ? parsed.schemaVersion : parsed.v === 1 ? 1 : void 0;
+  if (version === void 0) {
+    return { ok: false, reason: "unknown-version", detail: "the journal carries no schema version \xE2\u20AC\u201D refused rather than guessed at." };
+  }
+  if (version !== 1 && version !== RUN_JOURNAL_VERSION) {
+    return { ok: false, reason: "unknown-version", detail: `journal schema version ${version} is not one this build understands (it reads 1 and ${RUN_JOURNAL_VERSION}) \xE2\u20AC\u201D refused rather than guessed at.` };
+  }
+  if (typeof parsed.runs !== "object" || parsed.runs === null) {
+    return { ok: false, reason: "malformed", detail: "not a SelfImpulse run journal" };
+  }
+  const rawStates = typeof parsed.states === "object" && parsed.states !== null ? parsed.states : {};
+  let runs = 0;
+  for (const [rid, chain] of Object.entries(parsed.runs)) {
+    if (!Array.isArray(chain)) continue;
+    const entries = [];
+    for (const entry of chain) {
+      if (!entry || typeof entry !== "object") {
+        return { ok: false, reason: "malformed", detail: `checkpoint ${entries.length} of run ${rid} is not an object \xE2\u20AC\u201D the journal is corrupt.` };
+      }
+      entries.push(entry);
+    }
+    chainOf.set(rid, entries);
+    const table = /* @__PURE__ */ new Map();
+    const perRun = rawStates[rid];
+    if (perRun && typeof perRun === "object") {
+      for (const [digest, value] of Object.entries(perRun)) {
+        if (typeof value === "string") table.set(digest, value);
+      }
+    }
+    states.set(rid, table);
+    runs += 1;
+  }
+  return { ok: true, runs };
+}
+function resumeRun(runId, store) {
+  const kv = asKV(store ?? activeStore());
+  const raw = kv.get(RUN_JOURNAL_KEY);
+  if (raw === null) {
+    const memory = chainOf.get(runId);
+    if (!memory || memory.length === 0) {
+      return { ok: false, reason: "no-journal", detail: `no run journal is stored on this host, so ${runId} has nothing to resume \xE2\u20AC\u201D this is a fresh run, not a resume.` };
+    }
+    const verdict2 = resumeRunFrom(runId);
+    return verdict2.ok ? { ...verdict2, source: "memory" } : verdict2;
+  }
+  const loaded = restoreRunJournal(raw);
+  if (!loaded.ok) {
+    return {
+      ok: false,
+      reason: loaded.reason,
+      detail: `a run journal is stored for this host but could not be read: ${loaded.detail} Refusing to start ${runId} fresh over a journal that existed.`
+    };
+  }
+  const verdict = resumeRunFrom(runId);
+  return verdict.ok ? { ...verdict, source: "journal" } : verdict;
+}
+
 // src/mission/missionRuntime.ts
 function boundaryStatements(b) {
   return [
@@ -9447,6 +9817,12 @@ var MissionRuntime = class {
   startedAt = Date.now();
   finalArtifactIds = [];
   simulatedUsed = false;
+  /** 19.7.16 — where the run picked up, once the durable chain has answered.
+   *  `null` means "nothing was resumed" (a first run) or "the chain refused
+   *  and said why" — the refusals are in `resumeRefusals`, never folded
+   *  silently into this field. */
+  resumePoint = null;
+  resumeRefusalLog = [];
   constructor(mission, services, options = {}) {
     this.mission = mission;
     this.services = services;
@@ -9646,7 +10022,28 @@ var MissionRuntime = class {
     try {
       const res = durableResume(this, this.durableKV);
       if (res.ok) this.transition("RUNNING", `Durable resume: ${res.completedNodeIds.length} completed nodes restored (snapshot saved ${res.savedAt}) \u2014 finished work is not repeated.`);
-    } catch {
+      else if (res.refused.startsWith("no durable snapshot")) {
+      } else {
+        this.noteResumeRefusal("runtime-state", res.refused);
+      }
+    } catch (e) {
+      this.noteResumeRefusal("runtime-state", `durability raised on this host (${e instanceof Error ? e.message : String(e)}) \u2014 the mission runs, but nothing durable was restored.`);
+    }
+    const chain = resumeRun(this.durableRunId(), this.durableKV);
+    if (chain.ok) {
+      this.resumePoint = { fromStep: chain.fromStep, label: chain.label, checkpoints: chain.checkpoints, source: chain.source };
+      this.recorder.record({
+        kind: "MISSION_STATUS",
+        actor: "runtime",
+        authority: "policy:durable-run",
+        policy: "mission.resume-run-chain",
+        reason: `Run chain ${this.durableRunId()} reloaded from ${chain.source}: resuming at step ${chain.fromStep} ("${chain.label}") across ${chain.checkpoints} checkpoint(s).`,
+        evidence: [`source=${chain.source}`, `checkpoints=${chain.checkpoints}`],
+        subjectId: this.mission.missionId,
+        data: { runId: this.durableRunId(), fromStep: chain.fromStep, label: chain.label, source: chain.source, checkpoints: chain.checkpoints }
+      });
+    } else if (chain.reason !== "no-journal" && chain.reason !== "unknown-run") {
+      this.noteResumeRefusal("run-chain", chain.detail);
     }
     let guard = 0;
     while (!this.cancelled && guard++ < 200) {
@@ -9729,6 +10126,11 @@ var MissionRuntime = class {
     if (step?.requiresApproval || task.risk === "CRITICAL" || task.cls === "APPROVAL_GATED") {
       const approved = await this.requestApproval(task, step);
       if (!approved) {
+        this.checkpoint(
+          `awaiting-human "${task.title}"`,
+          "The run is parked on a human approval gate. Waiting is not failing: this step charges no failure retry.",
+          "awaiting-human"
+        );
         this.org.setState(taskId, "BLOCKED", { error: "Awaiting or denied by human approval.", actor: "approval-gate" });
         return;
       }
@@ -9742,7 +10144,11 @@ var MissionRuntime = class {
       return;
     }
     if (step?.requiresApproval || task.risk === "CRITICAL" || task.cls === "APPROVAL_GATED") {
-      this.checkpoint(`before "${task.title}"`, "A human approved this risk-bearing action; this is the rollback point for it.");
+      this.checkpoint(
+        `before "${task.title}"`,
+        "A human approved this risk-bearing action; this is the rollback point for it.",
+        "continuation"
+      );
     }
     this.org.delegate(taskId, agent.agentId, `Plan step "${step?.title ?? task.title}" assigned to ${agent.title}.`, "runtime");
     this.org.setState(taskId, "RUNNING", { actor: agent.agentId });
@@ -10101,17 +10507,19 @@ var MissionRuntime = class {
     if (!task) return;
     if (this.repairInFlight.has(taskId)) return;
     if (this.repairExhausted.has(taskId)) return;
-    const count = (this.repairCount.get(taskId) ?? 0) + 1;
-    this.repairCount.set(taskId, count);
-    if (count > this.options.maxRepairAttempts || this.repairs.length >= this.options.maxRepairAttempts * Math.max(1, this.org.tasks_().length)) {
+    const count2 = (this.repairCount.get(taskId) ?? 0) + 1;
+    this.repairCount.set(taskId, count2);
+    const durableFailureRetries = retryAccounting(this.durableRunId()).failureRetries;
+    const ladderUsed = Math.max(this.repairs.length, durableFailureRetries);
+    if (count2 > this.options.maxRepairAttempts || ladderUsed >= this.options.maxRepairAttempts * Math.max(1, this.org.tasks_().length)) {
       this.repairExhausted.add(taskId);
       this.recorder.record({
         kind: "FAILURE_DETECTED",
         actor: "supervisor",
         authority: "policy:repair-budget",
         policy: `budget.maxRetriesPerTask=${this.options.maxRepairAttempts}`,
-        reason: `Repair budget exhausted for "${task.title}" after ${count - 1} attempt(s). Escalating instead of retrying.`,
-        evidence: [`repairAttempts=${count - 1}`, `strategiesTried=${(this.triedStrategies.get(taskId) ?? []).join(", ")}`],
+        reason: `Repair budget exhausted for "${task.title}" after ${count2 - 1} attempt(s). Escalating instead of retrying.`,
+        evidence: [`repairAttempts=${count2 - 1}`, `durableFailureRetries=${durableFailureRetries}`, `strategiesTried=${(this.triedStrategies.get(taskId) ?? []).join(", ")}`],
         subjectId: taskId,
         data: { failureKind: "TOOL_FAILURE_LOOP", severity: "CRITICAL" }
       });
@@ -10120,14 +10528,18 @@ var MissionRuntime = class {
     }
     this.repairInFlight.add(taskId);
     try {
-      await this.repairInner(task, count);
+      await this.repairInner(task, count2);
     } finally {
       this.repairInFlight.delete(taskId);
     }
   }
   async repairInner(task, attemptNumber) {
     const taskId = task.taskId;
-    this.checkpoint(`before repairing "${task.title}"`, `Repair attempt ${attemptNumber}: the pre-repair organization state.`);
+    this.checkpoint(
+      `before repairing "${task.title}"`,
+      `Repair attempt ${attemptNumber}: the pre-repair organization state.`,
+      "failure"
+    );
     const failure = {
       id: uid("fail"),
       missionId: this.mission.missionId,
@@ -10420,6 +10832,12 @@ Deliver the smallest increment that satisfies: ${this.mission.successCriteria[0]
   }
   async drainApprovals() {
     const pending = this.services.approvals.pendingForMission(this.mission.missionId);
+    if (!pending.length) return;
+    this.checkpoint(
+      "awaiting-human (approval gate)",
+      `Parked on ${pending.length} unanswered approval(s): ${pending.map((a) => a.id).join(", ")}. Waiting is not failing.`,
+      "awaiting-human"
+    );
     for (const req of pending) {
       await this.services.approvals.waitFor(req.id, this.options.approvalTimeoutMs, () => this.cancelled);
     }
@@ -10471,7 +10889,7 @@ Deliver the smallest increment that satisfies: ${this.mission.successCriteria[0]
     this.supervisor.markExecuted(recId, rec.reason);
   }
   /* ------------------------------------------------------------------ §26 checkpoints */
-  checkpoint(label, reason) {
+  checkpoint(label, reason, lane) {
     this.services.checkpoints.take(
       {
         missionId: this.mission.missionId,
@@ -10490,6 +10908,7 @@ Deliver the smallest increment that satisfies: ${this.mission.successCriteria[0]
       this.recorder
     );
     this.mission.checkpointId = this.services.checkpoints.latest(this.mission.missionId)?.checkpointId ?? null;
+    this.appendRunCheckpoint(label, reason, lane);
   }
   restoreCheckpoint(checkpointId, reason) {
     const cp = this.services.checkpoints.rollbackTo(checkpointId, this.recorder, "supervisor", reason);
@@ -10504,6 +10923,99 @@ Deliver the smallest increment that satisfies: ${this.mission.successCriteria[0]
     }
     this.completedNodeIds = new Set(this.graph.nodes.filter((n) => cp.taskStates[taskForNode(this, n.id)] === "DONE").map((n) => n.id));
     return true;
+  }
+  /* ------------------------------------------------------------------ §26 durable runs */
+  /** The run id this mission's steps land on in the durable chain. The
+   *  executor and the human gate use the same `run:<slug>` convention, so
+   *  one mission's chain is one chain from every seat that records it. */
+  durableRunId() {
+    return `run:${this.mission.missionId}`;
+  }
+  /** Where the durable chain says this run picked up, or null when nothing
+   *  was resumed. Read by the UI alongside `resumeRefusals()`. */
+  getResumePoint() {
+    return this.resumePoint ? { ...this.resumePoint } : null;
+  }
+  /** Every refusal the durability layer made, in words. A run whose journal
+   *  exists but did not load is NOT a fresh run, and this is how a caller
+   *  finds that out instead of guessing. */
+  resumeRefusals() {
+    return [...this.resumeRefusalLog];
+  }
+  /** Record a durability refusal. Goes on the flight recorder so it is in
+   *  the mission's evidence, and stays readable for the UI. */
+  noteResumeRefusal(seat2, detail) {
+    this.resumeRefusalLog.push(`[${seat2}] ${detail}`);
+    this.recorder.record({
+      kind: "FAILURE_DETECTED",
+      actor: "durable-store",
+      authority: "policy:fail-closed",
+      policy: "durability.fail-closed",
+      reason: detail,
+      subjectId: this.mission.missionId,
+      data: { seat: seat2, refusals: this.resumeRefusalLog.length }
+    });
+  }
+  /** Append this runtime's own §26 checkpoints to the durable run chain.
+   *  Called from `checkpoint()` so every rollback point the runtime takes is
+   *  also a tamper-evident run step that outlives the process.
+   *
+   *  §RETRY LANES (Paperclip, MIT) — it now appends them AS A LANE. This method
+   *  is the runtime's single durable write path, which makes it the only place
+   *  the distinction can be made once rather than at every call site: a repair
+   *  rollback and a gate pause and a settled re-plan all used to land here
+   *  indistinguishable, and the chain was the only thing about this run that
+   *  survived a restart. `lane` overrides the label classification at the two
+   *  sites where the runtime knows more than its label says; otherwise
+   *  `laneOfLabel` reads the label, so a checkpoint taken by an older build —
+   *  before any lane was ever written — still folds to the right number. */
+  appendRunCheckpoint(label, reason, lane) {
+    try {
+      const completed = [...this.completedNodeIds];
+      recordLaneCheckpoint(
+        this.durableRunId(),
+        this.mission.missionId,
+        completed.length,
+        lane ?? laneOfLabel(label),
+        label,
+        {
+          reason,
+          status: this.mission.status,
+          completedNodeIds: completed,
+          spentUsd: this.resources.usage.costUsd
+        }
+      );
+      const refusal = lastJournalWriteRefusal();
+      if (refusal) this.noteResumeRefusal("run-chain", refusal);
+    } catch (e) {
+      this.noteResumeRefusal("run-chain", `the run chain refused a checkpoint (${e instanceof Error ? e.message : String(e)}) \u2014 this step is not journalled.`);
+    }
+  }
+  /** Force the run journal to storage. The UI calls this when a run parks
+   *  at the gate or the window is closing — the moment a crash is most
+   *  likely and most expensive. */
+  flushRunJournal() {
+    const result = persistRunJournal();
+    if (!result.ok && result.refused) this.noteResumeRefusal("run-chain", result.refused);
+    return result.ok ? { ok: true } : { ok: false, refused: result.refused };
+  }
+  /**
+   * The durable-run entry point `src/ui/store.ts` calls on startup, and
+   * whenever the user asks whether an interrupted run can continue.
+   *
+   *   resumeDurableRun(runId?: string, store?: DurableKVLike)
+   *     → { ok: true; runId; missionId; fromStep; label; state;
+   *         checkpoints; source: "journal" | "memory" }
+   *     | { ok: false; reason: string; detail: string }
+   *
+   * `runId` defaults to this mission's own `run:<missionId>`. `store`
+   * defaults to the runtime's durable KV (localStorage in the app, an
+   * injected Map under test). "no-journal" means a fresh start and says so;
+   * "malformed"/"unknown-version"/"state-missing" mean a journal EXISTS and
+   * will not load, and the caller must not restart from scratch over it.
+   */
+  resumeDurableRun(runId, store) {
+    return resumeRun(runId ?? this.durableRunId(), store ?? this.durableKV);
   }
   /* ------------------------------------------------------------------ §25 pause/resume */
   pause(reason, actor = "human") {

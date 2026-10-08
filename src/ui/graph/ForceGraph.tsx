@@ -65,7 +65,6 @@ type FgInst = {
   d3Force: (name: string) => { strength: (n: number) => void } | undefined;
   cameraPosition: (pos: { x: number; y: number; z: number }, lookAt?: unknown, ms?: number) => FgInst;
   scene: () => { add: (...o: unknown[]) => void; fog?: unknown };
-  rendererConfig: (o: Record<string, unknown>) => FgInst;
   linkCurvature: (v: number) => FgInst;
   linkResolution: (v: number) => FgInst;
   controls: () => { autoRotate: boolean; autoRotateSpeed: number; enableDamping: boolean };
@@ -74,7 +73,10 @@ type FgInst = {
   d3ReheatSimulation: () => FgInst;
   _destructor: () => void;
 };
-const loadRenderer = () => import("3d-force-graph").then((m) => m.default as unknown as new (el: HTMLElement) => FgInst);
+/* The second constructor argument is the init config. `rendererConfig` only
+   lives there in 3d-force-graph 1.80 — it is not a generated accessor, so
+   chaining `.rendererConfig(...)` throws "is not a function". */
+const loadRenderer = () => import("3d-force-graph").then((m) => m.default as unknown as new (el: HTMLElement, cfg?: { rendererConfig?: Record<string, unknown> }) => FgInst);
 const loadThree = () => import("three") as Promise<ThreeLib>;
 type ThreeLib = {
   Mesh: new (g: unknown, m: unknown) => { add: (o: unknown) => void };
@@ -127,40 +129,33 @@ function mix(a: string, b: string, t: number): string {
 
 function palette(): Record<string, string> {
   const dark = currentTheme() === "dark";
-  const bg = cssVar("--bg", dark ? "#0A0C0E" : "#E6E5DD");
-  const fg = cssVar("--fg", dark ? "#F2F4F6" : "#15181A");
-  const fg3 = cssVar("--fg-3", dark ? "#7F868E" : "#5B6269");
+  const bg = cssVar("--bg", dark ? "#0B0B0D" : "#FAFAF9");
+  const fg = cssVar("--fg", dark ? "#F4F4F5" : "#18181B");
+  const fg3 = cssVar("--fg-3", dark ? "#6F6F79" : "#8A8A93");
   /* "you" is the far end of the ramp: brightest on black, darkest on stone. */
   const pole = dark ? "#FFFFFF" : "#000000";
-  /* THE MATERIAL RAMP. Roles are read as one of four MATERIALS rather than as
-   * fourteen shades of grey, which is what makes the scene legible at a glance:
-   *
-   *   brass — the things that decide something: you, the Captain, a gate.
-   *   steel — the things that do work: consuls, adepts, tools.
-   *   glass — memory: sessions and topics.
-   *   ink   — the things that only record: receipts.
-   *
-   * The greys still derive from the theme tokens rather than from literals, so a
-   * theme change moves the whole scene instead of half of it. */
-  const brass = dark ? "#C9A45C" : "#9A7628";
+  /* Roles read as four materials, not fourteen greys: the accent marks what
+   * decides (you, the Captain, a gate), two steel weights mark what works, and
+   * everything that only records stays neutral. */
+  const brass = cssVar("--accent", "#4C8DFF");
   const steel = mix(fg, fg3, 0.34);
   const steelDeep = mix(fg, fg3, 0.56);
   return {
-    you: dark ? mix(pole, "#C9A45C", 0.20) : "#2A2116",
+    you: dark ? mix(pole, brass, 0.20) : mix(pole, brass, 0.20),
     gate: brass,
     captain: brass,
     consul: steel,
     adept: mix(fg, fg3, 0.26),
-    session: dark ? "#CFE4DF" : "#1F4A45",
+    session: steelDeep,
     agent: steel,
     keyword: steelDeep,
     wreceipt: mix(fg, fg3, 0.60),
     tool: mix(fg, fg3, 0.50),
     receipt: mix(fg, fg3, 0.68),
-    live: cssVar("--accent", dark ? "#5BD4CE" : "#0A6E6A"),
-    refused: cssVar("--bad", dark ? "#E5745F" : "#9C3B2D"),
-    link: cssVar("--line", dark ? "rgba(255,255,255,.09)" : "rgba(18,20,24,.10)"),
-    wlink: cssVar("--line-2", dark ? "rgba(255,255,255,.15)" : "rgba(18,20,24,.18)"),
+    live: cssVar("--accent", dark ? "#4C8DFF" : "#2E6BD6"),
+    refused: cssVar("--bad", dark ? "#F87171" : "#B3261E"),
+    link: cssVar("--line", dark ? "rgba(255,255,255,.07)" : "rgba(18,20,24,.08)"),
+    wlink: cssVar("--line-2", dark ? "rgba(255,255,255,.12)" : "rgba(18,20,24,.14)"),
     bg,
     fg,
   };
@@ -230,14 +225,16 @@ export function ForceGraph({ mode, nodes, links, onNodeDoubleClick, onNodeClick,
       const c = palette();
       const work = mode === "work";
       const reduce = reducedMotion();
-      inst = new Ctor(host)
+      /* Antialiasing is the single cheapest thing that separates "realistic"
+         from "a screenshot of a graph": without it every silhouette is a
+         staircase, and a staircase reads as a diagram. It has to go through the
+         constructor — in 3d-force-graph 1.80 `rendererConfig` is an init option,
+         not a generated accessor, so chaining `.rendererConfig(...)` threw
+         "is not a function" and the whole graph never mounted. */
+      inst = new Ctor(host, { rendererConfig: { antialias: true, alpha: true, powerPreference: "high-performance" } })
         .width(host.clientWidth).height(host.clientHeight)
         .backgroundColor("rgba(0,0,0,0)")
         .showNavInfo(false)
-        /* Antialiasing is the single cheapest thing that separates "realistic"
-           from "a screenshot of a graph": without it every silhouette is a
-           staircase, and a staircase reads as a diagram. */
-        .rendererConfig({ antialias: true, alpha: true, powerPreference: "high-performance" })
         .nodeThreeObject((n: FgNode) => makeNode(THREE, n, c, work))
         .nodeThreeObjectExtend(false)
         .nodeLabel((n: FgNode) => {

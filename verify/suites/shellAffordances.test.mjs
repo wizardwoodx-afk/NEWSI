@@ -128,7 +128,11 @@ ok("the hero no longer has the tall fixed top pad", !/padding:72px/.test(hero), 
 ok("the composer has breathing room above it", /\.composer\{[^}]*margin-top:20px/.test(css));
 ok("the opening surface keeps a top pad for the custom window bar", /padding:var\(--s6\)/.test(hero), hero);
 ok("the brand is pushed below the bar", /\.brand\{[^}]*padding:6px 8px 10px/.test(css));
-ok("the Captain screen is the one that renders the opening surface", /className="run"|className="contract-ledger"/.test(steward));
+ok(
+  "the Captain screen is the one that renders the opening surface",
+  /className="wrap wide deck-wrap"/.test(steward) && /<Composer/.test(steward)
+);
+ok("the Captain screen renders no ledger \u2014 it was removed by request", !/className="run"/.test(steward));
 console.log("== 4. product source names no third-party project");
 var BANNED = new RegExp(
   [

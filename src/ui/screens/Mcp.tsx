@@ -43,15 +43,15 @@ function parseJson(text: string): { ok: true; value: unknown } | { ok: false; er
   }
 }
 
-/** One-command presets for the official reference MCP servers. Any runnable
- * command works — a preset is just a filled-in form, never a special path. */
-const PRESETS: Array<{ id: string; label: string; desc: string; command: string; args: string }> = [
-  { id: "filesystem", label: "Files", desc: "read & write files in a folder you choose", command: "npx", args: "-y @modelcontextprotocol/server-filesystem ." },
-  { id: "memory", label: "Memory", desc: "a persistent knowledge graph the crew can query", command: "npx", args: "-y @modelcontextprotocol/server-memory" },
-  { id: "git", label: "Git", desc: "commits, branches and history in your repo", command: "uvx", args: "mcp-server-git --repository ." },
-  { id: "fetch", label: "Fetch", desc: "let the crew read a web page you point at", command: "uvx", args: "mcp-server-fetch" },
-  { id: "time", label: "Time", desc: "clocks and timezones, done right", command: "uvx", args: "mcp-server-time" },
-  { id: "thinking", label: "Deep think", desc: "step-by-step structured reasoning tool", command: "npx", args: "-y @modelcontextprotocol/server-sequential-thinking" },
+/** One-command presets for the official reference MCP servers — a preset is a
+ * filled-in form, never a special path. */
+const PRESETS: Array<{ id: string; label: string; command: string; args: string }> = [
+  { id: "filesystem", label: "Files", command: "npx", args: "-y @modelcontextprotocol/server-filesystem ." },
+  { id: "memory", label: "Memory", command: "npx", args: "-y @modelcontextprotocol/server-memory" },
+  { id: "git", label: "Git", command: "uvx", args: "mcp-server-git --repository ." },
+  { id: "fetch", label: "Fetch", command: "uvx", args: "mcp-server-fetch" },
+  { id: "time", label: "Time", command: "uvx", args: "mcp-server-time" },
+  { id: "thinking", label: "Deep think", command: "npx", args: "-y @modelcontextprotocol/server-sequential-thinking" },
 ];
 
 export function Mcp(): React.ReactElement {
@@ -127,21 +127,24 @@ export function Mcp(): React.ReactElement {
     setBusy("save");
     setNotice(null);
     try {
-      const r = await ipc.mcpServerSave({ ...draft, name: draft.name.trim(), command: draft.command.trim() });
+      await ipc.mcpServerSave({ ...draft, name: draft.name.trim(), command: draft.command.trim() });
       setAdding(false);
       setDraft({ name: "", command: "", args: [], network: true });
-      setNotice(
-        native && r && (r as { approved?: boolean }).approved === false
-          ? { kind: "bad", text: "Saved, but NOT approved — it cannot run until a native confirmation approves this program." }
-          : { kind: "ok", text: native ? "Saved and approved — this exact program may now run." : "Saved." },
-      );
+      /* Confirmation that the save happened, and nothing more. The APPROVAL
+         state used to be spelled out here too ("Saved, but NOT approved — it
+         cannot run until…"), which put one fact in two places on one screen:
+         this notice at the top of the section and the row's own "Not approved"
+         line below, in two different sentences. The row owns that state — it
+         persists, it sits beside the Approve button that resolves it, and it is
+         there whether or not the save happened a second ago. */
+      setNotice({ kind: "ok", text: "Saved." });
       await load();
     } catch (e) {
       setNotice({ kind: "bad", text: `Not saved — ${e instanceof Error ? e.message : String(e)}` });
     } finally {
       setBusy(null);
     }
-  }, [draft, load, native]);
+  }, [draft, load]);
 
   /** Re-submit a stored server unchanged: the native side asks the human to approve exactly that program. */
   const approve = useCallback(async (s: McpServerEntry) => {
@@ -181,17 +184,10 @@ export function Mcp(): React.ReactElement {
     <>
       <section className="sgroup">
         <h3>Tool servers (MCP)</h3>
-        <p className="lead">
-          Give your crew extra abilities — read files, use git, check the time.
-          Pick a ready-made one below, or connect <b>any</b> MCP server: if it can
-          run as a command on this machine, one line is all it takes. Tools are
-          counted only after a real handshake, never promised in advance.
-        </p>
 
         {!native && (
           <div className="note warn">
-            Browser preview — servers run as local processes, so connecting needs the
-            desktop build. Nothing below has been contacted.
+            Servers run as local processes — desktop build only. Nothing below has been contacted.
           </div>
         )}
         {loadError && <div className="note bad">Could not read the server list: {loadError}</div>}
@@ -200,7 +196,6 @@ export function Mcp(): React.ReactElement {
         {rows.length === 0 && !loadError && (
           <div className="empty">
             <h3>No servers registered</h3>
-            <p>The crew is using its built-in tools only.</p>
           </div>
         )}
 
@@ -216,7 +211,9 @@ export function Mcp(): React.ReactElement {
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <b>{s.name}</b>
                 <span className="mono faint">{s.id}</span>
-                <span className={`dot ${r ? (r.connected ? "ok" : "refused") : "pending"}`} />
+                {/* The dot appears only once a test has actually answered — before
+                    that there is no status to show, and a grey dot reads as one. */}
+                {r && <span className={`dot ${r.connected ? "ok" : "refused"}`} />}
                 <span className="hint" style={{ marginLeft: "auto" }}>
                   {r
                     ? r.connected
@@ -241,15 +238,13 @@ export function Mcp(): React.ReactElement {
               </div>
               {native && s.approved === false && !pinned && (
                 <div className="note warn" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ flex: 1 }}>
-                    Not approved — this program has not been confirmed in a native dialog, so it cannot run.
-                  </span>
+                  <span style={{ flex: 1 }}>Not approved — this program cannot run until you approve it.</span>
                   <button className="btn sm" disabled={busy === s.id} onClick={() => void approve(s)}>Approve…</button>
                 </div>
               )}
               {r?.lastError && <div className="note bad">{String(r.lastError)}</div>}
               {r && !r.connected && !r.lastError && (
-                <div className="note warn">The host got no JSON-RPC reply.</div>
+                <div className="note warn">The server started but did not answer.</div>
               )}
 
               {r?.connected && (
@@ -271,11 +266,7 @@ export function Mcp(): React.ReactElement {
                       ))}
                       <label className="field" style={{ maxWidth: "none" }}>
                         <span>Arguments (JSON)</span>
-                        <input className="input" aria-invalid={argsBad || undefined} aria-describedby="mcp-args-note" value={args} onChange={(e) => setArgs(e.target.value)} />
-                        {/* The description the field needs and did not have: this is
-                            JSON, and a JSON syntax error is refused here rather than
-                            silently coerced. */}
-                        <small className="hint" id="mcp-args-note">JSON only — the object passed to the tool. Malformed JSON is refused, not guessed at.</small>
+                        <input className="input mono" aria-invalid={argsBad || undefined} value={args} onChange={(e) => setArgs(e.target.value)} />
                       </label>
                     </div>
                   )}
@@ -302,12 +293,12 @@ export function Mcp(): React.ReactElement {
 
         {adding && (
           <div id="mcp-add-server" style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
-            <div className="chips" role="group" aria-label="Ready-made servers — each one fills the form below, nothing runs yet">
+            <div className="chips" role="group" aria-label="Presets">
               {PRESETS.map((p) => (
                 <button key={p.id} type="button" className="chip" aria-pressed={draft.command === p.command && draft.name === p.label}
                         title={`${p.command} ${p.args}`}
                         onClick={() => setDraft({ name: p.label, command: p.command, args: p.args.split(/\s+/) })}>
-                  <b>{p.label}</b><span>{p.desc}</span>
+                  <b>{p.label}</b>
                 </button>
               ))}
             </div>
@@ -315,7 +306,7 @@ export function Mcp(): React.ReactElement {
               <input className="input" value={draft.name}
                      onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
             </label>
-            <label className="field"><span>Command <small className="hint" style={{ textTransform: "none", letterSpacing: 0 }}>(anything runnable: npx, uvx, ./your-server)</small></span>
+            <label className="field"><span>Command</span>
               <input className="input mono" value={draft.command ?? ""}
                      onChange={(e) => setDraft({ ...draft, command: e.target.value })} />
             </label>
@@ -326,14 +317,11 @@ export function Mcp(): React.ReactElement {
             <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
               <input type="checkbox" checked={draft.network !== false}
                      onChange={(e) => setDraft({ ...draft, network: e.target.checked })} />
-              <span>Allow this server to use the network <small className="hint" style={{ textTransform: "none", letterSpacing: 0 }}>(untick for a server that only works on local files)</small></span>
+              <span>Allow this server to use the network</span>
             </label>
             <div className="acts">
               <button className="btn" disabled={busy === "save" || !draft.name.trim() || !draft.command?.trim()}
                       onClick={() => void save()}>Save server</button>
-              <span className="hint">
-                Saved servers are listed here until removed. Connecting is always an explicit test.
-              </span>
             </div>
           </div>
         )}

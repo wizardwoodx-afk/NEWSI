@@ -6,6 +6,77 @@ import * as path from "node:path";
 
 // src/security/actionGraph.ts
 import { createHash, timingSafeEqual } from "node:crypto";
+
+// src/security/auditScrub.ts
+var AUDIT_SCRUB_MARKER = "[redacted]";
+var AUDIT_SCRUB_MAX_DEPTH = 16;
+var SENSITIVE_MEMBER = /(?:access[_-]?token|api[_-]?key|authorization|auth[_-]?header|bearer|client[_-]?secret|cookie|credential|password|passphrase|private[_-]?key|provider[_-]?(?:credential|token)|refresh[_-]?token|secret|session[_-]?(?:cookie|token)|token|wallet|x-api[-_])$/i;
+var SAFE_REFERENCE_TAIL = /(?:ids?|refs?|references?|names?|kinds?|counts?|types?|prefixes)$/i;
+var UNSAFE_MEMBER = /^(?:__proto__|constructor|prototype)$/;
+var SECRET_SHAPES = [
+  // any `Authorization`-shaped header line, with or without the header name
+  /\bauthor(?:ization|isation)\s*:?\s*\S+|\bcookie\s*:\s*\S+/gi,
+  // bearer / basic / digest schemes, quoted with or without their scheme word
+  /\b(?:bearer|basic|digest)\s+[A-Za-z0-9._~+/=-]{6,}/gi,
+  // the long key idioms this product's providers actually issue
+  /\b(?:sk|sa|pd|np|sk-proj|sk-svcacct)-[A-Za-z0-9_-]{8,}/gi,
+  /\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{8,}/gi,
+  /\bxox[baprs]-[A-Za-z0-9-]{6,}/gi,
+  /\bAIza[0-9A-Za-z_-]{20,}/g,
+  /\bya29\.[A-Za-z0-9_=-]{10,}/g,
+  /\bAKIA[0-9A-Z]{12,}/g,
+  // a signed token, wherever it came from
+  /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}/g,
+  // an inline `key = value` / `token=value` assignment
+  /\b(?:api[_-]?key|secret|access[_-]?token|refresh[_-]?token|password|passwd|pwd|credential|auth[_-]?token)\s*[:=]\s*[^\s,;]{4,}/gi,
+  // a PEM private key body
+  /-----BEGIN (?:[A-Z ]*)PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z ]*)PRIVATE KEY-----/g
+];
+var CREDENTIAL_URL = /\b([a-z][a-z0-9+.-]*:\/\/)([^\s/:@'"]+):([^\s/@'"]+)@/gi;
+var CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/g;
+function scrubAuditText(text) {
+  if (!text) return text;
+  let out = text.replace(CREDENTIAL_URL, (_all, scheme, user) => `${scheme}${user}:${AUDIT_SCRUB_MARKER}@`);
+  for (const shape of SECRET_SHAPES) out = out.replace(shape, AUDIT_SCRUB_MARKER);
+  return out.replace(CONTROL_CHARACTER, " ");
+}
+function isSensitiveAuditMember(key) {
+  return SENSITIVE_MEMBER.test(key) && !SAFE_REFERENCE_TAIL.test(key);
+}
+function scrubAuditValue(value, visited = /* @__PURE__ */ new WeakSet(), depth = 0) {
+  if (depth > AUDIT_SCRUB_MAX_DEPTH) return AUDIT_SCRUB_MARKER;
+  if (typeof value === "string") return scrubAuditText(value);
+  if (value === null || typeof value !== "object") {
+    return typeof value === "bigint" ? value.toString() : value;
+  }
+  if (visited.has(value)) return AUDIT_SCRUB_MARKER;
+  visited.add(value);
+  if (Array.isArray(value)) return value.map((entry) => scrubAuditValue(entry, visited, depth + 1));
+  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Error) return { name: value.name, reason: AUDIT_SCRUB_MARKER };
+  if (value instanceof Map) {
+    return Object.fromEntries(
+      [...value].map(([k, v]) => [String(k), isSensitiveAuditMember(String(k)) ? AUDIT_SCRUB_MARKER : scrubAuditValue(v, visited, depth + 1)])
+    );
+  }
+  if (value instanceof Set) return [...value].map((v) => scrubAuditValue(v, visited, depth + 1));
+  const scrubbed = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (UNSAFE_MEMBER.test(key)) continue;
+    scrubbed[key] = isSensitiveAuditMember(key) ? AUDIT_SCRUB_MARKER : scrubAuditValue(entry, visited, depth + 1);
+  }
+  return scrubbed;
+}
+function scrubAuditRecord(evidence) {
+  const out = {};
+  for (const [key, entry] of Object.entries(evidence)) {
+    if (UNSAFE_MEMBER.test(key)) continue;
+    out[key] = isSensitiveAuditMember(key) ? AUDIT_SCRUB_MARKER : typeof entry === "string" ? scrubAuditText(entry) : entry;
+  }
+  return out;
+}
+
+// src/security/actionGraph.ts
 var PROVENANCE_PREDICATE = "https://mj.desktop/action-provenance/v1";
 function nodeId(kind, seq) {
   return `${kind}#${String(seq).padStart(3, "0")}`;
@@ -37,7 +108,12 @@ function addNode(graph, seq, kind, content, parents, detail, signed = true) {
     parents,
     ts: 0,
     // set by the recorder; kept 0 here so digests stay content-only
-    detail,
+    /* §AUDIT SCRUB — `detail` is the one part of a node that is STORED as text
+     * rather than committed to as a digest, and tool-call nodes carry the
+     * runtime's own description of what a tool said. The digest is left
+     * computed over the ORIGINAL content: it is a commitment, not a document,
+     * and scrubbing it would move every existing graph link. */
+    detail: detail ? scrubAuditValue(detail) : detail,
     signed
   };
   graph.nodes[id] = node;
@@ -188,11 +264,15 @@ async function askHuman(req, respond) {
   }
   return {
     tier: req.tier,
-    question: req.question,
+    question: scrubAuditText(req.question),
     outcome,
     answeredBy,
     ts: started,
-    evidence: req.evidence
+    /* The evidence the human was judged on is kept as what a later reader may
+     * see, not as what the runtime happened to hand the dialog: a HITL request's
+     * evidence map is exactly where a caller puts the diff, the endpoint and the
+     * command line it wants reviewed. */
+    evidence: scrubAuditRecord(req.evidence)
   };
 }
 var DecisionJournal = class {
@@ -203,10 +283,18 @@ var DecisionJournal = class {
       seq: this.entries.length,
       ts: entry.ts ?? 0,
       stage: entry.stage,
-      decision: entry.decision,
+      /* §AUDIT SCRUB — `decision` is a sentence written straight out of what
+       * the runtime was doing: the action string (which a model composed), the
+       * authorization reason, the guard trip's `detail`, which for
+       * `path-escape` is built from the tool's own stdout. `evidence` is the
+       * same story in key/value form. Scrubbed at append, so the digest below
+       * commits to what was ACTUALLY STORED rather than to what the caller
+       * tried to write — a chain that hashed the unsent text would verify a
+       * journal that does not contain it. */
+      decision: scrubAuditText(entry.decision),
       outcome: entry.outcome,
       nodeId: entry.nodeId ?? null,
-      evidence: entry.evidence,
+      evidence: scrubAuditRecord(entry.evidence),
       prev: this.lastDigest
     };
     const digest = createHash("sha256").update(stableStringify(body)).digest("hex");
@@ -248,16 +336,16 @@ var DecisionJournal = class {
 function guardBefore(args) {
   const trips = [];
   if (!args.verdict.allowed) {
-    trips.push({ when: "before", rule: "authority", detail: args.verdict.reason });
+    trips.push({ when: "before", rule: "authority", detail: scrubAuditText(args.verdict.reason) });
   }
   if (args.verdict.escalated) {
-    trips.push({ when: "before", rule: "escalation", detail: `escalated to a human: ${args.verdict.reason}` });
+    trips.push({ when: "before", rule: "escalation", detail: scrubAuditText(`escalated to a human: ${args.verdict.reason}`) });
   }
   if (args.repeatCount >= 3) {
     trips.push({
       when: "before",
       rule: "non-convergence",
-      detail: `"${args.action}" has been attempted ${args.repeatCount} times; the run is not converging`
+      detail: scrubAuditText(`"${args.action}" has been attempted ${args.repeatCount} times; the run is not converging`)
     });
   }
   return trips;
@@ -271,18 +359,22 @@ function guardAfter(args) {
     trips.push({
       when: "after",
       rule: "path-escape",
-      detail: `output names ${escaped.length} path(s) outside the seat root ${root}: ${escaped.slice(0, 3).join(", ")}`
+      /* The paths stay readable — a filesystem path is the audit fact this rule
+       * exists to surface, and scrubbing it would blind the guard it belongs to.
+       * Scrubbing the composed line still catches the case where the escape is
+       * reported with a credential-bearing URL attached to it. */
+      detail: scrubAuditText(`output names ${escaped.length} path(s) outside the seat root ${root}: ${escaped.slice(0, 3).join(", ")}`)
     });
   }
   if (args.failed && args.failureStreak >= 3) {
     trips.push({
       when: "after",
       rule: "repeated-failure",
-      detail: `${args.failureStreak} consecutive failures \u2014 stopping rather than burning the budget on a loop`
+      detail: scrubAuditText(`${args.failureStreak} consecutive failures \u2014 stopping rather than burning the budget on a loop`)
     });
   }
   if (out.length > 2e6) {
-    trips.push({ when: "after", rule: "output-volume", detail: `a single tool call returned ${out.length} bytes` });
+    trips.push({ when: "after", rule: "output-volume", detail: scrubAuditText(`a single tool call returned ${out.length} bytes`) });
   }
   return trips;
 }

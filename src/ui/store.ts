@@ -39,7 +39,18 @@ import { loadKnowledgeProposals, proposeKnowledgeSkill, decideKnowledgeProposal,
  * (or a refusal in words does), and what comes out is handed to the SAME
  * proposeKnowledgeSkill the paste box uses. Caps and containment live in
  * `ingestFile`, which is why the door has no size limit of its own. */
-import { createIngestRun, ingestFile, type IngestReceipt } from "../mission/fileIngest";
+import { createIngestRun, ingestFile, ingestTruncationNotice, type IngestReceipt } from "../mission/fileIngest";
+/* 19.9.0 reachability. Three mission-plane entry points existed and NOTHING in
+   the UI called them, so the Work board's disabled "run the crew" affordance,
+   the crash-resume claim, and the federation mount were all true and all
+   unreachable. This store is the one place the UI is allowed to reach an engine
+   seam, so the wiring lands here and only here. */
+import { runCrewMission, type CrewMissionOutcome } from "../mission/crewMission";
+import { loopHostDeps } from "../mission/missionLoop";
+import { loadRunJournal, resumeRunFrom } from "../mission/runCheckpoints";
+import { mountFederation, type FederationHandle } from "../mission/a2aFederation";
+import { dueChannels, recordFire } from "../engine/channels";
+import { withPlanningLine } from "./voice";
 /* 19.8 — the local crash ledger. A throw on the live path is shown in the
  * transcript AND recorded, because the transcript does not survive a reload. */
 import { recordCrash } from "../security/crashLedger";
@@ -74,26 +85,34 @@ export function currentSubject(): string | null {
 const PROVIDER_STORAGE_KEY = "vh.provider.remembered.v1";
 const THEME_KEY = "vh.theme.v2";
 
-export type Screen = "steward" | "work" | "specialists" | "federation" | "receipts" | "docs" | "memory" | "settings" | "chat";
-/** Eight finishes in two families: six dark, two light. The attribute name is
+/** `profile` is NOT a rail door: it is reachable ONLY from the owner card at the
+ *  foot of the rail, which is why NAV in SiShell.tsx has no entry for it and why
+ *  the door count stays at eight. The owner card is a question about WHO you
+ *  are; Settings is a question about how the app is configured. They were wired
+ *  to the same place, so asking "who am I" answered "here are your settings". */
+export type Screen = "steward" | "work" | "specialists" | "federation" | "receipts" | "docs" | "memory" | "settings" | "chat" | "profile";
+/** Six finishes in two families: four dark, two light. The attribute name is
  *  the persisted value, and it must stay in lockstep with the `[data-theme=…]`
- *  blocks in vh.css and si.css plus THEMES below. */
-export type Theme = "holst" | "obsidian" | "azure" | "platinum" | "titanium" | "akaroa" | "caesar" | "stratos";
+ *  blocks in src/ui/theme.css and with THEMES below. The inline boot script in
+ *  index.html still only knows the two originals it was written against, so a
+ *  saved finish from the new four paints the default ground until main.tsx runs
+ *  and corrects it — widening the union is what makes the finish persistable at
+ *  all, and the boot script is a separate file's problem. */
+export type Theme = "dark" | "heliotrope" | "light" | "charleston" | "licorice" | "bistre" | "feldgrau";
 
-/** The one list every surface reads. Settings renders it, the store validates
- *  against it, the boot block mirrors it, and the contrast tool walks it — so a
- *  finish can never exist in the picker but not in the stylesheet. */
+/** The one list every surface reads. Settings renders it and the store
+ *  validates against it, so a finish that is not in here cannot be chosen and
+ *  cannot survive a reload. */
 export const THEMES: ReadonlyArray<{ id: Theme; name: string; kind: "dark" | "light" }> = [
-  { id: "holst", name: "Holst", kind: "dark" },
-  { id: "obsidian", name: "Obsidian", kind: "dark" },
-  { id: "azure", name: "Azure", kind: "dark" },
-  { id: "platinum", name: "Platinum", kind: "light" },
-  { id: "titanium", name: "Titanium", kind: "dark" },
-  { id: "akaroa", name: "Akaroa", kind: "light" },
-  { id: "caesar", name: "Caesar", kind: "dark" },
-  { id: "stratos", name: "Stratos", kind: "dark" },
+  { id: "dark", name: "Void", kind: "dark" },
+  { id: "heliotrope", name: "Heliotrope", kind: "dark" },
+  { id: "charleston", name: "Charleston", kind: "dark" },
+  { id: "licorice", name: "Licorice", kind: "dark" },
+  { id: "bistre", name: "Bistre", kind: "dark" },
+  { id: "light", name: "Light", kind: "light" },
+  { id: "feldgrau", name: "Feldgrau", kind: "light" },
 ];
-export const DEFAULT_THEME: Theme = "holst";
+export const DEFAULT_THEME: Theme = "dark";
 
 export interface Msg { id: number; role: "user" | "vh"; text: string; at: string; resp?: GeneralistResponse; tok?: OptimDelta; rehydratedFrom?: string }
 export interface PendingGate { ask: GateAsk; resolve: (d: GateDecision) => void; askedAt: string }
@@ -198,6 +217,25 @@ interface UiState {
       in words, never a silent no-op: an unsupported browser and a cancelled
       picker are different answers and both are worth saying out loud. */
   useRealFolder: () => Promise<{ ok: boolean; note: string }>;
+
+  /** 19.9.0 — the measured crew run, or null. `verdict` is the one sentence a
+   *  person acts on; `report` is the evidence behind it. Never synthesised. */
+  crewRun: CrewMissionOutcome | null;
+  crewRunning: boolean;
+  /** Run the governed crew on an objective through the real executor. */
+  runCrew: (objective: string) => Promise<void>;
+  /** Runs the checkpoint chain knows about after a restore, from `loadRunJournal`. */
+  restoredRuns: number;
+  /** Why the restore failed, in words. Empty string when it did not. */
+  restoreNote: string;
+  /** Resume one run from its chain. Answers in words; never a silent no-op. */
+  resumeRun: (runId: string) => Promise<{ ok: boolean; note: string }>;
+  /** The live federation mount, or null. Mounting is explicit and never implicit. */
+  federation: FederationHandle | null;
+  /** Mount federation for this owner. Requires named teammates — never inferred. */
+  mountFed: (teammates: Parameters<typeof mountFederation>[0]["teammates"]) => Promise<{ ok: boolean; note: string }>;
+  /** Tear the mount down. Safe to call when nothing is mounted. */
+  unmountFed: () => Promise<{ ok: boolean; note: string }>;
 }
 
 let seq = 0;
@@ -253,6 +291,18 @@ function armHeartbeat(get: GetFn): void {
        key; risky targets simply park at the human gate. */
     try {
       for (const t of dueTriggers()) void fireTrigger(t.id).catch(() => undefined);
+      /* Channels are the same arrangement one level up. The declared cadence
+         asks; send() decides, so an impulse is bound by the identity check, the
+         busy guard and the human gate exactly as a typed message is. recordFire
+         re-reads the trailing-24h cap, so a spent channel stops firing on its
+         own and nothing here retries past a refusal. */
+      const at = Date.now();
+      for (const c of dueChannels(at)) {
+        /* The channel's own name, once. It used to read "Impulse (Impulse)." —
+           the prefix and the heartbeat channel's name are the same word, so the
+           transcript opened with a duplication that looked like a template. */
+        if (recordFire(c.id, at).ok) void get().send(`${c.name} — ${c.purpose} Report what is worth doing next; do not act past the gate.`);
+      }
     } catch { /* a trigger problem never breaks the heartbeat */ }
   }, HEARTBEAT_DEFAULT_MS);
 }
@@ -287,6 +337,9 @@ export const useVh = create<UiState>((set, get) => ({
   ingestLog: loadIngestLog(),
   stewardName: generalistName(), ownerHandle: readHandle(),
   workspace: createMemoryWorkspace(),
+  /* 19.9.0 reachability state. Null/zero means "nothing has run yet", which is
+   * different from "it ran and failed" — a failed run is stored as its outcome. */
+  crewRun: null, crewRunning: false, restoredRuns: 0, restoreNote: "", federation: null,
 
   go: (screen) => set({ screen }),
   setTheme: (theme) => { document.documentElement.dataset.theme = theme; try { localStorage.setItem(THEME_KEY, theme); } catch { /* no storage */ } set({ theme }); },
@@ -294,13 +347,18 @@ export const useVh = create<UiState>((set, get) => ({
   newMission: () => set({ msgs: [], lastResp: null, chatSessionId: `s_${Date.now().toString(36)}`, sessionStart: nowIso(), screen: "steward", openSession: null }),
 
   send: async (raw) => {
-    const text = raw.trim(); const st = get();
+    /* The thinking rung is applied here, at the one choke point both doors and
+       the impulse already pass through, instead of being written into the
+       draft. A directive the operator can select, delete and retype is not a
+       policy — and it was showing up twice in their text. At `plain` this
+       returns the input untouched, so the default path does not change. */
+    const text = withPlanningLine(raw).trim(); const st = get();
     if (!text || st.busy) return;
     /* The human gate for identity itself: no subject, no run. */
     const subject = currentSubject();
     if (!subject) {
       seq += 1;
-      set((s) => ({ msgs: [...s.msgs, { id: seq, role: "vh", text: "No identity is established on this machine, so nothing was run — a receipt has to name someone, and there is no one to name. Re-establish the owner identity in Settings.", at: nowIso() }] }));
+      set((s) => ({ msgs: [...s.msgs, { id: seq, role: "vh", text: "No identity is set on this machine, so nothing ran. Set it in Settings.", at: nowIso() }] }));
       return;
     }
     seq += 1;
@@ -311,7 +369,7 @@ export const useVh = create<UiState>((set, get) => ({
     const useId = st.openSession?.id ?? (referential && hits[0] && hits[0].score >= 3 ? hits[0].session.id : null);
     if (useId) { const r = rehydrate(useId); if (r) { sentText = `${r.preamble}\n\n${text}`; rehydratedFrom = r.session.title; } }
     const userMsg: Msg = { id: seq, role: "user", text, at: nowIso(), rehydratedFrom };
-    set({ msgs: [...st.msgs, userMsg], busy: true, screen: st.screen === "chat" ? "chat" : "work" });
+    set({ msgs: [...st.msgs, userMsg], busy: true });
     const gateFn = makeGate(set);
     try {
       const snap = wireEventSeq();
@@ -372,25 +430,44 @@ export const useVh = create<UiState>((set, get) => ({
   setProvider: async (cfg, persist) => {
     if (!cfg) { get().forgetProvider(); return { ok: true, note: "provider removed" }; }
     set({ provider: cfg });
-    /* Desktop key holder: the page holds a REFERENCE and non-secret settings — there is no key to seal.
-       The settings are remembered in the clear (nothing in them to protect); the key lives in the OS keychain. */
+    /* The checkbox is a decision and not a caption, so this returns before it
+       touches storage of any kind — no keychain write, no settings write, no
+       seal. A key held for one session is still a key the page cannot read back
+       after a reload, which is the whole point of offering the option. */
+    if (!persist) return { ok: true, note: "key kept in memory for this session only" };
+    /* Desktop key holder: the page keeps a REFERENCE and non-secret settings. The key
+       itself is already in the OS keychain, so nothing here writes it to storage. */
     if (cfg.secretRef) {
       persistNativeConfig(cfg);
-      return { ok: true, note: "Connected — the key stays in your OS keychain and survives restarts." };
+      return { ok: true, note: "Connected — key held in the OS keychain." };
     }
-    if (!persist) return { ok: true, note: "key kept in memory for this session only" };
+    // No native boundary: persist settings in the clear, and the key only if the vault is open.
+    const { apiKey, ...settings } = cfg;
+    try {
+      globalThis.localStorage?.setItem(PROVIDER_STORAGE_KEY, JSON.stringify(settings));
+    } catch { /* storage refused */ }
     const v = vaultStatus();
-    if (v.status !== "unlocked") return { ok: true, note: "kept in memory — unlock or create the vault to persist it encrypted" };
-    const r = await vaultSeal(PROVIDER_STORAGE_KEY, JSON.stringify(cfg));
-    return r.ok ? { ok: true, note: "key sealed in the vault (AES-256-GCM)" } : { ok: false, note: r.error };
+    if (v.status !== "unlocked") return { ok: true, note: "Connected — settings saved, key not stored. Unlock the vault to keep the key on this machine." };
+    await vaultSeal(PROVIDER_STORAGE_KEY, JSON.stringify(cfg)).catch(() => undefined);
+    return { ok: true, note: "Connected — key sealed in the vault." };
   },
   forgetProvider: () => {
     vaultRemove(PROVIDER_STORAGE_KEY); // the stored copy goes FIRST — before anything else can fail
     const ref = get().provider?.secretRef;
     clearNativeConfig();
-    // a native-held key is deleted from BOTH keychain namespaces, and its endpoint binding is dropped
-    if (ref) void ipc.secretDelete(ref).catch(() => undefined).then(() => ipc.providerUnbindEndpoint(ref)).catch(() => undefined);
-    set({ provider: null, securityNote: "the key was removed — nothing lingers in storage" });
+    set({ provider: null });
+    if (!ref) { set({ securityNote: "removed from local storage" }); return; }
+    /* Deleting the keychain entry is the whole promise of "forget", so its outcome is
+       reported rather than swallowed: a failed delete leaves a live key behind. */
+    void (async () => {
+      try {
+        await ipc.secretDelete(ref);
+        await ipc.providerUnbindEndpoint(ref).catch(() => undefined);
+        set({ securityNote: "key deleted from the OS keychain" });
+      } catch (e) {
+        set({ securityNote: `the key may still be in the keychain — delete it manually (${String(e).slice(0, 80)})` });
+      }
+    })();
   },
 
   createVault: async (pass) => {
@@ -499,7 +576,7 @@ export const useVh = create<UiState>((set, get) => ({
       set({ ingestLog: log });
     }
     set({ knowledge: loadKnowledgeProposals() });
-    return summary;
+    return { ...summary, notice: ingestTruncationNotice(run) };
   },
 
   /** The human's one decision per proposal; approval mirrors it into skills. */
@@ -577,6 +654,68 @@ export const useVh = create<UiState>((set, get) => ({
     return { ok: true, note: `Workspace is now ${picked.label}. Everything under it is reachable; paths that try to climb out are refused before any read.` };
   },
 
+  /** 19.9.0 — the crew executor, reached from the UI for the first time. The
+   *  runner comes from the same `loopHostDeps` seam the mission loop uses, and
+   *  `principal` is what mints the root authority envelope, so the budget
+   *  admission path in `executeTeam` is live rather than bypassed. A refusal is
+   *  stored as the outcome it is: `runCrewMission` answers in words and this
+   *  does not invent a verdict on top of it. */
+  runCrew: async (objective: string) => {
+    const text = objective.trim();
+    if (!text) { set({ crewRun: null, crewRunning: false }); return; }
+    set({ crewRunning: true, screen: "work" });
+    try {
+      const outcome = await runCrewMission(text, {
+        runner: loopHostDeps({}),
+        principal: `human:${get().ownerHandle || "owner"}`,
+      });
+      set({ crewRun: outcome, crewRunning: false });
+    } catch (e) {
+      /* The entry point is written to answer in words; a throw here is a defect
+       * in it, and the UI says so instead of showing a blank board. */
+      set({ crewRunning: false, crewRun: null, securityNote: `the crew entry point failed rather than answering: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  },
+
+  resumeRun: async (runId: string) => {
+    try {
+      const r = resumeRunFrom(runId);
+      if (!r.ok) return { ok: false, note: `${r.reason} — ${r.detail}` };
+      return { ok: true, note: `run ${runId} resumed at step ${r.fromStep} ("${r.label}") — ${r.checkpoints} checkpoint(s) verified in its chain` };
+    } catch (e) {
+      return { ok: false, note: e instanceof Error ? e.message : String(e) };
+    }
+  },
+
+  mountFed: async (teammates) => {
+    if (get().federation) return { ok: false, note: "federation is already mounted — unmount it first" };
+    if (!teammates.length) return { ok: false, note: "no teammates were named, and this mount never infers one" };
+    try {
+      const handle = await mountFederation({
+        selfimpulseUser: get().ownerHandle || "owner",
+        teammates,
+        /* Default bind scope is `local` — the narrowest thing that works. The
+         * operator widens it deliberately; nothing here does it for them. */
+      });
+      set({ federation: handle });
+      return { ok: true, note: `federation mounted on the local interface — peers reach it only after an explicit pairing` };
+    } catch (e) {
+      return { ok: false, note: e instanceof Error ? e.message : String(e) };
+    }
+  },
+
+  unmountFed: async () => {
+    const f = get().federation;
+    if (!f) return { ok: false, note: "federation was not mounted" };
+    try {
+      await f.close();
+      set({ federation: null });
+      return { ok: true, note: "federation unmounted" };
+    } catch (e) {
+      return { ok: false, note: e instanceof Error ? e.message : String(e) };
+    }
+  },
+
   boot: async () => {
     document.documentElement.dataset.theme = get().theme;
     // 19.7.1 discipline: purge legacy plaintext, load sealed if unlocked
@@ -593,6 +732,18 @@ export const useVh = create<UiState>((set, get) => ({
     const nativeProvider = await loadNativeConfig();
     if (nativeProvider) set({ provider: nativeProvider, securityNote: "the key is held by your OS keychain — this window cannot read it" });
     set({ vault: vaultStatus(), sessions: listSessions() });
+    /* 19.9.0 — the durable chain now has its missing caller. `loadRunJournal`
+     * reads the persisted checkpoint journal and reports how many runs it
+     * restored; the refusal, if there is one, is kept in words rather than
+     * swallowed, because a silent restore failure is indistinguishable from
+     * "there was nothing to restore". */
+    try {
+      const j = loadRunJournal();
+      if (j.ok) set({ restoredRuns: j.runs, restoreNote: j.runs > 0 ? `${j.runs} run(s) restored from the checkpoint chain` : "" });
+      else set({ restoredRuns: 0, restoreNote: `the checkpoint chain did not restore: ${j.reason} — ${j.detail}` });
+    } catch (e) {
+      set({ restoredRuns: 0, restoreNote: `the checkpoint chain could not be read: ${e instanceof Error ? e.message : String(e)}` });
+    }
     armHeartbeat(get);
   },
 

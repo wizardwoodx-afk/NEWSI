@@ -301,7 +301,7 @@ var ENGINE_VERSION, ENGINE_SHORT, ENGINE_CODENAME, PRODUCT_TITLE;
 var init_version = __esm({
   "src/version.ts"() {
     "use strict";
-    ENGINE_VERSION = "19.7.15";
+    ENGINE_VERSION = "19.7.16";
     ENGINE_SHORT = "19.7";
     ENGINE_CODENAME = "SelfImpulse";
     PRODUCT_TITLE = `SelfImpulse (engine MJ ${ENGINE_SHORT} "${ENGINE_CODENAME}")`;
@@ -4052,6 +4052,36 @@ function packetAllowsExecution(p) {
   return { ok: true, reason: `packet ${p.id} permits execution (${p.permission}${p.reversible ? ", reversible" : ", irreversible+allowed"})` };
 }
 
+// src/security/auditScrub.ts
+var AUDIT_SCRUB_MARKER = "[redacted]";
+var SECRET_SHAPES = [
+  // any `Authorization`-shaped header line, with or without the header name
+  /\bauthor(?:ization|isation)\s*:?\s*\S+|\bcookie\s*:\s*\S+/gi,
+  // bearer / basic / digest schemes, quoted with or without their scheme word
+  /\b(?:bearer|basic|digest)\s+[A-Za-z0-9._~+/=-]{6,}/gi,
+  // the long key idioms this product's providers actually issue
+  /\b(?:sk|sa|pd|np|sk-proj|sk-svcacct)-[A-Za-z0-9_-]{8,}/gi,
+  /\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{8,}/gi,
+  /\bxox[baprs]-[A-Za-z0-9-]{6,}/gi,
+  /\bAIza[0-9A-Za-z_-]{20,}/g,
+  /\bya29\.[A-Za-z0-9_=-]{10,}/g,
+  /\bAKIA[0-9A-Z]{12,}/g,
+  // a signed token, wherever it came from
+  /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}/g,
+  // an inline `key = value` / `token=value` assignment
+  /\b(?:api[_-]?key|secret|access[_-]?token|refresh[_-]?token|password|passwd|pwd|credential|auth[_-]?token)\s*[:=]\s*[^\s,;]{4,}/gi,
+  // a PEM private key body
+  /-----BEGIN (?:[A-Z ]*)PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z ]*)PRIVATE KEY-----/g
+];
+var CREDENTIAL_URL = /\b([a-z][a-z0-9+.-]*:\/\/)([^\s/:@'"]+):([^\s/@'"]+)@/gi;
+var CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/g;
+function scrubAuditText(text) {
+  if (!text) return text;
+  let out = text.replace(CREDENTIAL_URL, (_all, scheme, user) => `${scheme}${user}:${AUDIT_SCRUB_MARKER}@`);
+  for (const shape of SECRET_SHAPES) out = out.replace(shape, AUDIT_SCRUB_MARKER);
+  return out.replace(CONTROL_CHARACTER, " ");
+}
+
 // src/security/actionGraph.ts
 function stableStringify(value) {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
@@ -4068,18 +4098,188 @@ function recordSeatRun(e) {
   if (all.length > MAX_ENTRIES) all = all.slice(-MAX_ENTRIES);
 }
 
+// src/engine/pureHash.ts
+var K = [
+  1116352408,
+  1899447441,
+  3049323471,
+  3921009573,
+  961987163,
+  1508970993,
+  2453635748,
+  2870763221,
+  3624381080,
+  310598401,
+  607225278,
+  1426881987,
+  1925078388,
+  2162078206,
+  2614888103,
+  3248222580,
+  3835390401,
+  4022224774,
+  264347078,
+  604807628,
+  770255983,
+  1249150122,
+  1555081692,
+  1996064986,
+  2554220882,
+  2821834349,
+  2952996808,
+  3210313671,
+  3336571891,
+  3584528711,
+  113926993,
+  338241895,
+  666307205,
+  773529912,
+  1294757372,
+  1396182291,
+  1695183700,
+  1986661051,
+  2177026350,
+  2456956037,
+  2730485921,
+  2820302411,
+  3259730800,
+  3345764771,
+  3516065817,
+  3600352804,
+  4094571909,
+  275423344,
+  430227734,
+  506948616,
+  659060556,
+  883997877,
+  958139571,
+  1322822218,
+  1537002063,
+  1747873779,
+  1955562222,
+  2024104815,
+  2227730452,
+  2361852424,
+  2428436474,
+  2756734187,
+  3204031479,
+  3329325298
+];
+var rotr = (x, n) => (x >>> n | x << 32 - n) >>> 0;
+var utf8 = (text) => new TextEncoder().encode(text);
+function sha256Bytes(data) {
+  const bitLen = data.length * 8;
+  const padded = new Uint8Array((data.length + 8 >> 6 << 6) + 64);
+  padded.set(data);
+  padded[data.length] = 128;
+  const dv = new DataView(padded.buffer);
+  dv.setUint32(padded.length - 4, bitLen >>> 0);
+  dv.setUint32(padded.length - 8, Math.floor(bitLen / 4294967296));
+  let h0 = 1779033703, h1 = 3144134277, h2 = 1013904242, h3 = 2773480762;
+  let h4 = 1359893119, h5 = 2600822924, h6 = 528734635, h7 = 1541459225;
+  const w = new Uint32Array(64);
+  for (let off = 0; off < padded.length; off += 64) {
+    for (let i = 0; i < 16; i++) w[i] = dv.getUint32(off + i * 4);
+    for (let i = 16; i < 64; i++) {
+      const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ w[i - 15] >>> 3;
+      const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ w[i - 2] >>> 10;
+      w[i] = w[i - 16] + s0 + w[i - 7] + s1 >>> 0;
+    }
+    let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
+    for (let i = 0; i < 64; i++) {
+      const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+      const ch = e & f ^ ~e & g;
+      const t1 = h + S1 + ch + K[i] + w[i] >>> 0;
+      const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+      const maj = a & b ^ a & c ^ b & c;
+      const t2 = S0 + maj >>> 0;
+      h = g;
+      g = f;
+      f = e;
+      e = d + t1 >>> 0;
+      d = c;
+      c = b;
+      b = a;
+      a = t1 + t2 >>> 0;
+    }
+    h0 = h0 + a >>> 0;
+    h1 = h1 + b >>> 0;
+    h2 = h2 + c >>> 0;
+    h3 = h3 + d >>> 0;
+    h4 = h4 + e >>> 0;
+    h5 = h5 + f >>> 0;
+    h6 = h6 + g >>> 0;
+    h7 = h7 + h >>> 0;
+  }
+  const out = new Uint8Array(32);
+  const ov = new DataView(out.buffer);
+  ov.setUint32(0, h0);
+  ov.setUint32(4, h1);
+  ov.setUint32(8, h2);
+  ov.setUint32(12, h3);
+  ov.setUint32(16, h4);
+  ov.setUint32(20, h5);
+  ov.setUint32(24, h6);
+  ov.setUint32(28, h7);
+  return out;
+}
+var toHex2 = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+function pureSha256(text) {
+  return toHex2(sha256Bytes(utf8(text)));
+}
+
+// src/mission/durable.ts
+function asKV(store) {
+  if (typeof store.get === "function" && typeof store.set === "function" && typeof store.getItem !== "function") {
+    return store;
+  }
+  if (typeof store.getItem === "function") {
+    const ls = store;
+    return { get: (k) => ls.getItem(k), set: (k, v) => ls.setItem(k, v) };
+  }
+  const m = store;
+  return { get: (k) => m.get(k) ?? null, set: (k, v) => void m.set(k, v) };
+}
+var hostDefault = null;
+function defaultDurableKV() {
+  if (hostDefault) return hostDefault;
+  const ls = globalThis.localStorage;
+  if (ls && typeof ls.getItem === "function") hostDefault = asKV(ls);
+  else {
+    const mem = /* @__PURE__ */ new Map();
+    hostDefault = { get: (k) => mem.get(k) ?? null, set: (k, v) => void mem.set(k, v) };
+  }
+  return hostDefault;
+}
+
 // src/mission/runCheckpoints.ts
-import { createHash } from "node:crypto";
+var RUN_JOURNAL_VERSION = 2;
+var RUN_JOURNAL_KEY = "vh.run.journal.v2";
 var chainOf = /* @__PURE__ */ new Map();
 var states = /* @__PURE__ */ new Map();
-var digestOf = (s) => createHash("sha256").update(stableStringify(s ?? null)).digest("hex");
+var journalStore = null;
+function activeStore() {
+  journalStore ??= defaultDurableKV();
+  return journalStore;
+}
+var lastWriteRefusal = "";
+var digestOf = (s) => pureSha256(stableStringify(s ?? null));
+var entryDigestOf = (missionId, step, label, stateDigest, prevDigest, at) => pureSha256(`${missionId}|${step}|${label}|${stateDigest}|${prevDigest}|${at}`);
+function stateTable(runId) {
+  let table = states.get(runId);
+  if (!table) {
+    table = /* @__PURE__ */ new Map();
+    states.set(runId, table);
+  }
+  return table;
+}
 function checkpoint(runId, missionId, step, label, state) {
   const chain = chainOf.get(runId) ?? [];
   const prev = chain[chain.length - 1];
   const at = Date.now();
   const stateDigest = digestOf(state);
   const prevDigest = prev ? prev.entryDigest : "";
-  const entryDigest = createHash("sha256").update(`${missionId}|${step}|${label}|${stateDigest}|${prevDigest}|${at}`).digest("hex");
+  const entryDigest = entryDigestOf(missionId, step, label, stateDigest, prevDigest, at);
   const cp = {
     runId,
     missionId,
@@ -4092,8 +4292,160 @@ function checkpoint(runId, missionId, step, label, state) {
   };
   chain.push(cp);
   chainOf.set(runId, chain);
-  states.set(cp.stateDigest, stableStringify(state ?? null));
+  stateTable(runId).set(stateDigest, stableStringify(state ?? null));
+  persistRunJournal();
   return cp;
+}
+function persistRunJournal() {
+  try {
+    const raw = runJournal();
+    asKV(activeStore()).set(RUN_JOURNAL_KEY, raw);
+    const parsed = JSON.parse(raw);
+    lastWriteRefusal = "";
+    return { ok: true, runs: Object.keys(parsed.runs).length, bytes: raw.length };
+  } catch (e) {
+    lastWriteRefusal = `the run journal could not be written (${e instanceof Error ? e.message : String(e)}) \xE2\u20AC\u201D a restart would have nothing to resume from.`;
+    return { ok: false, refused: lastWriteRefusal };
+  }
+}
+function runJournal(runId) {
+  const runs = {};
+  const stateDoc = {};
+  if (runId) {
+    runs[runId] = chainOf.get(runId) ?? [];
+    stateDoc[runId] = Object.fromEntries(states.get(runId) ?? /* @__PURE__ */ new Map());
+  } else {
+    for (const [rid, chain] of chainOf) {
+      runs[rid] = chain;
+      stateDoc[rid] = Object.fromEntries(states.get(rid) ?? /* @__PURE__ */ new Map());
+    }
+  }
+  const doc = { schemaVersion: RUN_JOURNAL_VERSION, savedAt: (/* @__PURE__ */ new Date()).toISOString(), runs, states: stateDoc };
+  return JSON.stringify(doc);
+}
+
+// src/mission/dispatchLanes.ts
+var HOUSEKEEPING_STREAK_CAP = 2;
+var SEAT_LANE_CONCURRENCY = 8;
+var LaneRefusalError = class extends Error {
+  laneRefused = true;
+  constructor(message) {
+    super(message);
+    this.name = "LaneRefusalError";
+  }
+};
+function isLaneRefusal(e) {
+  return e instanceof LaneRefusalError;
+}
+function createDispatchLanes(args) {
+  const concurrency = Math.max(1, Math.floor(args.concurrency ?? SEAT_LANE_CONCURRENCY));
+  const maximumQueued = Math.max(1, Math.floor(args.maximumQueued ?? concurrency));
+  const streakCap = Math.max(1, Math.floor(args.housekeepingStreakCap ?? HOUSEKEEPING_STREAK_CAP));
+  const waiting = [];
+  const readiness = /* @__PURE__ */ new Set();
+  const refusals = [];
+  const started = { foreground: 0, housekeeping: 0 };
+  let running = 0;
+  let housekeepingStreak = 0;
+  let longestHousekeepingStreak = 0;
+  function notifyRoom() {
+    if (waiting.length >= maximumQueued) return;
+    const ready = [...readiness];
+    readiness.clear();
+    for (const notify of ready) notify();
+  }
+  function pickIndex() {
+    const foreground = waiting.findIndex((e) => e.priority === "foreground");
+    const housekeeping = waiting.findIndex((e) => e.priority === "housekeeping");
+    if (housekeeping < 0) return foreground >= 0 ? foreground : waiting.length ? 0 : -1;
+    if (foreground < 0) return housekeeping;
+    return housekeepingStreak < streakCap ? housekeeping : foreground;
+  }
+  function advance() {
+    if (running >= concurrency) return;
+    const index = pickIndex();
+    if (index < 0) {
+      if (waiting.length === 0) notifyRoom();
+      return;
+    }
+    const next = waiting.splice(index, 1)[0];
+    const stop = next.stopReason ? next.stopReason() : null;
+    if (stop) {
+      refusals.push(stop);
+      next.refuse(stop);
+      advance();
+      return;
+    }
+    housekeepingStreak = next.priority === "housekeeping" ? housekeepingStreak + 1 : 0;
+    longestHousekeepingStreak = Math.max(longestHousekeepingStreak, housekeepingStreak);
+    started[next.priority] += 1;
+    running += 1;
+    void next.run().finally(() => {
+      running -= 1;
+      advance();
+      notifyRoom();
+    });
+    if (running < concurrency) advance();
+  }
+  return Object.freeze({
+    run(task, opts = {}) {
+      const priority = opts.priority === "housekeeping" ? "housekeeping" : "foreground";
+      const stopReason = opts.stopReason;
+      const alreadyStopped = stopReason ? stopReason() : null;
+      if (alreadyStopped) {
+        refusals.push(alreadyStopped);
+        return Promise.reject(new LaneRefusalError(alreadyStopped));
+      }
+      if (waiting.length >= maximumQueued) {
+        const reason = `the dispatch lane is full \u2014 ${waiting.length} of ${maximumQueued} queued entries are already waiting under a ceiling of ${concurrency} concurrent ${concurrency === 1 ? "seat" : "seats"}. Refused rather than growing the queue, because an unbounded lane is the thing this guard replaces.`;
+        refusals.push(reason);
+        return Promise.reject(new LaneRefusalError(reason));
+      }
+      return new Promise((resolve2, reject) => {
+        const entry = {
+          priority,
+          stopReason,
+          refuse: (reason) => reject(new LaneRefusalError(reason)),
+          run: async () => {
+            try {
+              resolve2(await task());
+            } catch (e) {
+              reject(e instanceof Error ? e : new Error(String(e)));
+            }
+          }
+        };
+        waiting.push(entry);
+        advance();
+      });
+    },
+    whenAvailable(notify) {
+      if (waiting.length < maximumQueued) notify();
+      else readiness.add(notify);
+    },
+    get pending() {
+      return waiting.length + running;
+    },
+    get waiting() {
+      return waiting.length;
+    },
+    get running() {
+      return running;
+    },
+    snapshot() {
+      return {
+        concurrency,
+        maximumQueued,
+        running,
+        waiting: waiting.length,
+        startedByLane: { ...started },
+        refused: [...refusals],
+        longestHousekeepingStreak
+      };
+    }
+  });
+}
+function laneForSeat(mayWrite) {
+  return mayWrite ? "foreground" : "housekeeping";
 }
 
 // src/mission/consensusEngine.ts
@@ -4148,6 +4500,55 @@ var INITIAL_REPUTATIONS = Object.fromEntries(
 // src/mission/teamExecutor.ts
 var OUTPUT_TAIL_CHARS = 4e3;
 var BRIEF_DIR = ".si-brief";
+function seatStepId(missionSlug, seatId, step) {
+  return `${missionSlug}::${seatId}::${step}`;
+}
+var SEAT_STEP_STORAGE_KEY = "vh.seatSteps.v1";
+function isStepRecord(r) {
+  if (!r || typeof r !== "object") return false;
+  const o = r;
+  return typeof o.stepId === "string" && typeof o.missionSlug === "string" && typeof o.seatId === "string" && typeof o.step === "string" && typeof o.at === "number" && (o.state === "in_flight" || o.state === "settled" || o.state === "failed");
+}
+function createSeatStepLedger(opts) {
+  const store = opts && "store" in opts ? opts.store ?? null : globalThis.localStorage ?? null;
+  const mem = /* @__PURE__ */ new Map();
+  let loaded = false;
+  const load2 = () => {
+    if (loaded) return;
+    loaded = true;
+    try {
+      const raw = store?.getItem(SEAT_STEP_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        for (const r of parsed) if (isStepRecord(r)) mem.set(r.stepId, r);
+      }
+    } catch {
+    }
+  };
+  const persist = () => {
+    try {
+      store?.setItem(SEAT_STEP_STORAGE_KEY, JSON.stringify([...mem.values()]));
+    } catch {
+    }
+  };
+  return {
+    stepId: (p) => seatStepId(p.missionSlug, p.seatId, p.step),
+    get: (id) => {
+      load2();
+      return mem.get(id);
+    },
+    mark: (rec) => {
+      load2();
+      mem.set(rec.stepId, rec);
+      persist();
+    },
+    entries: () => {
+      load2();
+      return [...mem.values()];
+    }
+  };
+}
 async function git(deps, args, cwd) {
   if (!deps.git) return { ok: false, stdout: "", stderr: "", exitCode: null };
   const r = await deps.git(args, cwd);
@@ -4181,6 +4582,7 @@ function gateTheRun(args) {
 async function executeTeam(req, deps, sessions = new SessionStore()) {
   const now = deps.now ?? (() => Date.now());
   const t0 = now();
+  const steps = req.steps ?? createSeatStepLedger({ store: null });
   const startedAt = new Date(t0).toISOString();
   const seats = [];
   const notRun = [];
@@ -4200,10 +4602,13 @@ async function executeTeam(req, deps, sessions = new SessionStore()) {
   };
   const budgetGate = req.rootEnvelope && req.rootEnvelope.budgetUsd !== null ? new BudgetGate(req.rootEnvelope.budgetUsd) : null;
   const budgetAccounting = { admitted: 0, refused: 0, overrun: 0, tokensOnly: /* @__PURE__ */ new Set() };
+  const lanes = createDispatchLanes({ concurrency: SEAT_LANE_CONCURRENCY, maximumQueued: Math.max(1, req.team.seats.length) });
+  let laneRefusals = 0;
   let seatEnvelopes = [];
   let packetVerified = false;
   let arenaStamp = null;
   const emptySnapshot = { built: false, branch: "", sha: null, writerBranches: [], conflicts: [], detail: "Not attempted." };
+  const budgetNote = () => budgetGate ? ` Budget authority: $${budgetGate.capUsd.toFixed(2)} cap; ${budgetAccounting.admitted} seat(s) admitted by atomic reservation, ${budgetAccounting.refused} refused${budgetAccounting.overrun > 0 ? `; $${budgetAccounting.overrun.toFixed(4)} measured overrun settled after the fact` : ""}${budgetAccounting.tokensOnly.size > 0 ? `; ${[...budgetAccounting.tokensOnly].join(", ")} reported tokens only, so VH marks their dollar spend UNKNOWN rather than inventing a price` : ""}${laneRefusals > 0 ? `; ${laneRefusals} seat(s) never started because the run's cap tripped while they waited behind the ${SEAT_LANE_CONCURRENCY}-seat dispatch ceiling` : ""}.` : laneRefusals > 0 ? ` Labour ceiling: ${laneRefusals} seat(s) never started because the run's cap tripped while they waited behind the ${SEAT_LANE_CONCURRENCY}-seat dispatch ceiling.` : "";
   const finish = (status2, summary, spentUsd2, snapshot2, briefings2) => {
     if (status2 === "completed") {
       globalMemoryCortex.recordRepairSuccess(
@@ -4231,11 +4636,10 @@ Spent: $${(spentUsd2 || 0).toFixed(4)}`, "orchestrator", "finding");
       snapshot: snapshot2,
       policy: req.gatePolicy ?? loadGatePolicy()
     });
-    const budgetNote = budgetGate ? ` Budget authority: $${budgetGate.capUsd.toFixed(2)} cap; ${budgetAccounting.admitted} seat(s) admitted by atomic reservation, ${budgetAccounting.refused} refused${budgetAccounting.overrun > 0 ? `; $${budgetAccounting.overrun.toFixed(4)} measured overrun settled after the fact` : ""}${budgetAccounting.tokensOnly.size > 0 ? `; ${[...budgetAccounting.tokensOnly].join(", ")} reported tokens only, so VH marks their dollar spend UNKNOWN rather than inventing a price` : ""}.` : "";
     return {
       seats,
       status: status2,
-      summary: summary + budgetNote,
+      summary: summary + budgetNote(),
       spentUsd: spentUsd2,
       notRun,
       setup,
@@ -4541,8 +4945,8 @@ ${lessonLines.map((l) => `- ${l}`).join("\n")}
       runnableWave = admitted;
     }
     const results = await Promise.all(
-      runnableWave.map(
-        (a) => runSeat(
+      runnableWave.map((a) => {
+        const entry = () => runSeat(
           req,
           depsWithRep,
           a,
@@ -4553,9 +4957,19 @@ ${lessonLines.map((l) => `- ${l}`).join("\n")}
           setupFailed,
           snapshot,
           briefingsByHarness,
-          now
-        )
-      )
+          now,
+          steps
+        );
+        return lanes.run(entry, {
+          priority: laneForSeat(a.seat.mayWrite),
+          stopReason: () => req.ledger.admissionError(now())
+        }).catch((e) => {
+          if (!isLaneRefusal(e)) throw e;
+          laneRefusals += 1;
+          notRun.push({ seatId: a.seat.id, reason: e.message });
+          return unrunRecord(a, wtBySeat.get(a.seat.id) ?? null, "skipped_budget", `Never dispatched: ${e.message}`);
+        });
+      })
     );
     seats.push(...results);
     for (const r of results) {
@@ -4593,6 +5007,10 @@ ${lessonLines.map((l) => `- ${l}`).join("\n")}
         if (/Committed on/.test(r.commit)) committedBranches.push(r.branch);
       }
     }
+    for (const r of results) {
+      if (r.outcome !== "completed" || !r.branch || r.branch === req.baseBranch || committedBranches.includes(r.branch)) continue;
+      if (r.idempotency?.commitApplied) committedBranches.push(r.branch);
+    }
     if (results.every((r) => r.outcome !== "completed")) waveFailed = true;
   }
   const spentUsd = seats.reduce((s, r) => s + r.chargedUsd, 0);
@@ -4629,7 +5047,13 @@ ${lessonLines.map((l) => `- ${l}`).join("\n")}
   return {
     seats,
     status,
-    summary: buildSummary({ status, seats, verifiedCount, spentUsd, notRun, briefings, snapshot }),
+    // The same budget note the early-exit `finish()` path carries. It was missing
+    // here, which meant a run that actually reserved, dispatched and SETTLED
+    // against a `BudgetGate` returned a report whose `budget` was undefined —
+    // the atomic admission accounting was computed and then thrown away on the
+    // only path that had anything to account for. A mission report that omits
+    // what its cap did is a report that cannot answer "did the cap hold?".
+    summary: buildSummary({ status, seats, verifiedCount, spentUsd, notRun, briefings, snapshot }) + (budgetGate ? budgetNote() : ""),
     spentUsd,
     notRun,
     setup,
@@ -4641,6 +5065,11 @@ ${lessonLines.map((l) => `- ${l}`).join("\n")}
     finishedAt: new Date(now()).toISOString(),
     wallClockMs: now() - t0,
     autonomyArms: req.autonomy?.arms,
+    strategy: req.strategy ?? null,
+    actionPacket: req.actionPacket ? { id: req.actionPacket.id, digest: req.actionPacket.digest, permission: req.actionPacket.permission, reversible: req.actionPacket.reversible, verification: req.actionPacket.verification, verified: packetVerified } : null,
+    envelopes: seatEnvelopes,
+    budget: budgetGate ? { capUsd: budgetGate.capUsd, admittedByReservation: budgetAccounting.admitted, refusedByReservation: budgetAccounting.refused, overrunUsd: budgetAccounting.overrun, tokensOnlySeats: [...budgetAccounting.tokensOnly] } : void 0,
+    repetition: [...repCount.entries()].map(([seatId, r]) => ({ seatId, repeated: r.max })).filter((r) => r.repeated >= 2),
     arena: arenaStamp
   };
 }
@@ -4710,12 +5139,16 @@ async function excludeBriefDir(deps, worktreePath) {
     return false;
   }
 }
-async function runSeat(req, deps, a, sessions, wt, binaryExists, resolvedBin, setupFailedSeats, snapshot, briefings, now) {
+async function runSeat(req, deps, a, sessions, wt, binaryExists, resolvedBin, setupFailedSeats, snapshot, briefings, now, steps) {
   const caps = resolveCaps(a.seat.harness).caps;
   const readOnly = a.readOnly || !a.seat.mayWrite;
   const cwd = wt?.path ?? req.repoRoot;
   const branch = wt?.deferred ? snapshot.branch : wt?.branch ?? req.baseBranch;
   const reviewedRef = wt?.deferred ? snapshot.sha ?? snapshot.branch : branch;
+  const idem = { reused: [], applied: [], unresolved: [], commitApplied: false, commitAppliedThisRun: false };
+  const markStep = (step, state, note, sessionId) => {
+    steps.mark({ stepId: steps.stepId({ missionSlug: req.missionSlug, seatId: a.seat.id, step }), missionSlug: req.missionSlug, seatId: a.seat.id, step, state, at: now(), note, ...sessionId ? { sessionId } : {} });
+  };
   const base = {
     seatId: a.seat.id,
     role: a.seat.role,
@@ -4742,7 +5175,8 @@ async function runSeat(req, deps, a, sessions, wt, binaryExists, resolvedBin, se
     commit: "Never ran, so nothing was committed.",
     warnings: [],
     selfReport: null,
-    outputTail: ""
+    outputTail: "",
+    idempotency: idem
   };
   if (!binaryExists) {
     return { ...base, outcome: "blocked_missing_binary", reason: `${caps.name} is not installed, so this seat never ran. Install: ${caps.install}` };
@@ -4784,10 +5218,26 @@ async function runSeat(req, deps, a, sessions, wt, binaryExists, resolvedBin, se
   const warnings = [];
   let lastArgv = [];
   let lastSummary = "";
+  let dispatchedAnyTurn = false;
+  let turnsDispatched = 0;
   for (const t of turns) {
+    const stepName = `turn:${t.turn}`;
+    const stepKey = steps.stepId({ missionSlug: req.missionSlug, seatId: a.seat.id, step: stepName });
+    const prior = steps.get(stepKey);
+    if (prior?.state === "settled") {
+      idem.reused.push(stepName);
+      if (prior.sessionId) {
+        sessions.recordTurn(sessionKey, prior.sessionId, t.prompt);
+        continuity = "session";
+      }
+      if (prior.note) lastSummary = prior.note;
+      continue;
+    }
+    if (prior) idem.unresolved.push(stepName);
     const admission = req.ledger.admissionError(now());
     if (admission) {
-      return { ...base, argv: lastArgv, sessionId: session.sessionId, continuity, turnsRun: t.turn - 1, chargedUsd: chargedTotal, usage, warnings, outcome: "blocked_budget", reason: `Turn ${t.turn} was never started: ${admission}` };
+      markStep(stepName, "failed", `refused before dispatch: ${admission}`, session.sessionId);
+      return { ...base, argv: lastArgv, sessionId: session.sessionId, continuity, turnsRun: turnsDispatched, chargedUsd: chargedTotal, usage, warnings, outcome: "blocked_budget", reason: `Turn ${t.turn} was never started: ${admission}` };
     }
     const composed = composeSeatArgv(a.seat, {
       prompt: t.turn === 1 ? t.prompt : followUpPrompt({ continuity, harnessName: caps.name, previousSummary: lastSummary, instruction: t.prompt }),
@@ -4801,6 +5251,9 @@ async function runSeat(req, deps, a, sessions, wt, binaryExists, resolvedBin, se
     const timeoutSecs = a.seat.timeoutSecs > 0 ? a.seat.timeoutSecs : 600;
     const turnText = t.turn === 1 ? t.prompt : followUpPrompt({ continuity, harnessName: caps.name, previousSummary: lastSummary, instruction: t.prompt });
     const native = deps.nativeInvoke;
+    markStep(stepName, "in_flight", `dispatching turn ${t.turn} of ${req.missionSlug}`, session.sessionId);
+    dispatchedAnyTurn = true;
+    turnsDispatched += 1;
     const enforced = native ? await withDeadline(
       () => native({
         harness: a.seat.harness,
@@ -4831,12 +5284,14 @@ async function runSeat(req, deps, a, sessions, wt, binaryExists, resolvedBin, se
     const durationMs = res ? res.durationMs : enforced.elapsedMs;
     if (enforced.outcome === "timeout" || res?.timedOut) {
       req.ledger.recordCapped(a.seat.id, "timeout", `${caps.name} exceeded its ${timeoutSecs}s deadline on turn ${t.turn}. The child had to be killed; VH cannot assume it stopped cleanly.`);
+      markStep(stepName, "failed", `killed at the ${timeoutSecs}s deadline on turn ${t.turn}`, session.sessionId);
+      idem.unresolved.push(stepName);
       return {
         ...base,
         argv: composed.argv,
         sessionId: session.sessionId,
         continuity,
-        turnsRun: t.turn - 1,
+        turnsRun: turnsDispatched,
         chargedUsd: chargedTotal,
         usage,
         warnings,
@@ -4847,7 +5302,9 @@ async function runSeat(req, deps, a, sessions, wt, binaryExists, resolvedBin, se
       };
     }
     if (!res) {
-      return { ...base, argv: composed.argv, sessionId: session.sessionId, continuity, turnsRun: t.turn - 1, chargedUsd: chargedTotal, usage, warnings, outcome: "failed", reason: `Turn ${t.turn} produced no result: ${enforced.detail}` };
+      markStep(stepName, "failed", `no result on turn ${t.turn}: ${enforced.detail}`, session.sessionId);
+      idem.unresolved.push(stepName);
+      return { ...base, argv: composed.argv, sessionId: session.sessionId, continuity, turnsRun: turnsDispatched, chargedUsd: chargedTotal, usage, warnings, outcome: "failed", reason: `Turn ${t.turn} produced no result: ${enforced.detail}` };
     }
     last = res;
     const reportedId = parseSessionId(a.seat.harness, res.stdout);
@@ -4856,12 +5313,14 @@ async function runSeat(req, deps, a, sessions, wt, binaryExists, resolvedBin, se
     const resumeProblem = detectResumeFailure(res.stdout + "\n" + res.stderr);
     if (resumeProblem && t.turn > 1) {
       sessions.markResumeFailed(sessionKey);
+      markStep(stepName, "failed", `could not resume the session: ${resumeProblem}`, session.sessionId);
+      idem.unresolved.push(stepName);
       return {
         ...base,
         argv: composed.argv,
         sessionId: session.sessionId,
         continuity: "none",
-        turnsRun: t.turn - 1,
+        turnsRun: turnsDispatched,
         chargedUsd: chargedTotal,
         usage,
         warnings,
@@ -4883,12 +5342,14 @@ async function runSeat(req, deps, a, sessions, wt, binaryExists, resolvedBin, se
       deps.onTurn({ ...base, argv: composed.argv, turnsRun: t.turn, sessionId: session.sessionId, continuity, outcome: "completed", reason: "", exitCode: res.exitCode, durationMs, usage, chargedUsd: chargedTotal, outputTail: tail(res.stdout), commit: "", warnings, selfReport: lastSummary });
     }
     if (res.exitCode !== 0 || reportsError(res.stdout)) {
+      markStep(stepName, "failed", `turn ${t.turn} failed (exit ${res.exitCode ?? "null"}${reportsError(res.stdout) ? ", error payload" : ""})`, session.sessionId);
+      idem.unresolved.push(stepName);
       return {
         ...base,
         argv: composed.argv,
         sessionId: session.sessionId,
         continuity,
-        turnsRun: t.turn,
+        turnsRun: turnsDispatched,
         chargedUsd: chargedTotal,
         usage,
         warnings,
@@ -4902,6 +5363,8 @@ async function runSeat(req, deps, a, sessions, wt, binaryExists, resolvedBin, se
         reason: res.exitCode !== 0 ? `${caps.name} exited ${res.exitCode} on turn ${t.turn}. ${res.stderr.trim() ? `It said: ${tail(res.stderr, 500)}` : "It wrote nothing to stderr."}` : `${caps.name} exited 0 but reported an error in its own output, so VH treats it as a failure rather than a success.`
       };
     }
+    idem.applied.push(stepName);
+    markStep(stepName, "settled", lastSummary || "(the agent returned no summary)", session.sessionId);
   }
   let verified = false;
   let verificationDetail = "No verification command is configured for this mission, so nothing was checked. This seat's work is UNVERIFIED.";
@@ -4917,18 +5380,47 @@ async function runSeat(req, deps, a, sessions, wt, binaryExists, resolvedBin, se
     }
   }
   const gitEv = await collectGitEvidence(deps.git, cwd);
+  const commitStep = "commit";
+  const priorCommit = steps.get(steps.stepId({ missionSlug: req.missionSlug, seatId: a.seat.id, step: commitStep }));
   let commitDetail = readOnly ? "Read-only seat; nothing to commit." : "No git runner, so the work could not be committed.";
-  if (deps.git && !readOnly) {
+  if (deps.git && !readOnly && !dispatchedAnyTurn) {
+    const earlier = priorCommit?.state === "settled";
+    commitDetail = earlier ? `Already committed by an earlier run of this mission${priorCommit.at ? ` (${new Date(priorCommit.at).toISOString()})` : ""}. This run dispatched no agent for this seat \u2014 every turn was already applied \u2014 so nothing was re-added and nothing was re-committed.` : "This run dispatched no agent for this seat (every turn was already applied by an earlier run), so nothing was added and nothing was committed.";
+    idem.commitApplied = earlier;
+    if (earlier) {
+      warnings.push(`Skipped git commit for "${a.seat.id}": this run applied nothing, so re-staging the branch would re-apply work the step ledger already accounts for.`);
+    }
+  } else if (deps.git && !readOnly) {
+    markStep(commitStep, "in_flight", `staging and committing ${branch} for ${req.missionSlug}`, session.sessionId);
     await git(deps, ["add", "-A"], cwd);
     const commit = await git(deps, ["-c", "user.email=vh@selfimpulse.selfimpulse", "-c", "user.name=VH", "commit", "-q", "-m", `vh(${a.seat.id}): ${req.missionSlug}`], cwd);
     commitDetail = commit.ok ? `Committed on ${branch}.` : commit.exitCode === null ? "Could not run git commit." : /nothing to commit|no changes added/i.test(commit.stderr + commit.stdout) ? "Nothing to commit \u2014 this seat changed no files." : `git commit exited ${commit.exitCode}: ${(commit.stderr || commit.stdout).trim().slice(0, 200)}`;
+    const landed = commit.ok || /Committed on/.test(commitDetail);
+    if (landed) {
+      idem.applied.push(commitStep);
+      markStep(commitStep, "settled", commitDetail, session.sessionId);
+    } else if (/nothing to commit/i.test(commitDetail)) {
+      markStep(commitStep, "settled", commitDetail, session.sessionId);
+    } else {
+      markStep(commitStep, "failed", commitDetail, session.sessionId);
+      idem.unresolved.push(commitStep);
+    }
+    idem.commitApplied = commit.ok;
+    idem.commitAppliedThisRun = commit.ok;
+    if (priorCommit?.state === "settled" && commit.ok) {
+      warnings.push(`This run re-committed "${a.seat.id}" on top of the commit an earlier run of this mission already applied \u2014 that is new work over an existing commit, not a second application of the same effect.`);
+    }
   }
+  const reusedAll = idem.reused.length > 0 && !dispatchedAnyTurn && idem.unresolved.length === 0;
   const finalRecord = {
     ...base,
     argv: lastArgv,
     sessionId: session.sessionId,
     continuity,
-    turnsRun: turns.length,
+    /* ONLY the turns THIS invocation dispatched. A turn an earlier run applied and
+       this one reused is NOT a turn that ran, and counting it is exactly the
+       double-count a resume must not make. */
+    turnsRun: turnsDispatched,
     chargedUsd: chargedTotal,
     usage,
     warnings,
@@ -4941,7 +5433,7 @@ async function runSeat(req, deps, a, sessions, wt, binaryExists, resolvedBin, se
     selfReport: lastSummary,
     outputTail: tail(last?.stdout ?? ""),
     outcome: "completed",
-    reason: verified ? "Completed and verified by the repository's own check." : "Completed, but not verified \u2014 see verificationDetail."
+    reason: reusedAll ? `Nothing was dispatched: ${idem.reused.join(", ")} ${idem.reused.length === 1 ? "was" : "were"} already applied by an earlier run of this mission and ${idem.reused.length === 1 ? "was" : "were"} not applied again. ${verified ? "The repository's own check was re-run against the worktree as it stands and exited 0." : `This invocation did not confirm it \u2014 ${verificationDetail}`}` : idem.reused.length > 0 ? `${idem.reused.join(", ")} ${idem.reused.length === 1 ? "was" : "were"} already applied by an earlier run of this mission and ${idem.reused.length === 1 ? "was" : "were"} not repeated; the remaining turn(s) ran in this invocation.${verified ? " The repository's own check exited 0." : " Not verified \u2014 see verificationDetail."}` : verified ? "Completed and verified by the repository's own check." : "Completed, but not verified \u2014 see verificationDetail."
   };
   if (!readOnly && commitDetail.includes("Committed on")) {
     globalReputationLedger.recordOutcome(a.seat.harness, { verifiedCommit: true });
@@ -5019,8 +5511,8 @@ function summariseOutput(raw) {
 }
 function tail(s, n = OUTPUT_TAIL_CHARS) {
   const t = s.trimEnd();
-  return t.length > n ? `\u2026(truncated ${t.length - n} chars)\u2026
-${t.slice(-n)}` : t;
+  return scrubAuditText(t.length > n ? `\u2026(truncated ${t.length - n} chars)\u2026
+${t.slice(-n)}` : t);
 }
 function unrunRecord(a, wt, outcome, reason) {
   const caps = resolveCaps(a.seat.harness).caps;

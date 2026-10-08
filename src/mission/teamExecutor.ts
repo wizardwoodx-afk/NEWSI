@@ -61,6 +61,8 @@ import { verifyActionPacket, packetAllowsExecution, type ActionPacket } from "./
 import { attenuate, BudgetGate, budgetCheck, checkEnvelope, type AuthorityEnvelope, type BudgetTicket } from "./custody";
 import { recordSeatRun as finopsRecordSeatRun } from "../engine/finops";
 import { checkpoint as durableCheckpoint } from "./runCheckpoints";
+import { scrubAuditText } from "../security/auditScrub";
+import { createDispatchLanes, isLaneRefusal, laneForSeat, SEAT_LANE_CONCURRENCY } from "./dispatchLanes";
 import { globalReputationLedger } from "./consensusEngine";
 
 /* ------------------------------------------------------------------ injected capabilities */
@@ -152,6 +154,16 @@ export interface TeamRunRequest {
   baseBranch: string;
   missionSlug: string;
   objective: string;
+  /**
+   * Per-seat step ledger for THIS mission.
+   *
+   * Omitted: a fresh, empty ledger — which is exactly the old behaviour, because
+   * nothing has been applied yet. Supply one that survives the process (the
+   * default localStorage-backed ledger does) and a re-run resumes instead of
+   * re-applying: a step an earlier run settled is read BEFORE dispatch and is
+   * not dispatched again. See `SeatStepLedger`.
+   */
+  steps?: SeatStepLedger;
   constraints?: string[];
   doNotTouch?: string[];
   /** The repository's own test command, e.g. ["npm","test"]. */
@@ -239,6 +251,13 @@ export interface SeatRecord {
   selfReport: string | null;
   /** Truncated tail of the CLI's own output, so a human can see what actually happened. */
   outputTail: string;
+  /**
+   * What the per-seat step ledger did for this seat. Present whenever the run
+   * carried a ledger (`TeamRunRequest.steps`); a run that dispatched everything
+   * records every step under `applied` and nothing under `reused`, so the field
+   * reads the same either way.
+   */
+  idempotency?: SeatIdempotencyRecord;
 }
 
 export type RunStatus = "completed" | "partial" | "blocked" | "aborted";
@@ -327,6 +346,159 @@ export function waveGroups(assignments: SeatAssignment[]): SeatAssignment[][] {
   return [...byWave.entries()].sort((x, y) => x[0] - y[0]).map(([, v]) => v);
 }
 
+/* ------------------------------------------------------------------ per-seat idempotency */
+
+/**
+ * A seat's work produces two kinds of effect, and only one of them is dangerous
+ * to repeat: the effects the AGENT causes by running (bytes written into its
+ * worktree, provider spend, tool calls) and the effects VH causes afterwards
+ * (verify, git commit).
+ *
+ * THE DEFECT THIS CLOSES. Before the ledger, `runSeat` began every turn at
+ * index 1 with no memory of the previous attempt, so a re-run dispatched the
+ * agent again over a worktree its own earlier self had already changed — and
+ * `git add -A` + `commit` then ran unconditionally per seat, so a seat whose
+ * work was already committed went through a second `add -A` over the same tree.
+ * A seat that failed half way through was therefore re-driven from a tree that
+ * already contained its partial effect: the model saw its own earlier output as
+ * pre-existing code and either redid it or compounded it.
+ *
+ * THE RULE. A step is keyed on (missionSlug, seatId, step) — facts that do not
+ * change between runs — and it is READ BEFORE DISPATCH, never after. That
+ * ordering is the whole property:
+ *   - `settled`   → the effect exists; do not dispatch it again.
+ *   - `in_flight` → a dispatch was started and never confirmed; NOT applied, so
+ *                   the next run retries exactly this step.
+ *   - `failed`    → the step ran and did not take; NOT applied, retry it.
+ *   - absent      → never attempted; run it.
+ *
+ * `missionRuntime.ts` carries the same idea for graph nodes (`completedNodeIds`).
+ * This is the seat-level equivalent, keyed on the seat's turn rather than on a
+ * node id, because the executor's unit of work is a turn inside a seat.
+ */
+export type SeatStepState = "in_flight" | "settled" | "failed";
+
+export interface SeatStepRecord {
+  stepId: string;
+  missionSlug: string;
+  seatId: string;
+  /** `turn:1`, `turn:2`, `commit` — the unit of work this record is about. */
+  step: string;
+  state: SeatStepState;
+  at: number;
+  /**
+   * For a settled turn: the turn's own summary, kept so a re-run can resume the
+   * conversation with the same context the earlier attempt ended on instead of
+   * a blank one. For a commit: what git said.
+   */
+  note: string;
+  /** The session id the agent reported on a settled turn, so a re-run can resume it. */
+  sessionId?: string | null;
+}
+
+export interface SeatStepLedger {
+  /** Stable identity for one step of one seat in one mission. */
+  stepId(parts: { missionSlug: string; seatId: string; step: string }): string;
+  get(stepId: string): SeatStepRecord | undefined;
+  mark(rec: SeatStepRecord): void;
+  /** Everything the ledger holds — for the run report, a resume audit, and tests. */
+  entries(): SeatStepRecord[];
+}
+
+/** The identity itself, exported so a host can pre-compute or inspect a step id. */
+export function seatStepId(missionSlug: string, seatId: string, step: string): string {
+  return `${missionSlug}::${seatId}::${step}`;
+}
+
+export const SEAT_STEP_STORAGE_KEY = "vh.seatSteps.v1";
+
+interface StepStore {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+function isStepRecord(r: unknown): r is SeatStepRecord {
+  if (!r || typeof r !== "object") return false;
+  const o = r as Partial<SeatStepRecord>;
+  return (
+    typeof o.stepId === "string" &&
+    typeof o.missionSlug === "string" &&
+    typeof o.seatId === "string" &&
+    typeof o.step === "string" &&
+    typeof o.at === "number" &&
+    (o.state === "in_flight" || o.state === "settled" || o.state === "failed")
+  );
+}
+
+/**
+ * A step ledger.
+ *
+ * Persistence is best-effort and NEVER a precondition for running: the default
+ * store is `globalThis.localStorage` when the host has one (browser and Tauri),
+ * absent in plain Node, and the ledger falls back to memory there so probes stay
+ * headless. Pass `store: null` to force memory, or a Storage-shaped object to
+ * thread a host's own store. A corrupt or unreadable ledger is read as an EMPTY
+ * ledger — it can never fail a mission, and it can never claim a step settled.
+ */
+export function createSeatStepLedger(opts?: { store?: StepStore | null }): SeatStepLedger {
+  const store: StepStore | null =
+    opts && "store" in opts ? (opts.store ?? null) : ((globalThis.localStorage as StepStore | undefined) ?? null);
+  const mem = new Map<string, SeatStepRecord>();
+  let loaded = false;
+
+  const load = (): void => {
+    if (loaded) return;
+    loaded = true;
+    try {
+      const raw = store?.getItem(SEAT_STEP_STORAGE_KEY);
+      if (!raw) return;
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) for (const r of parsed) if (isStepRecord(r)) mem.set(r.stepId, r);
+    } catch {
+      /* unreadable ledger → nothing is known to be applied */
+    }
+  };
+
+  const persist = (): void => {
+    try {
+      store?.setItem(SEAT_STEP_STORAGE_KEY, JSON.stringify([...mem.values()]));
+    } catch {
+      /* memory-only when the store refuses */
+    }
+  };
+
+  return {
+    stepId: (p) => seatStepId(p.missionSlug, p.seatId, p.step),
+    get: (id) => {
+      load();
+      return mem.get(id);
+    },
+    mark: (rec) => {
+      load();
+      mem.set(rec.stepId, rec);
+      persist();
+    },
+    entries: () => {
+      load();
+      return [...mem.values()];
+    },
+  };
+}
+
+/** What a seat's idempotency did, in the record. Never absent when steps were supplied. */
+export interface SeatIdempotencyRecord {
+  /** Steps an earlier run of THIS mission already applied. Not dispatched again. */
+  reused: string[];
+  /** Steps this invocation applied. */
+  applied: string[];
+  /** Steps whose dispatch was attempted and did not settle — safe to retry. */
+  unresolved: string[];
+  /** The seat's branch carries this mission's commit, whether this run made it or an earlier one did. */
+  commitApplied: boolean;
+  /** True only when THIS invocation ran the commit. */
+  commitAppliedThisRun: boolean;
+}
+
 /** Run one git argv, returning a uniform shape the executor can reason about. */
 async function git(deps: TeamRunnerDeps, args: string[], cwd: string): Promise<{ ok: boolean; stdout: string; stderr: string; exitCode: number | null }> {
   if (!deps.git) return { ok: false, stdout: "", stderr: "", exitCode: null };
@@ -383,6 +555,10 @@ function gateTheRun(args: {
 export async function executeTeam(req: TeamRunRequest, deps: TeamRunnerDeps, sessions = new SessionStore()): Promise<TeamRunReport> {
   const now = deps.now ?? (() => Date.now());
   const t0 = now();
+  // The step ledger. Supplied by the caller when the mission is being RESUMED
+  // (so an applied step is not applied twice); absent otherwise, in which case
+  // an empty in-memory ledger is created and every step is simply new.
+  const steps: SeatStepLedger = req.steps ?? createSeatStepLedger({ store: null });
   const startedAt = new Date(t0).toISOString();
   const seats: SeatRecord[] = [];
   const notRun: TeamRunReport["notRun"] = [];
@@ -405,10 +581,45 @@ export async function executeTeam(req: TeamRunRequest, deps: TeamRunnerDeps, ses
   // before dispatch. Declared before `finish` so early-exit reports can read it safely.
   const budgetGate = req.rootEnvelope && req.rootEnvelope.budgetUsd !== null ? new BudgetGate(req.rootEnvelope.budgetUsd) : null;
   const budgetAccounting = { admitted: 0, refused: 0, overrun: 0, tokensOnly: new Set<string>() };
+
+  /* §DISPATCH LANES (claw-enterprise, MIT) — the run's ONE concurrency ceiling.
+   * Declared at run level, not per wave, because the ceiling is a property of
+   * the run: a fresh queue per wave would let wave 2 open its streams while
+   * wave 1's stragglers were still settling, and nobody would have written that
+   * down on purpose.
+   *
+   * Before this, `Promise.all` over the wave started EVERY seat in it at the
+   * same instant, and nothing in the repo ceilings `team.seats`. Each seat is
+   * now an in-process agent loop against the owner's key, so an unbounded fan
+   * out is a spend incident, a rate-limit incident and — the part this product
+   * cares about most — N live write-capable loops with only a reservation
+   * between them and the cap. The crew layer already bounded itself
+   * (`CREW_CONCURRENCY`); this closes the executor layer.
+   *
+   * `maximumQueued` is the wave's own size, so an already-admitted seat is never
+   * refused for queue space: the overflow arm is a guard against a caller that
+   * enqueues more than it declared, not a path this wave can reach. What the
+   * lane CAN do to a seat here is refuse it on the stop check — the cap tripping
+   * while that seat waited — and that is recorded as an unrun seat below. */
+  const lanes = createDispatchLanes({ concurrency: SEAT_LANE_CONCURRENCY, maximumQueued: Math.max(1, req.team.seats.length) });
+  let laneRefusals = 0;
   let seatEnvelopes: Array<{ seatId: string; scope: string[]; attenuatedFrom: string | null; principal?: string; delegationChain?: string[]; expiresAt?: number | null }> = [];
   let packetVerified = false;
   let arenaStamp: TeamRunReport["arena"] = null;
   const emptySnapshot: ReviewSnapshotRecord = { built: false, branch: "", sha: null, writerBranches: [], conflicts: [], detail: "Not attempted." };
+
+  /* ONE sentence about what the cap did, shared by both return paths so the
+     early exit and the full run cannot describe the same BudgetGate differently. */
+  const budgetNote = (): string =>
+    budgetGate
+      ? ` Budget authority: $${budgetGate.capUsd.toFixed(2)} cap; ${budgetAccounting.admitted} seat(s) admitted by atomic reservation, ${budgetAccounting.refused} refused${budgetAccounting.overrun > 0 ? `; $${budgetAccounting.overrun.toFixed(4)} measured overrun settled after the fact` : ""}${budgetAccounting.tokensOnly.size > 0 ? `; ${[...budgetAccounting.tokensOnly].join(", ")} reported tokens only, so VH marks their dollar spend UNKNOWN rather than inventing a price` : ""}${laneRefusals > 0 ? `; ${laneRefusals} seat(s) never started because the run's cap tripped while they waited behind the ${SEAT_LANE_CONCURRENCY}-seat dispatch ceiling` : ""}.`
+      : laneRefusals > 0
+        /* The lane refuses against the ledger cap, which exists whether or not a
+         * custody envelope was minted — so the sentence belongs here too. A run
+         * that never started seats has to say so even when it had no BudgetGate. */
+        ? ` Labour ceiling: ${laneRefusals} seat(s) never started because the run's cap tripped while they waited behind the ${SEAT_LANE_CONCURRENCY}-seat dispatch ceiling.`
+        : "";
+
 
   const finish = (status: RunStatus, summary: string, spentUsd: number, snapshot: ReviewSnapshotRecord, briefings: BriefingRecord[]): TeamRunReport => {
     if (status === "completed") {
@@ -438,13 +649,10 @@ export async function executeTeam(req: TeamRunRequest, deps: TeamRunnerDeps, ses
       policy: req.gatePolicy ?? loadGatePolicy(),
     });
     // 11.13.1 — the report states plainly what a cap does and does not guarantee.
-    const budgetNote = budgetGate
-      ? ` Budget authority: $${budgetGate.capUsd.toFixed(2)} cap; ${budgetAccounting.admitted} seat(s) admitted by atomic reservation, ${budgetAccounting.refused} refused${budgetAccounting.overrun > 0 ? `; $${budgetAccounting.overrun.toFixed(4)} measured overrun settled after the fact` : ""}${budgetAccounting.tokensOnly.size > 0 ? `; ${[...budgetAccounting.tokensOnly].join(", ")} reported tokens only, so VH marks their dollar spend UNKNOWN rather than inventing a price` : ""}.`
-      : "";
     return {
       seats,
       status,
-      summary: summary + budgetNote,
+      summary: summary + budgetNote(),
       spentUsd,
       notRun,
       setup,
@@ -821,22 +1029,50 @@ export async function executeTeam(req: TeamRunRequest, deps: TeamRunnerDeps, ses
       }
       runnableWave = admitted;
     }
+    /* THE LABOUR CEILING. One entry per seat in the wave, dispatched through the
+     * run's lanes rather than started all at once. `Promise.all` still gathers
+     * them in wave order, so the seat records a downstream gate reads are in the
+     * same sequence they were in before this change — only the number of them
+     * that are alive at one instant is bounded now.
+     *
+     * A lane REFUSAL is not a seat failure. It means the run's own cap tripped
+     * while this seat waited behind the ceiling, and the honest record is the
+     * `skipped_budget`-shaped one it already used for a reservation refusal —
+     * never dispatched, nothing spent, the reason in the ledger's words. Anything
+     * that is NOT a refusal rethrows, because a seat that started and threw is
+     * the executor's problem to fail on, exactly as it was before. */
     const results = await Promise.all(
-      runnableWave.map((a) =>
-        runSeat(
-          req,
-          depsWithRep,
-          a,
-          sessions,
-          wtBySeat.get(a.seat.id) ?? null,
-          runnable.get(a.seat.id) ?? false,
-          binPaths.get(a.seat.harness) ?? null,
-          setupFailed,
-          snapshot,
-          briefingsByHarness,
-          now,
-        ),
-      ),
+      runnableWave.map((a) => {
+        const entry = () =>
+          runSeat(
+            req,
+            depsWithRep,
+            a,
+            sessions,
+            wtBySeat.get(a.seat.id) ?? null,
+            runnable.get(a.seat.id) ?? false,
+            binPaths.get(a.seat.harness) ?? null,
+            setupFailed,
+            snapshot,
+            briefingsByHarness,
+            now,
+            steps,
+          );
+        return lanes.run(entry, {
+          priority: laneForSeat(a.seat.mayWrite),
+          stopReason: () => req.ledger.admissionError(now()),
+        }).catch((e: unknown) => {
+          if (!isLaneRefusal(e)) throw e;
+          laneRefusals += 1;
+          /* `skipped_budget`, not a new outcome: a lane refusal here can only come
+           * from `req.ledger.admissionError`, which IS the cap — cost, turns,
+           * invocations or wall clock — so the record says what actually stopped
+           * it and the report vocabulary does not grow for a case the existing
+           * word already describes. */
+          notRun.push({ seatId: a.seat.id, reason: e.message });
+          return unrunRecord(a, wtBySeat.get(a.seat.id) ?? null, "skipped_budget", `Never dispatched: ${e.message}`);
+        });
+      }),
     );
     seats.push(...results);
 
@@ -887,6 +1123,15 @@ export async function executeTeam(req: TeamRunRequest, deps: TeamRunnerDeps, ses
         if (/Committed on/.test(r.commit)) committedBranches.push(r.branch);
       }
     }
+    /* A RESUMED run's reused seats contribute their branches too. A seat this run
+       did not dispatch still holds the commit an earlier run of this same mission
+       applied, and that branch has to reach the review snapshot — otherwise the
+       resumed attempt reviews LESS than the first attempt did, and the review
+       snapshot would silently cover only the seats that happened to be retried. */
+    for (const r of results) {
+      if (r.outcome !== "completed" || !r.branch || r.branch === req.baseBranch || committedBranches.includes(r.branch)) continue;
+      if (r.idempotency?.commitApplied) committedBranches.push(r.branch);
+    }
     if (results.every((r) => r.outcome !== "completed")) waveFailed = true;
   }
 
@@ -932,7 +1177,13 @@ export async function executeTeam(req: TeamRunRequest, deps: TeamRunnerDeps, ses
   return {
     seats,
     status,
-    summary: buildSummary({ status, seats, verifiedCount, spentUsd, notRun, briefings, snapshot }),
+    // The same budget note the early-exit `finish()` path carries. It was missing
+    // here, which meant a run that actually reserved, dispatched and SETTLED
+    // against a `BudgetGate` returned a report whose `budget` was undefined —
+    // the atomic admission accounting was computed and then thrown away on the
+    // only path that had anything to account for. A mission report that omits
+    // what its cap did is a report that cannot answer "did the cap hold?".
+    summary: buildSummary({ status, seats, verifiedCount, spentUsd, notRun, briefings, snapshot }) + (budgetGate ? budgetNote() : ""),
     spentUsd,
     notRun,
     setup,
@@ -944,6 +1195,13 @@ export async function executeTeam(req: TeamRunRequest, deps: TeamRunnerDeps, ses
     finishedAt: new Date(now()).toISOString(),
     wallClockMs: now() - t0,
     autonomyArms: req.autonomy?.arms,
+    strategy: req.strategy ?? null,
+    actionPacket: req.actionPacket
+      ? { id: req.actionPacket.id, digest: req.actionPacket.digest, permission: req.actionPacket.permission, reversible: req.actionPacket.reversible, verification: req.actionPacket.verification, verified: packetVerified }
+      : null,
+    envelopes: seatEnvelopes,
+    budget: budgetGate ? { capUsd: budgetGate.capUsd, admittedByReservation: budgetAccounting.admitted, refusedByReservation: budgetAccounting.refused, overrunUsd: budgetAccounting.overrun, tokensOnlySeats: [...budgetAccounting.tokensOnly] } : undefined,
+    repetition: [...repCount.entries()].map(([seatId, r]) => ({ seatId, repeated: r.max })).filter((r) => r.repeated >= 2),
     arena: arenaStamp,
   };
 }
@@ -1072,6 +1330,7 @@ async function runSeat(
   snapshot: ReviewSnapshotRecord,
   briefings: ContextFile[],
   now: () => number,
+  steps: SeatStepLedger,
 ): Promise<SeatRecord> {
   // V11.6.1: resolver — never undefined, custom seats included.
   const caps = resolveCaps(a.seat.harness).caps;
@@ -1080,6 +1339,14 @@ async function runSeat(
   // A deferred read-only seat reviews the snapshot; anything else works on its own branch.
   const branch = wt?.deferred ? snapshot.branch : (wt?.branch ?? req.baseBranch);
   const reviewedRef = wt?.deferred ? (snapshot.sha ?? snapshot.branch) : branch;
+
+  /* The seat's ledger view. Populated as the turn loop and the commit run, and
+     attached to every exit from this function so the record always states
+     whether this invocation applied anything or merely reused what was there. */
+  const idem: SeatIdempotencyRecord = { reused: [], applied: [], unresolved: [], commitApplied: false, commitAppliedThisRun: false };
+  const markStep = (step: string, state: SeatStepState, note: string, sessionId: string | null): void => {
+    steps.mark({ stepId: steps.stepId({ missionSlug: req.missionSlug, seatId: a.seat.id, step }), missionSlug: req.missionSlug, seatId: a.seat.id, step, state, at: now(), note, ...(sessionId ? { sessionId } : {}) });
+  };
 
   const base: Omit<SeatRecord, "outcome" | "reason"> = {
     seatId: a.seat.id,
@@ -1108,6 +1375,7 @@ async function runSeat(
     warnings: [],
     selfReport: null,
     outputTail: "",
+    idempotency: idem,
   };
 
   if (!binaryExists) {
@@ -1168,12 +1436,40 @@ async function runSeat(
   const warnings: string[] = [];
   let lastArgv: string[] = [];
   let lastSummary = "";
+  /** True once at least one turn has actually been dispatched in THIS invocation. */
+  let dispatchedAnyTurn = false;
+  /** Turns THIS invocation dispatched. A reused turn is never counted here. */
+  let turnsDispatched = 0;
 
   for (const t of turns) {
+    /* ── IDEMPOTENCY, READ BEFORE DISPATCH ──────────────────────────────────────
+       This check sits above the budget admission check on purpose: a step an
+       earlier run already applied is not going to be dispatched, so there is
+       nothing to admit and nothing to spend. The admission check below still
+       precedes every dispatch that DOES happen — refusing beforehand is control,
+       charging afterwards is bookkeeping. */
+    const stepName = `turn:${t.turn}`;
+    const stepKey = steps.stepId({ missionSlug: req.missionSlug, seatId: a.seat.id, step: stepName });
+    const prior = steps.get(stepKey);
+    if (prior?.state === "settled") {
+      idem.reused.push(stepName);
+      /* Rehydrate what the earlier attempt left behind, so a resumed follow-up
+         continues the same conversation instead of a blank one: the session id
+         the agent itself reported, and the summary it ended on. */
+      if (prior.sessionId) {
+        sessions.recordTurn(sessionKey, prior.sessionId, t.prompt);
+        continuity = "session";
+      }
+      if (prior.note) lastSummary = prior.note;
+      continue;
+    }
+    if (prior) idem.unresolved.push(stepName);
+
     // Budget check BEFORE dispatch. Charging afterwards is bookkeeping; refusing beforehand is control.
     const admission = req.ledger.admissionError(now());
     if (admission) {
-      return { ...base, argv: lastArgv, sessionId: session.sessionId, continuity, turnsRun: t.turn - 1, chargedUsd: chargedTotal, usage, warnings, outcome: "blocked_budget", reason: `Turn ${t.turn} was never started: ${admission}` };
+      markStep(stepName, "failed", `refused before dispatch: ${admission}`, session.sessionId);
+      return { ...base, argv: lastArgv, sessionId: session.sessionId, continuity, turnsRun: turnsDispatched, chargedUsd: chargedTotal, usage, warnings, outcome: "blocked_budget", reason: `Turn ${t.turn} was never started: ${admission}` };
     }
 
     const composed = composeSeatArgv(a.seat, {
@@ -1196,6 +1492,12 @@ async function runSeat(
       ? t.prompt
       : followUpPrompt({ continuity, harnessName: caps.name, previousSummary: lastSummary, instruction: t.prompt });
     const native = deps.nativeInvoke;
+    /* in_flight BEFORE the await. A dispatch that is killed mid-flight leaves the
+       step in_flight, never settled, so the next run retries exactly this turn
+       instead of treating an unconfirmed effect as an applied one. */
+    markStep(stepName, "in_flight", `dispatching turn ${t.turn} of ${req.missionSlug}`, session.sessionId);
+    dispatchedAnyTurn = true;
+    turnsDispatched += 1;
     const enforced = native
       ? await withDeadline(
           () =>
@@ -1231,12 +1533,14 @@ async function runSeat(
 
     if (enforced.outcome === "timeout" || res?.timedOut) {
       req.ledger.recordCapped(a.seat.id, "timeout", `${caps.name} exceeded its ${timeoutSecs}s deadline on turn ${t.turn}. The child had to be killed; VH cannot assume it stopped cleanly.`);
+      markStep(stepName, "failed", `killed at the ${timeoutSecs}s deadline on turn ${t.turn}`, session.sessionId);
+      idem.unresolved.push(stepName);
       return {
         ...base,
         argv: composed.argv,
         sessionId: session.sessionId,
         continuity,
-        turnsRun: t.turn - 1,
+        turnsRun: turnsDispatched,
         chargedUsd: chargedTotal,
         usage,
         warnings,
@@ -1247,7 +1551,9 @@ async function runSeat(
       };
     }
     if (!res) {
-      return { ...base, argv: composed.argv, sessionId: session.sessionId, continuity, turnsRun: t.turn - 1, chargedUsd: chargedTotal, usage, warnings, outcome: "failed", reason: `Turn ${t.turn} produced no result: ${enforced.detail}` };
+      markStep(stepName, "failed", `no result on turn ${t.turn}: ${enforced.detail}`, session.sessionId);
+      idem.unresolved.push(stepName);
+      return { ...base, argv: composed.argv, sessionId: session.sessionId, continuity, turnsRun: turnsDispatched, chargedUsd: chargedTotal, usage, warnings, outcome: "failed", reason: `Turn ${t.turn} produced no result: ${enforced.detail}` };
     }
     last = res;
 
@@ -1260,12 +1566,14 @@ async function runSeat(
     const resumeProblem = detectResumeFailure(res.stdout + "\n" + res.stderr);
     if (resumeProblem && t.turn > 1) {
       sessions.markResumeFailed(sessionKey);
+      markStep(stepName, "failed", `could not resume the session: ${resumeProblem}`, session.sessionId);
+      idem.unresolved.push(stepName);
       return {
         ...base,
         argv: composed.argv,
         sessionId: session.sessionId,
         continuity: "none",
-        turnsRun: t.turn - 1,
+        turnsRun: turnsDispatched,
         chargedUsd: chargedTotal,
         usage,
         warnings,
@@ -1293,12 +1601,14 @@ async function runSeat(
     // A non-zero exit is a real failure. Some CLIs exit 0 while reporting is_error:true, so the payload
     // is checked too — an agent that says it failed did not succeed.
     if (res.exitCode !== 0 || reportsError(res.stdout)) {
+      markStep(stepName, "failed", `turn ${t.turn} failed (exit ${res.exitCode ?? "null"}${reportsError(res.stdout) ? ", error payload" : ""})`, session.sessionId);
+      idem.unresolved.push(stepName);
       return {
         ...base,
         argv: composed.argv,
         sessionId: session.sessionId,
         continuity,
-        turnsRun: t.turn,
+        turnsRun: turnsDispatched,
         chargedUsd: chargedTotal,
         usage,
         warnings,
@@ -1315,6 +1625,12 @@ async function runSeat(
             : `${caps.name} exited 0 but reported an error in its own output, so VH treats it as a failure rather than a success.`,
       };
     }
+
+    /* The turn is confirmed: exit 0, no error payload. THIS is the point at which
+       the effect may be called applied — and it is settled after the check, never
+       before it, so a turn that reported failure is never recorded as done. */
+    idem.applied.push(stepName);
+    markStep(stepName, "settled", lastSummary || "(the agent returned no summary)", session.sessionId);
   }
 
   // Verification: the repository's own check, in this seat's directory. This is the only thing that
@@ -1336,10 +1652,37 @@ async function runSeat(
   // Evidence, measured while this seat's work is still the only thing in its tree.
   const gitEv = await collectGitEvidence(deps.git, cwd);
 
-  // Commit a writer's work on its own branch. Read-only seats never commit — a reviewer that commits
-  // is not a reviewer.
+  /* Commit a writer's work on its own branch. Read-only seats never commit — a
+     reviewer that commits is not a reviewer.
+
+     THE IDEMPOTENCY RULE HERE. `git add -A` over a tree whose work is already
+     committed is not free: it re-stages everything the earlier run produced and
+     offers it for a second commit, which is how one seat's work turns into two
+     commits and how a resume reports progress it did not make. So the commit is
+     gated on the ONE fact that matters — did this invocation dispatch an agent?
+
+       dispatched   → there may be new bytes; commit them (over the earlier commit).
+       not dispatched → every turn was already applied, so there are no new bytes;
+                       running `add -A` again would re-apply the effect that the
+                       ledger already accounts for. Skip it and say so.
+
+     Verification is NOT gated. It is a measurement of the tree as it stands now,
+     and `verified` may only be true because the repository's own check actually
+     ran and exited 0 in this invocation. */
+  const commitStep = "commit";
+  const priorCommit = steps.get(steps.stepId({ missionSlug: req.missionSlug, seatId: a.seat.id, step: commitStep }));
   let commitDetail = readOnly ? "Read-only seat; nothing to commit." : "No git runner, so the work could not be committed.";
-  if (deps.git && !readOnly) {
+  if (deps.git && !readOnly && !dispatchedAnyTurn) {
+    const earlier = priorCommit?.state === "settled";
+    commitDetail = earlier
+      ? `Already committed by an earlier run of this mission${priorCommit.at ? ` (${new Date(priorCommit.at).toISOString()})` : ""}. This run dispatched no agent for this seat — every turn was already applied — so nothing was re-added and nothing was re-committed.`
+      : "This run dispatched no agent for this seat (every turn was already applied by an earlier run), so nothing was added and nothing was committed.";
+    idem.commitApplied = earlier;
+    if (earlier) {
+      warnings.push(`Skipped git commit for "${a.seat.id}": this run applied nothing, so re-staging the branch would re-apply work the step ledger already accounts for.`);
+    }
+  } else if (deps.git && !readOnly) {
+    markStep(commitStep, "in_flight", `staging and committing ${branch} for ${req.missionSlug}`, session.sessionId);
     await git(deps, ["add", "-A"], cwd);
     const commit = await git(deps, ["-c", "user.email=vh@selfimpulse.selfimpulse", "-c", "user.name=VH", "commit", "-q", "-m", `vh(${a.seat.id}): ${req.missionSlug}`], cwd);
     commitDetail = commit.ok
@@ -1349,14 +1692,35 @@ async function runSeat(
         : /nothing to commit|no changes added/i.test(commit.stderr + commit.stdout)
           ? "Nothing to commit — this seat changed no files."
           : `git commit exited ${commit.exitCode}: ${(commit.stderr || commit.stdout).trim().slice(0, 200)}`;
+    const landed = commit.ok || /Committed on/.test(commitDetail);
+    if (landed) {
+      idem.applied.push(commitStep);
+      markStep(commitStep, "settled", commitDetail, session.sessionId);
+    } else if (/nothing to commit/i.test(commitDetail)) {
+      markStep(commitStep, "settled", commitDetail, session.sessionId);
+    } else {
+      markStep(commitStep, "failed", commitDetail, session.sessionId);
+      idem.unresolved.push(commitStep);
+    }
+    idem.commitApplied = commit.ok;
+    idem.commitAppliedThisRun = commit.ok;
+    if (priorCommit?.state === "settled" && commit.ok) {
+      warnings.push(`This run re-committed "${a.seat.id}" on top of the commit an earlier run of this mission already applied — that is new work over an existing commit, not a second application of the same effect.`);
+    }
   }
 
+  /* A resumed seat's own verdict has to say WHY it is not a fresh one. "Completed"
+     with no word about reuse would read as a second execution of the same work. */
+  const reusedAll = idem.reused.length > 0 && !dispatchedAnyTurn && idem.unresolved.length === 0;
   const finalRecord: SeatRecord = {
     ...base,
     argv: lastArgv,
     sessionId: session.sessionId,
     continuity,
-    turnsRun: turns.length,
+    /* ONLY the turns THIS invocation dispatched. A turn an earlier run applied and
+       this one reused is NOT a turn that ran, and counting it is exactly the
+       double-count a resume must not make. */
+    turnsRun: turnsDispatched,
     chargedUsd: chargedTotal,
     usage,
     warnings,
@@ -1369,7 +1733,13 @@ async function runSeat(
     selfReport: lastSummary,
     outputTail: tail(last?.stdout ?? ""),
     outcome: "completed",
-    reason: verified ? "Completed and verified by the repository's own check." : "Completed, but not verified — see verificationDetail.",
+    reason: reusedAll
+      ? `Nothing was dispatched: ${idem.reused.join(", ")} ${idem.reused.length === 1 ? "was" : "were"} already applied by an earlier run of this mission and ${idem.reused.length === 1 ? "was" : "were"} not applied again. ${verified ? "The repository's own check was re-run against the worktree as it stands and exited 0." : `This invocation did not confirm it — ${verificationDetail}`}`
+      : idem.reused.length > 0
+        ? `${idem.reused.join(", ")} ${idem.reused.length === 1 ? "was" : "were"} already applied by an earlier run of this mission and ${idem.reused.length === 1 ? "was" : "were"} not repeated; the remaining turn(s) ran in this invocation.${verified ? " The repository's own check exited 0." : " Not verified — see verificationDetail."}`
+        : verified
+          ? "Completed and verified by the repository's own check."
+          : "Completed, but not verified — see verificationDetail.",
   };
 
   if (!readOnly && commitDetail.includes("Committed on")) {
@@ -1461,7 +1831,17 @@ export function summariseOutput(raw: string): string {
 
 function tail(s: string, n = OUTPUT_TAIL_CHARS): string {
   const t = s.trimEnd();
-  return t.length > n ? `…(truncated ${t.length - n} chars)…\n${t.slice(-n)}` : t;
+  /* §AUDIT SCRUB (claw-enterprise, MIT) — this is the one place a seat's raw
+   * stdout/stderr becomes text that OUTLIVES the run: it lands in the seat
+   * record, the mission record, the receipt events and the verification detail
+   * an auditor reads later. A CLI that failed to push quotes its remote back
+   * with the credential inside it, and the model's own transcript is echoed into
+   * stdout. Truncate FIRST (the budget is the reason this function exists),
+   * scrub SECOND, so a secret sitting in the discarded head cannot arrive via
+   * the tail and a secret in the tail is caught on its way out.
+   *
+   * Ordinary tool output is unchanged — see src/security/auditScrub.ts. */
+  return scrubAuditText(t.length > n ? `…(truncated ${t.length - n} chars)…\n${t.slice(-n)}` : t);
 }
 
 function unrunRecord(a: SeatAssignment, wt: WorktreePlan | null, outcome: SeatOutcome, reason: string): SeatRecord {

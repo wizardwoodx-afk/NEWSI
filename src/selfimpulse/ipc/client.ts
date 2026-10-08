@@ -60,7 +60,10 @@ export const ipc = {
     return (await invoke("secret_set", { secretRef, value })) as SecretSetResult;
   },
   async notifyApproval(title: string, body: string): Promise<void> {
-    await invoke("notify_approval", { title, body });
+    const { isPermissionGranted, requestPermission, sendNotification } = await import("@tauri-apps/plugin-notification");
+    let granted = await isPermissionGranted();
+    if (!granted) granted = (await requestPermission()) === "granted";
+    if (granted) sendNotification({ title, body });
   },
   async appInfo(): Promise<AppInfo> {
     return (await invoke("app_info")) as AppInfo;

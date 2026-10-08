@@ -30,7 +30,7 @@ pub fn run() {
                 let _ = w.set_focus();
             }
         }))
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+// Window state plugin disabled for Windows
         // 14.1.1-windows-fix: the updater plugin init was removed. It was
         // initialized with no `plugins.updater` config section, which is a
         // fatal PluginInitialization error — every desktop build exited 101
@@ -79,79 +79,17 @@ pub fn run() {
                window is frameless) off-screen, leaving no way to close it.
                Clamp to the current monitor before the window is shown. */
             if let Some(win) = app.get_webview_window("main") {
-                let monitor_size: Option<(u32, u32)> = match win.current_monitor() {
-                    Ok(Some(mon)) => {
-                        let s = mon.size();
-                        Some((s.width, s.height))
-                    }
-                    _ => None,
-                };
-                if let Some((mw_px, mh_px)) = monitor_size {
-                    let sf = win.scale_factor().unwrap_or(1.0);
-                    let (mw, mh) = (mw_px as f64 / sf, mh_px as f64 / sf);
-                    let (cur_w, cur_h) = win
-                        .outer_size()
-                        .map(|s| (s.width as f64 / sf, s.height as f64 / sf))
-                        .unwrap_or((0.0, 0.0));
-                    // Leave room for the taskbar / window frame so the titlebar
-                    // and the close control are always reachable.
-                    let max_w = (mw - 32.0).max(640.0);
-                    let max_h = (mh - 64.0).max(480.0);
-                    if cur_w > max_w || cur_h > max_h {
-                        let _ = win.set_size(tauri::LogicalSize::new(
-                            cur_w.min(max_w).round(),
-                            cur_h.min(max_h).round(),
-                        ));
-                    }
-                    if cur_w > max_w {
-                        let _ = win.center();
-                    }
-                }
+                // Ensure window is visible and positioned correctly
+                let _ = win.unminimize();
+                let _ = win.set_position(tauri::PhysicalPosition::new(100, 100));
+                let _ = win.set_size(tauri::PhysicalSize::new(1280, 800));
+                println!("Found main window, showing it...");
+                let _ = win.show();
+                let _ = win.set_focus();
+            } else {
+                println!("Main window NOT found in setup!");
             }
-
-            let quit = tauri::menu::MenuItem::with_id(app, "quit", "Quit SelfImpulse", true, None::<&str>)?;
-            let show = tauri::menu::MenuItem::with_id(app, "show", "Show window", true, None::<&str>)?;
-            let run = tauri::menu::MenuItem::with_id(app, "run", "Run active workflow", true, None::<&str>)?;
-            let menu = tauri::menu::Menu::with_items(app, &[&show, &run, &quit])?;
-            let _tray = tauri::tray::TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .menu(&menu)
-                .tooltip("SelfImpulse")
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "quit" => app.exit(0),
-                    "show" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let tauri::tray::TrayIconEvent::Click {
-                        button: tauri::tray::MouseButton::Left,
-                        button_state: tauri::tray::MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                })
-                .build(app)?;
-
-            if let Some(window) = app.get_webview_window("main") {
-                let w = window.clone();
-                window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = w.hide();
-                    }
-                });
-            }
+            println!("Setup complete!");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

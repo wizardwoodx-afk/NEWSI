@@ -365,7 +365,7 @@ var ENGINE_VERSION, ENGINE_SHORT, ENGINE_CODENAME, PRODUCT_TITLE;
 var init_version = __esm({
   "src/version.ts"() {
     "use strict";
-    ENGINE_VERSION = "19.7.15";
+    ENGINE_VERSION = "19.7.16";
     ENGINE_SHORT = "19.7";
     ENGINE_CODENAME = "SelfImpulse";
     PRODUCT_TITLE = `SelfImpulse (engine MJ ${ENGINE_SHORT} "${ENGINE_CODENAME}")`;
@@ -2895,7 +2895,7 @@ function wrapRealModelBrain(base, deps = realBrainDeps, prefOverride) {
 init_client();
 init_localDb();
 var REGISTRY_KEY = "vh.providers";
-function asKV(store2) {
+function asKV2(store2) {
   if (typeof store2.getItem === "function") {
     const ls = store2;
     return { get: (k) => ls.getItem(k), set: (k, v) => ls.setItem(k, v) };
@@ -2906,7 +2906,7 @@ function asKV(store2) {
 var defaultStore = () => globalThis.localStorage ?? /* @__PURE__ */ new Map();
 function listProviders(store2 = defaultStore()) {
   try {
-    const raw = asKV(store2).get(REGISTRY_KEY);
+    const raw = asKV2(store2).get(REGISTRY_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
@@ -2925,7 +2925,7 @@ var PREFS_KEY = "vh.brain.model";
 var defaultModelPrefs = () => ({ enabled: false });
 function modelPrefs(store2 = defaultStore()) {
   try {
-    const raw = asKV(store2).get(PREFS_KEY);
+    const raw = asKV2(store2).get(PREFS_KEY);
     if (!raw) return defaultModelPrefs();
     const p = JSON.parse(raw);
     return { enabled: p.enabled === true, cheap: p.cheap, big: p.big };
@@ -2998,13 +2998,13 @@ function recordUsage(r, store2 = defaultStore()) {
   try {
     const list = listUsage(store2);
     list.push(r);
-    asKV(store2).set(USAGE_KEY, JSON.stringify(list.slice(-USAGE_CAP)));
+    asKV2(store2).set(USAGE_KEY, JSON.stringify(list.slice(-USAGE_CAP)));
   } catch {
   }
 }
 function listUsage(store2 = defaultStore()) {
   try {
-    return JSON.parse(asKV(store2).get(USAGE_KEY) ?? "[]");
+    return JSON.parse(asKV2(store2).get(USAGE_KEY) ?? "[]");
   } catch {
     return [];
   }

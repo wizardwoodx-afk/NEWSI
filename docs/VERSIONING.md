@@ -3,12 +3,12 @@
 SelfImpulse ships with **two** release numbers, on purpose. They are defined here so no
 installer, manifest or diligence review has to guess which is which.
 
-Version of record: product 1.9.1 · engine MJ 19.7.15 ("SelfImpulse")
+Version of record: product 1.9.2 · engine MJ 19.7.16 ("SelfImpulse")
 
 | Number | What it versions | Where it appears |
 |---|---|---|
 | **Product release: 1.0.0** | the product a customer installs | `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `VERSION.txt`, installer metadata |
-| **Engine release: MJ 19.7.15 ("SelfImpulse")** | the MJ engine lineage | `src/version.ts` (single source), `verify/BUILD-INFO.txt` (`built:`), `verify/MANIFEST.json`, receipts and proof artifacts |
+| **Engine release: MJ 19.7.16 ("SelfImpulse")** | the MJ engine lineage | `src/version.ts` (single source), `verify/BUILD-INFO.txt` (`built:`), `verify/MANIFEST.json`, receipts and proof artifacts |
 
 Rules:
 

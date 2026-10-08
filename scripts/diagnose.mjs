@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const PORT = 9223;
-const EXE = String.raw`D:\VH\src-tauri\target\release\mj-desktop.exe`;
+const EXE = String.raw`D:\selfimpulse\src-tauri\target\release\selfimpulse.exe`;
 
 async function getJson(url) {
   const res = await fetch(url);

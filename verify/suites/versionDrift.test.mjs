@@ -5,8 +5,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 // src/version.ts
-var PRODUCT_VERSION = "1.9.1";
-var ENGINE_VERSION = "19.7.15";
+var PRODUCT_VERSION = "1.9.2";
+var ENGINE_VERSION = "19.7.16";
 var ENGINE_SHORT = "19.7";
 var ENGINE_CODENAME = "SelfImpulse";
 var PRODUCT_TITLE = `SelfImpulse (engine MJ ${ENGINE_SHORT} "${ENGINE_CODENAME}")`;

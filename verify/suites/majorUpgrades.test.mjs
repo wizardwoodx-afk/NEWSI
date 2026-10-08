@@ -425,7 +425,8 @@ var STANDARD_ATTACK_VECTORS = [
     title: "High-Concurrency Async State Race Condition",
     description: "Simulates 100 parallel asynchronous requests within a 10ms window to test race locks and shared memory safety.",
     fuzzPayload: "Promise.all(Array.from({length: 100}, () => endpoint.consume(1)))",
-    expectedAssertion: "expect(totalConsumed).toBeLessThanOrEqual(capacity)"
+    expectedAssertion: "expect(totalConsumed).toBeLessThanOrEqual(capacity)",
+    declaredDefect: "FAIL: Concurrency race invariant violated: consumed 104 tokens exceeding capacity 100!"
   },
   {
     id: "vec-03-rate-evasion",
@@ -447,7 +448,9 @@ var STANDARD_ATTACK_VECTORS = [
 async function runAdversarialDuel(options) {
   const arenaId = `arena-${Date.now()}`;
   const vectors = options.vectors ?? STANDARD_ATTACK_VECTORS;
-  const maxRounds = options.maxRounds ?? Math.min(vectors.length, 3);
+  const asked = options.maxRounds ?? vectors.length;
+  const maxRounds = Math.max(0, Math.min(asked, vectors.length));
+  const clampedRounds = asked > vectors.length;
   const isSimulated = !options.testRunner;
   const rounds = [];
   let breaches = 0;
@@ -462,7 +465,7 @@ async function runAdversarialDuel(options) {
     content: `\u26A1 ${modeLabel} ADVERSARIAL DUEL INITIATED for "${options.objective}". Red Team is generating ${maxRounds} aggressive attack vectors against Blue Team's worktree.`
   });
   for (let i = 0; i < maxRounds; i++) {
-    const vector = vectors[i % vectors.length];
+    const vector = vectors[i];
     const t0 = Date.now();
     const attackScript = `// Red Team Attack Probe: ${vector.title}
 // Vector: ${vector.kind}
@@ -476,25 +479,14 @@ describe("Adversarial Probe: ${vector.id}", () => {
   });
 });
 `;
-    let runRes = { exitCode: 0, stdout: "PASS: Invariant held against adversarial input.", stderr: "", durationMs: 120 };
-    if (options.testRunner) {
-      runRes = await options.testRunner(attackScript);
-    } else {
-      const isSimulatedBreach = i === 1;
-      if (isSimulatedBreach) {
-        runRes = {
-          exitCode: 1,
-          stdout: "",
-          stderr: `FAIL: Concurrency race invariant violated: consumed 104 tokens exceeding capacity 100!`,
-          durationMs: 180
-        };
-      }
-    }
+    const runRes = options.testRunner ? await options.testRunner(attackScript) : vector.declaredDefect ? { exitCode: 1, stdout: "", stderr: vector.declaredDefect, durationMs: 120 } : { exitCode: 0, stdout: "PASS: no declared defect for this vector (nothing was measured).", stderr: "", durationMs: 120 };
     const durationMs = Date.now() - t0 + runRes.durationMs;
     const breached = runRes.exitCode !== 0;
+    const repair = breached && options.repairRunner ? await options.repairRunner(attackScript) : null;
+    const repaired = breached ? isSimulated ? true : repair?.exitCode === 0 : false;
     if (breached) {
       breaches++;
-      patches++;
+      if (repaired) patches++;
       globalAgentBus.publish({
         channel: "#security-audit",
         sender: { seatId: options.attackerSeatId, role: "security", harness: options.attackerHarness, name: "Red Team Hacker" },
@@ -504,20 +496,30 @@ describe("Adversarial Probe: ${vector.id}", () => {
 Reason: ${runRes.stderr || "Assertion failed"}
 Generated minimal reproducing test fixture for Blue Team patch.`
       });
-      globalAgentBus.publish({
-        channel: "#implementation-sync",
-        sender: { seatId: options.defenderSeatId, role: "coder", harness: options.defenderHarness, name: "Blue Team Defender" },
-        mentions: [`@${options.attackerSeatId}`],
-        intent: "handoff",
-        content: `\u{1F6E1}\uFE0F PATCH APPLIED for ${vector.id}. Added mutex lock boundary to prevent concurrency overflow. Ready for re-fuzzing!`
-      });
+      if (repaired) {
+        globalAgentBus.publish({
+          channel: "#implementation-sync",
+          sender: { seatId: options.defenderSeatId, role: "coder", harness: options.defenderHarness, name: "Blue Team Defender" },
+          mentions: [`@${options.attackerSeatId}`],
+          intent: "handoff",
+          content: `\u{1F6E1}\uFE0F PATCH APPLIED for ${vector.id}. Added mutex lock boundary to prevent concurrency overflow. Ready for re-fuzzing!`
+        });
+      } else {
+        globalAgentBus.publish({
+          channel: "#implementation-sync",
+          sender: { seatId: options.defenderSeatId, role: "coder", harness: options.defenderHarness, name: "Blue Team Defender" },
+          mentions: [`@${options.attackerSeatId}`],
+          intent: "blocker",
+          content: `\u{1F6E1}\uFE0F ${vector.id} is STILL BREACHED \u2014 no repair runner confirmed the invariant held after a fix, so nothing is claimed patched.`
+        });
+      }
       rounds.push({
         round: i + 1,
         attackerSeat: options.attackerSeatId,
         defenderSeat: options.defenderSeatId,
         vector,
         attackScript,
-        defenseStatus: "patched",
+        defenseStatus: repaired ? "patched" : "breached",
         stdout: runRes.stdout,
         stderr: runRes.stderr,
         durationMs
@@ -545,9 +547,10 @@ Generated minimal reproducing test fixture for Blue Team patch.`
     }
   }
   const totalRoundsDefendedOrPatched = defendedCleanly + patches;
-  const defenseScore = Math.min(100, Math.max(0, Math.round(totalRoundsDefendedOrPatched / maxRounds * 100)));
+  const defenseScore = maxRounds === 0 ? 0 : Math.min(100, Math.max(0, Math.round(totalRoundsDefendedOrPatched / maxRounds * 100)));
   const hardened = defenseScore >= 90;
-  const summary = `${modeLabel} Adversarial Arena completed: ${maxRounds} rounds executed. ${breaches} vulnerability probe(s) uncovered, ${patches} verified patch(es) synthesized. Defense Score: ${defenseScore}%.`;
+  const measuredOrDeclared = isSimulated ? `No test runner was attached, so nothing here was measured: each round reports the vector's own declared defect, and a vector without one invents no breach.` : options.repairRunner ? "Every round's outcome came from the host's test runner, and every patch was confirmed by re-running the same probe." : "Every round's outcome came from the host's test runner. NO repair runner was attached, so a breach is recorded as breached and nothing is claimed patched.";
+  const summary = `${modeLabel} Adversarial Arena completed: ${maxRounds} round(s) executed${clampedRounds ? ` (${asked} were asked for and clamped to the ${vectors.length} vector(s) available \u2014 no vector is probed twice)` : ""}. ${breaches} vulnerability probe(s) uncovered, ${patches} verified patch(es) synthesized. Defense Score: ${defenseScore}%. ${measuredOrDeclared}`;
   globalAgentBus.publish({
     channel: "#general",
     sender: { seatId: "arena_coordinator", role: "security", harness: "llm", name: "Arena Coordinator" },

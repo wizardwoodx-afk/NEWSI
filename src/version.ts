@@ -10,8 +10,8 @@
  * except on lines labelled "Version of record" (docs/VERSIONING.md is the
  * policy). `probe/versionDrift.test.ts` enforces every site against these.
  */
-export const PRODUCT_VERSION = "1.9.1";
-export const ENGINE_VERSION = "19.7.15";
+export const PRODUCT_VERSION = "1.9.2";
+export const ENGINE_VERSION = "19.7.16";
 export const ENGINE_SHORT = "19.7";
 export const ENGINE_CODENAME = "SelfImpulse";
 export const PRODUCT_TITLE = `SelfImpulse (engine MJ ${ENGINE_SHORT} \"${ENGINE_CODENAME}\")`;

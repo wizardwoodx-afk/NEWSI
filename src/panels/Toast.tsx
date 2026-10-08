@@ -43,8 +43,20 @@ export const Toasts: React.FC = () => {
      finish, which is why a toast sat correctly on platinum and vanished into the
      ground everywhere else. It is --shadow-3 now, so it is the same depth the
      cards use and it flips with the finish. */
+  /* THE LIVE REGION. This surface rendered toasts with no `role` and no
+     `aria-live`, so every one of them was invisible to a screen reader: the
+     mount point was in the document from first paint with nothing inside it,
+     which is exactly the condition under which a live region is reliable — the
+     text is inserted into a region that was already there, rather than the
+     region arriving with its own content. `aria-atomic` because a toast is a
+     whole message, never a fragment to be read around.
+     It is the ONLY place a toast is meant to appear. The screens that own an
+     error inline (Docs' note, the Receipts tamper banner, the composer's status
+     line) do not also raise one: an error the user caused is said once, in the
+     place they are looking. */
   return (
-    <div style={{ position: 'fixed', bottom: 92, right: 24, zIndex: 60, display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div role="status" aria-live="polite" aria-atomic="true"
+      style={{ position: 'fixed', bottom: 92, right: 24, zIndex: 60, display: 'flex', flexDirection: 'column', gap: 8 }}>
       {toasts.map(t => (
         <div key={t.id}
           style={{

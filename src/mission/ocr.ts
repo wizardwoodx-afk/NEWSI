@@ -275,6 +275,18 @@ export async function readImages(
           langPath: dataPath,
           cachePath: dataPath,
           gzip: true,
+          // DESKTOP CSP — this is the switch that makes OCR run at all.
+          // tesseract.js defaults `workerBlobURL` to true (its
+          // constants/defaultOptions.js), and spawnWorker.js then builds a Blob of
+          // `importScripts(workerPath)` and calls `new Worker(blobUrl)`. Under the
+          // Tauri CSP (`worker-src 'self'`, inherited from `default-src 'self'`
+          // when unset) a `blob:` worker is not a permitted worker source, so the
+          // worker never loads and every image and every scanned PDF is refused
+          // with "reader-unavailable". Spawning the SAME-ORIGIN worker script we
+          // were handed (workerPath, bundled at `ocr/worker.min.js`) is both the
+          // fix and the stricter choice: the worker's code comes from the app
+          // bundle, never from a generated blob.
+          workerBlobURL: false,
           // Pass through only when set. In Node leaving them undefined is correct — the
           // engine resolves them from the installed package, locally. In a browser the
           // guard above has already refused if they are missing.

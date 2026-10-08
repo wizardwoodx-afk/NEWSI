@@ -123,12 +123,14 @@ async function main(): Promise<void> {
   ok("decision rules with 'never/when/only' arrows are extracted", ex.decisionRules.length >= 3, `${ex.decisionRules.length} rules`);
   ok("a second run extracts the identical structure (determinism)", JSON.stringify(ex) === JSON.stringify(extractStructure(DOC)));
 
-  section("1. G1/G2 — provenance mandatory, structure required");
+  section("1. G1/G2 — provenance mandatory, structure graded rather than required");
   const tooSmall = await proposeKnowledgeSkill({ content: "tiny", sourceName: "x.md" });
   ok("a too-small document is refused in words", !tooSmall.ok && /too small/.test(tooSmall.error ?? ""), tooSmall.error ?? "");
   const blob = await proposeKnowledgeSkill({ content: UNSTRUCTURED, sourceName: "blob.txt" });
-  ok("an unstructured blob is refused (structure, not summaries)", !blob.ok && /no extractable structure/.test(blob.error ?? ""), blob.error ?? "");
-  ok("refusals touched no store", loadKnowledgeProposals().length === 0);
+  const blobProp = blob.ok ? blob.proposal : null;
+  ok("an unstructured blob is accepted, not refused", blob.ok === true, blob.ok ? "" : blob.error ?? "");
+  ok("a structureless document carries its own content verbatim", !!blobProp && /Source content \(no rules distilled/.test(blobProp.procedure), blobProp?.procedure.slice(0, 60) ?? "");
+  ok("only the accepted blob reached the store (the too-small refusal wrote nothing)", loadKnowledgeProposals().length === 1);
   const p1 = await proposeKnowledgeSkill({ content: DOC, sourceName: "authorize-rulebook.md" });
   ok("a structured document distills into a proposal", p1.ok === true && p1.proposal.status === "proposed");
   const prop = (p1 as { ok: true; proposal: import("../src/mission/knowledgeSkills").KnowledgeProposal }).proposal;

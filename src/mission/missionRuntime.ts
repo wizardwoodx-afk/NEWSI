@@ -59,7 +59,9 @@ import { OrganizationMemory, ReputationLedger } from "./memory";
 import { planMission, parallelWaves, type PlanResult } from "./missionPlanner";
 import { NegotiationTable } from "./negotiation";
 import { auditBoundary } from "./securityBoundary";
-import { durableResume, durableSave, DoneLedger, defaultDurableKV } from "./durable";
+import { durableResume, durableSave, DoneLedger, defaultDurableKV, type DurableKVLike } from "./durable";
+import { lastJournalWriteRefusal, persistRunJournal, recordLaneCheckpoint, retryAccounting, resumeRun } from "./runCheckpoints";
+import { laneOfLabel, type RetryLane } from "./retryLanes";
 
 /** SecurityBoundary flags → the plain MAY / MAY NOT statements AGENTS.md carries. */
 function boundaryStatements(b: Mission["boundary"]): string[] {
@@ -150,6 +152,12 @@ export class MissionRuntime {
   private startedAt = Date.now();
   private finalArtifactIds: string[] = [];
   private simulatedUsed = false;
+  /** 19.7.16 — where the run picked up, once the durable chain has answered.
+   *  `null` means "nothing was resumed" (a first run) or "the chain refused
+   *  and said why" — the refusals are in `resumeRefusals`, never folded
+   *  silently into this field. */
+  private resumePoint: { fromStep: number; label: string; checkpoints: number; source: "journal" | "memory" } | null = null;
+  private resumeRefusalLog: string[] = [];
 
   constructor(mission: Mission, services: RuntimeServices, options: MissionRuntimeOptions = {}) {
     this.mission = mission;
@@ -371,7 +379,40 @@ export class MissionRuntime {
     try {
       const res = durableResume(this, this.durableKV);
       if (res.ok) this.transition("RUNNING", `Durable resume: ${res.completedNodeIds.length} completed nodes restored (snapshot saved ${res.savedAt}) — finished work is not repeated.`);
-    } catch { /* durability degraded on this host; the mission still runs */ }
+      else if (res.refused.startsWith("no durable snapshot")) {
+        /* a first run: nothing stored, nothing claimed */
+      } else {
+        this.noteResumeRefusal("runtime-state", res.refused);
+      }
+    } catch (e) {
+      this.noteResumeRefusal("runtime-state", `durability raised on this host (${e instanceof Error ? e.message : String(e)}) — the mission runs, but nothing durable was restored.`);
+    }
+
+    // 19.7.16 — the RUN CHAIN, reloaded from the host's storage. This is the
+    // call that makes a crash a resume: `resumeRun` reads the journal the
+    // checkpoints wrote, so the chain and its state snapshots survive the
+    // process that produced them. It is deliberately BEFORE any new work:
+    // the verdict has to be on the record before the run moves on.
+    const chain = resumeRun(this.durableRunId(), this.durableKV);
+    if (chain.ok) {
+      this.resumePoint = { fromStep: chain.fromStep, label: chain.label, checkpoints: chain.checkpoints, source: chain.source };
+      this.recorder.record({
+        kind: "MISSION_STATUS",
+        actor: "runtime",
+        authority: "policy:durable-run",
+        policy: "mission.resume-run-chain",
+        reason: `Run chain ${this.durableRunId()} reloaded from ${chain.source}: resuming at step ${chain.fromStep} ("${chain.label}") across ${chain.checkpoints} checkpoint(s).`,
+        evidence: [`source=${chain.source}`, `checkpoints=${chain.checkpoints}`],
+        subjectId: this.mission.missionId,
+        data: { runId: this.durableRunId(), fromStep: chain.fromStep, label: chain.label, source: chain.source, checkpoints: chain.checkpoints },
+      });
+    } else if (chain.reason !== "no-journal" && chain.reason !== "unknown-run") {
+      // A journal EXISTS and will not load. That is never "start fresh":
+      // the refusal is recorded, exposed, and repeated in the mission's own
+      // reason so no reader can mistake this run for one that had nothing
+      // to lose.
+      this.noteResumeRefusal("run-chain", chain.detail);
+    }
 
     let guard = 0;
     while (!this.cancelled && guard++ < 200) {
@@ -469,6 +510,18 @@ export class MissionRuntime {
     if (step?.requiresApproval || task.risk === "CRITICAL" || task.cls === "APPROVAL_GATED") {
       const approved = await this.requestApproval(task, step);
       if (!approved) {
+        /* §RETRY LANES — THE WAIT IS ON THE CHAIN, NOT ON THE LADDER. This is the
+         * moment that used to be invisible: the run parks here for however long a
+         * person takes, and until this module the only durable record of it was a
+         * chain entry indistinguishable from a failed repair. Recorded explicitly,
+         * with the approval's own identity in the payload, so "did this run spend
+         * retries or did it wait" is a question the journal answers rather than one
+         * somebody has to infer from a step number. */
+        this.checkpoint(
+          `awaiting-human "${task.title}"`,
+          "The run is parked on a human approval gate. Waiting is not failing: this step charges no failure retry.",
+          "awaiting-human",
+        );
         this.org.setState(taskId, "BLOCKED", { error: "Awaiting or denied by human approval.", actor: "approval-gate" });
         return;
       }
@@ -485,7 +538,18 @@ export class MissionRuntime {
     if (step?.requiresApproval || task.risk === "CRITICAL" || task.cls === "APPROVAL_GATED") {
       // §26 The moment a human signs off on a risk-bearing action is exactly the state they
       // would want to get back to if it goes wrong.
-      this.checkpoint(`before "${task.title}"`, "A human approved this risk-bearing action; this is the rollback point for it.");
+      //
+      // §RETRY LANES — labelled `continuation` rather than left to the classifier:
+      // the label here is `before "<task title>"`, and a task titled
+      // "before deploying the approval gate fix" would otherwise be read as a
+      // failure by a classifier that cannot see the title's meaning. The runtime
+      // knows what this moment is, so it says so. Advancing past an answered gate
+      // is progress, not a retry.
+      this.checkpoint(
+        `before "${task.title}"`,
+        "A human approved this risk-bearing action; this is the rollback point for it.",
+        "continuation",
+      );
     }
     this.org.delegate(taskId, agent.agentId, `Plan step "${step?.title ?? task.title}" assigned to ${agent.title}.`, "runtime");
     this.org.setState(taskId, "RUNNING", { actor: agent.agentId });
@@ -904,8 +968,25 @@ export class MissionRuntime {
 
     const count = (this.repairCount.get(taskId) ?? 0) + 1;
     this.repairCount.set(taskId, count);
+    /* §RETRY LANES (Paperclip, MIT) — THE DURABLE FLOOR.
+     *
+     * `this.repairs` and `repairCount` are module-scope memory, and `persist()`
+     * writes version 6 without either of them, while it DOES write
+     * `resources.usage.retries`. So a run that crashed after three real failures
+     * came back with a clean ladder and a ledger that remembered three — and a
+     * ladder that can always find one more rung is, in this file's own words at
+     * the hard stop below, a loop rather than a ladder. The durable chain is the
+     * only account of what this run actually attempted that survives the process,
+     * so the run-level ceiling now reads the HARDER of the two numbers.
+     *
+     * `failureRetries` counts the failure lane and nothing else, which is the
+     * other half of the fix: the gate pauses, the settled waves and the busy
+     * waits are tallied beside it and never in it. A crew that sat three hours
+     * waiting for a human resumes with the retries it actually spent — none. */
+    const durableFailureRetries = retryAccounting(this.durableRunId()).failureRetries;
+    const ladderUsed = Math.max(this.repairs.length, durableFailureRetries);
     // Hard stop. A repair ladder that can always find one more rung is a loop, not a ladder.
-    if (count > this.options.maxRepairAttempts || this.repairs.length >= this.options.maxRepairAttempts * Math.max(1, this.org.tasks_().length)) {
+    if (count > this.options.maxRepairAttempts || ladderUsed >= this.options.maxRepairAttempts * Math.max(1, this.org.tasks_().length)) {
       this.repairExhausted.add(taskId);
       this.recorder.record({
         kind: "FAILURE_DETECTED",
@@ -913,7 +994,7 @@ export class MissionRuntime {
         authority: "policy:repair-budget",
         policy: `budget.maxRetriesPerTask=${this.options.maxRepairAttempts}`,
         reason: `Repair budget exhausted for "${task.title}" after ${count - 1} attempt(s). Escalating instead of retrying.`,
-        evidence: [`repairAttempts=${count - 1}`, `strategiesTried=${(this.triedStrategies.get(taskId) ?? []).join(", ")}`],
+        evidence: [`repairAttempts=${count - 1}`, `durableFailureRetries=${durableFailureRetries}`, `strategiesTried=${(this.triedStrategies.get(taskId) ?? []).join(", ")}`],
         subjectId: taskId,
         data: { failureKind: "TOOL_FAILURE_LOOP", severity: "CRITICAL" },
       });
@@ -932,7 +1013,15 @@ export class MissionRuntime {
     const taskId = task.taskId;
     // §16/§26 A repair mutates the organization. Take the rollback point before it does, so
     // "undo the repair" is a real operation and not a hope.
-    this.checkpoint(`before repairing "${task.title}"`, `Repair attempt ${attemptNumber}: the pre-repair organization state.`);
+    //
+    // §RETRY LANES — the one site that charges a failure retry, stated rather than
+    // inferred from the label. This is the lane's namesake: a repair ladder is what
+    // the budget exists to bound, and a genuine failing step must still walk it.
+    this.checkpoint(
+      `before repairing "${task.title}"`,
+      `Repair attempt ${attemptNumber}: the pre-repair organization state.`,
+      "failure",
+    );
 
     const failure: FailureSignal = {
       id: uid("fail"),
@@ -1239,6 +1328,18 @@ export class MissionRuntime {
 
   private async drainApprovals(): Promise<void> {
     const pending = this.services.approvals.pendingForMission(this.mission.missionId);
+    if (!pending.length) return;
+    /* §RETRY LANES — the whole supervision loop blocks in here until a human
+     * answers, and that block is the longest thing a mission does. It goes on the
+     * chain as its OWN lane with the pending asks named, so a later reader can see
+     * that the time went to a person rather than to a failure. Without this line
+     * the wall clock is the only witness, and the wall clock cannot tell the two
+     * apart — which is precisely the defect. */
+    this.checkpoint(
+      "awaiting-human (approval gate)",
+      `Parked on ${pending.length} unanswered approval(s): ${pending.map((a) => a.id).join(", ")}. Waiting is not failing.`,
+      "awaiting-human",
+    );
     for (const req of pending) {
       await this.services.approvals.waitFor(req.id, this.options.approvalTimeoutMs, () => this.cancelled);
     }
@@ -1295,7 +1396,7 @@ export class MissionRuntime {
 
   /* ------------------------------------------------------------------ §26 checkpoints */
 
-  checkpoint(label: string, reason: string): void {
+  checkpoint(label: string, reason: string, lane?: RetryLane): void {
     this.services.checkpoints.take(
       {
         missionId: this.mission.missionId,
@@ -1314,6 +1415,11 @@ export class MissionRuntime {
       this.recorder,
     );
     this.mission.checkpointId = this.services.checkpoints.latest(this.mission.missionId)?.checkpointId ?? null;
+    // 19.7.16 — the same moment also lands on the durable run chain, so the
+    // rollback point survives the process that took it. `checkpoint()` is
+    // the runtime's §26 hook; this is where its evidence becomes durable, and
+    // where it becomes a LABELED step on that chain (§RETRY LANES).
+    this.appendRunCheckpoint(label, reason, lane);
   }
 
   restoreCheckpoint(checkpointId: string, reason: string): boolean {
@@ -1330,6 +1436,110 @@ export class MissionRuntime {
     }
     this.completedNodeIds = new Set(this.graph.nodes.filter((n) => cp.taskStates[taskForNode(this, n.id)] === "DONE").map((n) => n.id));
     return true;
+  }
+
+  /* ------------------------------------------------------------------ §26 durable runs */
+
+  /** The run id this mission's steps land on in the durable chain. The
+   *  executor and the human gate use the same `run:<slug>` convention, so
+   *  one mission's chain is one chain from every seat that records it. */
+  durableRunId(): string {
+    return `run:${this.mission.missionId}`;
+  }
+
+  /** Where the durable chain says this run picked up, or null when nothing
+   *  was resumed. Read by the UI alongside `resumeRefusals()`. */
+  getResumePoint(): { fromStep: number; label: string; checkpoints: number; source: "journal" | "memory" } | null {
+    return this.resumePoint ? { ...this.resumePoint } : null;
+  }
+
+  /** Every refusal the durability layer made, in words. A run whose journal
+   *  exists but did not load is NOT a fresh run, and this is how a caller
+   *  finds that out instead of guessing. */
+  resumeRefusals(): string[] {
+    return [...this.resumeRefusalLog];
+  }
+
+  /** Record a durability refusal. Goes on the flight recorder so it is in
+   *  the mission's evidence, and stays readable for the UI. */
+  private noteResumeRefusal(seat: "run-chain" | "runtime-state", detail: string): void {
+    this.resumeRefusalLog.push(`[${seat}] ${detail}`);
+    this.recorder.record({
+      kind: "FAILURE_DETECTED",
+      actor: "durable-store",
+      authority: "policy:fail-closed",
+      policy: "durability.fail-closed",
+      reason: detail,
+      subjectId: this.mission.missionId,
+      data: { seat, refusals: this.resumeRefusalLog.length },
+    });
+  }
+
+  /** Append this runtime's own §26 checkpoints to the durable run chain.
+   *  Called from `checkpoint()` so every rollback point the runtime takes is
+   *  also a tamper-evident run step that outlives the process.
+   *
+   *  §RETRY LANES (Paperclip, MIT) — it now appends them AS A LANE. This method
+   *  is the runtime's single durable write path, which makes it the only place
+   *  the distinction can be made once rather than at every call site: a repair
+   *  rollback and a gate pause and a settled re-plan all used to land here
+   *  indistinguishable, and the chain was the only thing about this run that
+   *  survived a restart. `lane` overrides the label classification at the two
+   *  sites where the runtime knows more than its label says; otherwise
+   *  `laneOfLabel` reads the label, so a checkpoint taken by an older build —
+   *  before any lane was ever written — still folds to the right number. */
+  private appendRunCheckpoint(label: string, reason: string, lane?: RetryLane): void {
+    try {
+      const completed = [...this.completedNodeIds];
+      recordLaneCheckpoint(
+        this.durableRunId(),
+        this.mission.missionId,
+        completed.length,
+        lane ?? laneOfLabel(label),
+        label,
+        {
+          reason,
+          status: this.mission.status,
+          completedNodeIds: completed,
+          spentUsd: this.resources.usage.costUsd,
+        },
+      );
+      const refusal = lastJournalWriteRefusal();
+      if (refusal) this.noteResumeRefusal("run-chain", refusal);
+    } catch (e) {
+      // The chain is evidence, not a gate on the mission's own progress: a
+      // failure to record must not kill a running mission, but it is never
+      // silent either.
+      this.noteResumeRefusal("run-chain", `the run chain refused a checkpoint (${e instanceof Error ? e.message : String(e)}) — this step is not journalled.`);
+    }
+  }
+
+  /** Force the run journal to storage. The UI calls this when a run parks
+   *  at the gate or the window is closing — the moment a crash is most
+   *  likely and most expensive. */
+  flushRunJournal(): { ok: boolean; refused?: string } {
+    const result = persistRunJournal();
+    if (!result.ok && result.refused) this.noteResumeRefusal("run-chain", result.refused);
+    return result.ok ? { ok: true } : { ok: false, refused: result.refused };
+  }
+
+  /**
+   * The durable-run entry point `src/ui/store.ts` calls on startup, and
+   * whenever the user asks whether an interrupted run can continue.
+   *
+   *   resumeDurableRun(runId?: string, store?: DurableKVLike)
+   *     → { ok: true; runId; missionId; fromStep; label; state;
+   *         checkpoints; source: "journal" | "memory" }
+   *     | { ok: false; reason: string; detail: string }
+   *
+   * `runId` defaults to this mission's own `run:<missionId>`. `store`
+   * defaults to the runtime's durable KV (localStorage in the app, an
+   * injected Map under test). "no-journal" means a fresh start and says so;
+   * "malformed"/"unknown-version"/"state-missing" mean a journal EXISTS and
+   * will not load, and the caller must not restart from scratch over it.
+   */
+  resumeDurableRun(runId?: string, store?: DurableKVLike) {
+    return resumeRun(runId ?? this.durableRunId(), store ?? this.durableKV);
   }
 
   /* ------------------------------------------------------------------ §25 pause/resume */

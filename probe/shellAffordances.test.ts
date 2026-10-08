@@ -170,7 +170,13 @@ ok("the hero no longer has the tall fixed top pad", !/padding:72px/.test(hero), 
 ok("the composer has breathing room above it", /\.composer\{[^}]*margin-top:20px/.test(css));
 ok("the opening surface keeps a top pad for the custom window bar", /padding:var\(--s6\)/.test(hero), hero);
 ok("the brand is pushed below the bar", /\.brand\{[^}]*padding:6px 8px 10px/.test(css));
-ok("the Captain screen is the one that renders the opening surface", /className="run"|className="contract-ledger"/.test(steward));
+/* This used to pin `className="run"` — the Ledger section — which the owner had
+   the screen rebuilt to remove. What the check is actually for is that the
+   Captain door is the one that renders the opening surface at all, so it now
+   pins that surface's own class and the composer standing on it. */
+ok("the Captain screen is the one that renders the opening surface",
+  /className="wrap wide deck-wrap"/.test(steward) && /<Composer/.test(steward));
+ok("the Captain screen renders no ledger — it was removed by request", !/className="run"/.test(steward));
 
 console.log("== 4. product source names no third-party project");
 // The banned names are assembled from fragments at runtime. Writing them

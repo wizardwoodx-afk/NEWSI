@@ -284,10 +284,44 @@ export function graph(): MgGraph {
 }
 
 /** Title a session from its first user message — deterministic. */
+/* Only politeness and openers are peeled. An earlier list also stripped
+   "make", "see", "tell" and "show", which are the verb holding the sentence
+   together — "Make the sidebar draggable" came out as "The sidebar draggable". */
+const FILLER = /^(?:hey|hi|hello|yo|so|ok|okay|right|well|now|please|pls|kindly|thanks|thank you)\b[\s,!.:;]*/i;
+const ASK = /^(?:(?:can|could|would|will|shall)\s+(?:you|u|we|i)\b|(?:i\s+)?(?:want|need|wanna|would like)\s+(?:u|you|me|to)\b|let'?s)\s+[\s,!.:;]*/i;
+
 export function titleFromMessages(messages: MgMessage[]): string {
-  const first = messages.find((m) => m.role === "user")?.text ?? messages[0]?.text ?? "a conversation";
-  const t = first.replace(/\s+/g, " ").trim();
-  return t.length > 52 ? `${t.slice(0, 49)}…` : t || "a conversation";
+  const first = messages.find((m) => m.role === "user")?.text ?? messages[0]?.text ?? "";
+  /* The whole message, not its first line — a request that opens with "Hi" on
+     its own line would otherwise be titled "Hi". */
+  let chars = Array.from(first.replace(/\s+/g, " ").trim());
+  if (chars.length === 0) return "a conversation";
+  const whole = chars.join("");
+  for (let i = 0; i < 4; i += 1) {
+    const s = chars.join("");
+    const next = Array.from(s.replace(FILLER, "").replace(ASK, "").replace(/^[\s,!.:;]+/, "").trim());
+    /* A peel that would leave nothing is not a peel. "so can you please" keeps
+       its words rather than becoming an empty tab. */
+    if (next.length === 0 || next.length === chars.length) break;
+    chars = next;
+  }
+  const cap = (v: string): string => v.charAt(0).toUpperCase() + v.slice(1);
+  let s = chars.join("").replace(/[?!.,;:]+$/g, "").replace(/\s+/g, " ").trim();
+  /* If what survived is itself only politeness — "so can you please" peels down
+     to "please" — the message carried no content worth naming, and the
+     operator's own words make a better title than a leftover particle. */
+  if (s && Array.from(s.replace(FILLER, "").replace(ASK, "").replace(/^[\s,!.:;]+/, "").trim()).length === 0) {
+    s = whole.replace(/[?!.,;:]+$/g, "").replace(/\s+/g, " ").trim();
+  }
+  if (!s) s = whole.replace(/[?!.,;:]+$/g, "").trim();
+  if (!s) return "a conversation";
+  chars = Array.from(s);
+  if (chars.length <= 48) return cap(s);
+  /* Cut on code points, never a raw UTF-16 index: slicing at 48 can split an
+     astral character and leave a lone high surrogate in a title. */
+  const head = chars.slice(0, 48).join("");
+  const at = Math.max(head.lastIndexOf(" "), head.lastIndexOf(","));
+  return `${cap((at > 20 ? head.slice(0, at) : head).replace(/[?!.,;:]+$/g, ""))}…`;
 }
 
 /**

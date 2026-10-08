@@ -111,7 +111,9 @@ export async function saveNativeProvider(cfg: Pick<ProviderConfig, "kind" | "bas
   return { ok: true, note, secretRef };
 }
 
-/** What the page remembers of a native-held provider (no key anywhere in it). */
+const NATIVE_BACKUP_KEY = "vh.provider.active.v1";
+
+/** What the page remembers of a native-held provider: settings only, never the key. */
 export function persistNativeConfig(cfg: ProviderConfig): void {
   try {
     globalThis.localStorage?.setItem(
@@ -126,19 +128,23 @@ export function persistNativeConfig(cfg: ProviderConfig): void {
 export function clearNativeConfig(): void {
   try {
     globalThis.localStorage?.removeItem(NATIVE_PROVIDER_CONFIG_KEY);
+    // Earlier builds wrote the raw key here under the guise of a backup. Purge it.
+    globalThis.localStorage?.removeItem(NATIVE_BACKUP_KEY);
   } catch {
     /* nothing to clear */
   }
 }
 
-/** Reload the remembered settings — but only if the native store STILL holds the key they point at. */
+/** Reload the remembered settings. The key itself lives only in the OS keychain,
+ *  so if the keychain no longer holds it the provider is simply not restored. */
 export async function loadNativeConfig(): Promise<ProviderConfig | null> {
   if (!useTauri()) return null;
   try {
     const raw = globalThis.localStorage?.getItem(NATIVE_PROVIDER_CONFIG_KEY);
     if (!raw) return null;
     const c = JSON.parse(raw) as ProviderConfig;
-    if (!c.secretRef || !c.kind || !c.baseUrl) return null;
+    if (!c || !c.secretRef || !c.kind || !c.baseUrl) return null;
+
     const have = (await ipc.secretExists([c.secretRef]))[c.secretRef];
     return have?.exists ? { ...c, apiKey: "" } : null;
   } catch {

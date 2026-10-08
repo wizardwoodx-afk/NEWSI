@@ -235,6 +235,16 @@ export interface GeneralistDeps {
   peerDelegate?: (d: PeerDelegation) => Promise<{ ok: boolean; detail: string; receiptDigest?: string }>;
   /** A2A handoff ledger hook — every delegation attempt, including refusals, gets a receipt (18.7.0). */
   onHandoff?: (h: { peer: string; task: string; outcome: "delegated" | "refused"; detail: string; receiptDigest?: string }) => void;
+  /**
+   * Gate-approval EVIDENCE hook (content-bound approvals). When wired, every
+   * human-gate decision is recorded as a canonical-digest receipt over the
+   * exact ask the human was shown, and handed here for the run's receipt chain.
+   * This is evidence only: it never gates or reverses a decision, and it cannot
+   * satisfy the gate — the native dialog remains the sole satisfier. Absent →
+   * the digest is still computed and attached to the response, but nothing is
+   * emitted, exactly like the optional handoff ledger above.
+   */
+  onGateApproval?: (rc: import("../security/approvalEvidence").GateApprovalReceipt) => void;
   now?: () => Date;
 }
 

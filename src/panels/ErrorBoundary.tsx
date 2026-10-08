@@ -79,7 +79,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
           <p className="sub">
             {recorded
               ? recorded.ok
-                ? `Recorded in the local crash ledger (${recorded.note}). It never leaves this machine.)`
+                ? `Recorded in the local crash ledger (${recorded.note}). It never leaves this machine.`
                 : `Not recorded — ${recorded.note}`
               : "Recording the crash…"}
           </p>

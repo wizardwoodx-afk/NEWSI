@@ -35,6 +35,7 @@
  */
 
 import { createHash, timingSafeEqual } from "node:crypto";
+import { scrubAuditRecord, scrubAuditText, scrubAuditValue } from "./auditScrub";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    1 · THE GRAPH
@@ -116,7 +117,12 @@ export function addNode(
     digest: digestOf(kind, content),
     parents,
     ts: 0, // set by the recorder; kept 0 here so digests stay content-only
-    detail,
+    /* §AUDIT SCRUB — `detail` is the one part of a node that is STORED as text
+     * rather than committed to as a digest, and tool-call nodes carry the
+     * runtime's own description of what a tool said. The digest is left
+     * computed over the ORIGINAL content: it is a commitment, not a document,
+     * and scrubbing it would move every existing graph link. */
+    detail: detail ? (scrubAuditValue(detail) as Record<string, string | number | boolean | null>) : detail,
     signed,
   };
   graph.nodes[id] = node;
@@ -385,11 +391,15 @@ export async function askHuman(req: HitlRequest, respond: HitlResponder): Promis
 
   return {
     tier: req.tier,
-    question: req.question,
+    question: scrubAuditText(req.question),
     outcome,
     answeredBy,
     ts: started,
-    evidence: req.evidence,
+    /* The evidence the human was judged on is kept as what a later reader may
+     * see, not as what the runtime happened to hand the dialog: a HITL request's
+     * evidence map is exactly where a caller puts the diff, the endpoint and the
+     * command line it wants reviewed. */
+    evidence: scrubAuditRecord(req.evidence),
   };
 }
 
@@ -425,10 +435,18 @@ export class DecisionJournal {
       seq: this.entries.length,
       ts: entry.ts ?? 0,
       stage: entry.stage,
-      decision: entry.decision,
+      /* §AUDIT SCRUB — `decision` is a sentence written straight out of what
+       * the runtime was doing: the action string (which a model composed), the
+       * authorization reason, the guard trip's `detail`, which for
+       * `path-escape` is built from the tool's own stdout. `evidence` is the
+       * same story in key/value form. Scrubbed at append, so the digest below
+       * commits to what was ACTUALLY STORED rather than to what the caller
+       * tried to write — a chain that hashed the unsent text would verify a
+       * journal that does not contain it. */
+      decision: scrubAuditText(entry.decision),
       outcome: entry.outcome,
       nodeId: entry.nodeId ?? null,
-      evidence: entry.evidence,
+      evidence: scrubAuditRecord(entry.evidence),
       prev: this.lastDigest,
     };
     const digest = createHash("sha256").update(stableStringify(body)).digest("hex");
@@ -493,10 +511,10 @@ export function guardBefore(args: {
 }): GuardTrip[] {
   const trips: GuardTrip[] = [];
   if (!args.verdict.allowed) {
-    trips.push({ when: "before", rule: "authority", detail: args.verdict.reason });
+    trips.push({ when: "before", rule: "authority", detail: scrubAuditText(args.verdict.reason) });
   }
   if (args.verdict.escalated) {
-    trips.push({ when: "before", rule: "escalation", detail: `escalated to a human: ${args.verdict.reason}` });
+    trips.push({ when: "before", rule: "escalation", detail: scrubAuditText(`escalated to a human: ${args.verdict.reason}`) });
   }
   // A tool called the same thing many times in a row is the signature of a loop
   // that is not converging. Stopping it is cheaper than reading the transcript.
@@ -504,7 +522,7 @@ export function guardBefore(args: {
     trips.push({
       when: "before",
       rule: "non-convergence",
-      detail: `"${args.action}" has been attempted ${args.repeatCount} times; the run is not converging`,
+      detail: scrubAuditText(`"${args.action}" has been attempted ${args.repeatCount} times; the run is not converging`),
     });
   }
   return trips;
@@ -534,18 +552,22 @@ export function guardAfter(args: {
     trips.push({
       when: "after",
       rule: "path-escape",
-      detail: `output names ${escaped.length} path(s) outside the seat root ${root}: ${escaped.slice(0, 3).join(", ")}`,
+      /* The paths stay readable — a filesystem path is the audit fact this rule
+       * exists to surface, and scrubbing it would blind the guard it belongs to.
+       * Scrubbing the composed line still catches the case where the escape is
+       * reported with a credential-bearing URL attached to it. */
+      detail: scrubAuditText(`output names ${escaped.length} path(s) outside the seat root ${root}: ${escaped.slice(0, 3).join(", ")}`),
     });
   }
   if (args.failed && args.failureStreak >= 3) {
     trips.push({
       when: "after",
       rule: "repeated-failure",
-      detail: `${args.failureStreak} consecutive failures — stopping rather than burning the budget on a loop`,
+      detail: scrubAuditText(`${args.failureStreak} consecutive failures — stopping rather than burning the budget on a loop`),
     });
   }
   if (out.length > 2_000_000) {
-    trips.push({ when: "after", rule: "output-volume", detail: `a single tool call returned ${out.length} bytes` });
+    trips.push({ when: "after", rule: "output-volume", detail: scrubAuditText(`a single tool call returned ${out.length} bytes`) });
   }
   return trips;
 }

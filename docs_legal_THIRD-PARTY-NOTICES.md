@@ -108,6 +108,76 @@ record, outside the distributed tree.
 - Integrity: `probe/aguiBoundary.test.ts` pins the adopted vocabulary and every
   rule the boundary must keep.
 
+## Content-bound durable approvals (open-multi-agent)
+
+- Project: https://github.com/open-multi-agent/open-multi-agent
+- Adopted: one durable-approval *property*, not a dependency — that a gate
+  approval hashes exactly what the reviewer was shown, so a later dispute proves
+  what was approved rather than merely that something was. Read from upstream
+  `approval/durable.ts`, `journal/hash.ts`, `journal/verify.ts` and
+  `memory/checkpoint.ts`, and re-expressed as first-party TypeScript in
+  `src/security/approvalEvidence.ts`. **No runtime dependency was added** and no
+  upstream source line is included — the module is SelfImpulse's own code, built
+  on its existing seams (the `stableStringify` canonicaliser in
+  `src/security/actionGraph.ts`, the cross-platform `pureSha256`, the `durable.ts`
+  KV ledger, and the Ed25519 issuer in `src/mission/signing.ts`).
+- It adds **evidence, never authority**: the native OS dialog remains the only
+  satisfier of the gate; the digest, the sealed receipt and the offline verifier
+  only describe and bind a decision the gate already reached.
+- License: MIT License. Copyright (c) Shenzhen YuanASI Technology Co., Ltd. and
+  open-multi-agent contributors. The MIT license text is reproduced verbatim, as
+  the licence requires, in `LICENSES/open-multi-agent-MIT.txt` — that file is the
+  authoritative attribution and is shipped unmodified.
+- Commit adopted: `75a6758` (pushed 2026-10-04).
+- Integrity: `probe/approvalEvidence.test.ts` pins canonical-digest determinism
+  (key-order and platform independent), drift refusal, offline chain
+  verification, the stale/second-decision ledger refusals, and the binding of an
+  approval into a signed mission receipt chain.
+
+## Secret-scrubbed audit trail and bounded seat ceiling (claw-enterprise)
+
+- Project: https://github.com/openclaw/openclaw-enterprise
+- Commit adopted: `096ce70` (pushed 2026-10-06).
+- License: MIT License. Copyright (c) 2026 OpenAI. Reproduced verbatim, as the
+  licence requires, in `LICENSES/claw-enterprise-MIT.txt` — that file is the
+  authoritative attribution and is shipped unmodified.
+- Adopted from upstream `packages/audit`, as re-expressed first-party TypeScript
+  in `src/security/auditScrub.ts`: the posture that an audit trail is scrubbed on
+  its way *into* storage rather than by asking the caller to be careful — a
+  key-shaped value in free text, a `Bearer …` header quoted into a reason, a
+  member named `accessToken`, an embedded control character, a `__proto__` key.
+  SelfImpulse needed it because a gate ask, a ledger row and a tool receipt all
+  carry operator-authored strings, and an auditor's trail is a secret store
+  wearing a different hat.
+- Adopted from upstream `apps/controller/src/drivers/repo/credentials/provider-queue.ts`,
+  as `src/mission/dispatchLanes.ts`: a bounded ceiling on how many seats may hold
+  a provider connection at once, before the wave is drained. Upstream ceilings
+  per credential; the seam here is per wave, and the ceiling is derived from the
+  team's own configuration rather than imposed on it.
+- No runtime dependency was added and no upstream source line is included. Both
+  modules are SelfImpulse's own code on its existing seams.
+- Integrity: `probe/auditScrub.test.ts` (65) and `probe/dispatchLanes.test.ts` (43).
+
+## Retry lanes — a wait is not a failure (paperclip)
+
+- Project: https://github.com/paperclipai/paperclip
+- Commit adopted: `a6306ba` (pushed 2026-10-06).
+- License: MIT License. Copyright (c) 2025 Paperclip AI. Reproduced verbatim, as
+  the licence requires, in `LICENSES/paperclip-MIT.txt` — that file is the
+  authoritative attribution and is shipped unmodified.
+- Adopted from upstream `server/src/services/execution-recovery-attempt.ts` and
+  `server/src/services/approved-execution-wait.ts`, as `src/mission/retryLanes.ts`:
+  the separation of a *retry charge* from a *wait*, decided by the reason for the
+  retry rather than by its occurrence, and the discipline of reading an ambiguous
+  historical record conservatively instead of resetting it. SelfImpulse's two
+  existing retry counters could not tell a failure from a human reading an ask,
+  so a crew parked at the gate burned its failure budget and then its 30-minute
+  ceiling on somebody's response time.
+- Wired into `src/mission/missionRuntime.ts` and `src/mission/runCheckpoints.ts`;
+  the durable run chain now carries lane-classified accounting, and the repair
+  ladder survives a resume.
+- No runtime dependency was added and no upstream source line is included.
+
 ---
 
 SelfImpulse (built on the MJ engine) includes clean-room TypeScript implementations of token-

@@ -1,17 +1,17 @@
 /* ============================================================
    SELFIMPULSE — Quiet precision. EIGHT finishes, one law.
 
-   The finishes are supplied palettes, each kept as one coherent
-   material rather than a recolour:
+   MONOCHROME, at the owner's instruction. Every finish is now
+   black / grey / white: a near-black (or near-white) ground, a
+   raised neutral surface ramp, and one accent that is simply the
+   OPPOSITE POLE of that ground — near-white on the dark finishes,
+   near-black on the light ones. The eight finishes differ only in
+   where each neutral sits, never in hue:
 
-     holst      navy / sage / cream        (dark)
-     obsidian   onyx / blue slate / alabaster (dark)
-     azure      onyx / dark azure / paper white (dark)
-     platinum   platinum / french gray / gunmetal (light)
-     titanium   midnight / steel blue / champagne gold (dark)
-     akaroa     white rock / akaroa / barley corn (light)
-     caesar     black / burgundy / white   (dark)
-     stratos    black / vibe purple / white (dark)
+     holst      cool near-black      (dark)     azure      cool near-black      (dark)
+     obsidian   neutral near-black   (dark)     stratos    cool-violet near-black(dark)
+     platinum   cool near-white      (light)    akaroa     warm near-white      (light)
+     titanium   warm near-black      (dark)     caesar     neutral near-black   (dark)
 
    Two laws survive from the four-finish era, because they are
    about legibility rather than taste:
@@ -66,23 +66,23 @@
   --rail-w:248px;
 }
 
-/* HOLST — navy ground, sage accent, cream ink.
-   Palette: #0D1B2A  #1B263B  #415A77  #778D7A  #D4C4A8  #F4F1DE */
+/* HOLST — cool near-black. The first finish, and the default the app boots. */
 [data-theme=holst]{
   color-scheme:dark;
-  /* Ground relLum 0.0104 — a shade of black, never pure black. */
-  --bg:#0D1B2A;--bg-deep:#070F17;
-  --s1:#17263E;--s2:#1E2F49;--s3:#263853;
-  --line:rgba(244,241,222,0.1);--line-2:rgba(244,241,222,0.18);
-  --fg:#F4F1DE;--fg-2:#D4C4A8;--fg-3:#A9B6C2;
-  /* ONE accent, so colour means something when it appears. The label on an
-     accent fill stays the quiet half: deep ink on a light accent, porcelain on
-     a dark one. */
-  --accent:#879B8A;--accent-fg:#0A080A;--accent-soft:rgba(135,155,138,0.16);
+  --bg:#0B0B0C;--bg-deep:#070707;
+  --s1:#151517;--s2:#1C1C1F;--s3:#242427;
+  --line:rgba(242,242,243,0.1);--line-2:rgba(242,242,243,0.18);
+  --fg:#F2F2F3;--fg-2:#9A9A9E;--fg-3:#94949A;
+  /* ONE accent, and in monochrome it is the opposite pole of the ground: a
+     near-white on a near-black, so it is maximally distinct from the secondary
+     ink (ΔE) and clears AA as text on its own ground. The label on an accent
+     fill is the ground itself. */
+  --accent:#DCDCE0;--accent-fg:#0B0B0C;--accent-soft:rgba(154,154,158,0.16);
+  /* Status keeps its hue; only its wash goes monochrome, so the ink clears 4.5:1. */
   --ok:#A8C079;--warn:#E5B94E;--bad:#CE8373;
-  --ok-soft:rgba(168,192,121,0.14);--warn-soft:rgba(229,185,78,0.13);--bad-soft:rgba(206,131,115,0.14);
-  --accent-2:#6A796C;--accent-3:#ABB9AD;
-  --sb:#566479;
+  --ok-soft:rgba(154,154,158,0.14);--warn-soft:rgba(154,154,158,0.13);--bad-soft:rgba(154,154,158,0.14);
+  --accent-2:#A8A8AC;--accent-3:#F0F0F2;
+  --sb:#5C5C60;
   /* Real depth. A 1px ring alone cannot describe "this floats above that" on a
      near-black ground; these pair a tight contact shadow with a wide ambient
      one. On paper, depth comes from the contact shadow under a crisp ring. */
@@ -90,27 +90,26 @@
   --shadow-2:0 1px 2px rgba(0,0,0,0.5),0 0 0 1px var(--line);
   --shadow-3:0 2px 4px rgba(0,0,0,0.35),0 10px 24px -12px rgba(0,0,0,0.5),0 0 0 1px var(--line);
   --shadow-4:0 8px 20px rgba(0,0,0,0.85),0 28px 56px -22px rgba(0,0,0,0.5),0 0 0 1px var(--line-2);
-  --glass:rgba(10,20,32,0.72);
-  --on-accent:#0A080A;
+  --glass:rgba(12,12,14,0.72);
+  --on-accent:#0B0B0C;
 }
 
-/* OBSIDIAN — onyx, blue slate, alabaster.
-   Palette: #0A0A0A  #536878  #E5E4E2 */
+/* OBSIDIAN — the neutral pole: no cast at all. */
 [data-theme=obsidian]{
   color-scheme:dark;
-  /* Ground relLum 0.0030 — a shade of black, never pure black. */
-  --bg:#0A0A0A;--bg-deep:#060606;
-  --s1:#141719;--s2:#1C2023;--s3:#262B2F;
-  --line:rgba(229,228,226,0.1);--line-2:rgba(229,228,226,0.18);
-  --fg:#E5E4E2;--fg-2:#A7ADB1;--fg-3:#8f979c;
-  /* ONE accent, so colour means something when it appears. The label on an
-     accent fill stays the quiet half: deep ink on a light accent, porcelain on
-     a dark one. */
-  --accent:#798996;--accent-fg:#0A080A;--accent-soft:rgba(121,137,150,0.16);
+  --bg:#08080A;--bg-deep:#050505;
+  --s1:#121215;--s2:#191919;--s3:#212125;
+  --line:rgba(237,237,239,0.1);--line-2:rgba(237,237,239,0.18);
+  --fg:#EDEDEF;--fg-2:#8E8E93;--fg-3:#8E8E94;
+  /* ONE accent, and in monochrome it is the opposite pole of the ground: a
+     near-white on a near-black, so it is maximally distinct from the secondary
+     ink (ΔE) and clears AA as text on its own ground. The label on an accent
+     fill is the ground itself. */
+  --accent:#D6D6DA;--accent-fg:#08080A;--accent-soft:rgba(142,142,147,0.16);
   --ok:#A8C079;--warn:#E5B94E;--bad:#CD8070;
-  --ok-soft:rgba(168,192,121,0.14);--warn-soft:rgba(229,185,78,0.13);--bad-soft:rgba(205,128,112,0.14);
-  --accent-2:#5E6B75;--accent-3:#A1ADB5;
-  --sb:#565A5D;
+  --ok-soft:rgba(142,142,147,0.14);--warn-soft:rgba(142,142,147,0.13);--bad-soft:rgba(142,142,147,0.14);
+  --accent-2:#A2A2A6;--accent-3:#EBEBEE;
+  --sb:#58585C;
   /* Real depth. A 1px ring alone cannot describe "this floats above that" on a
      near-black ground; these pair a tight contact shadow with a wide ambient
      one. On paper, depth comes from the contact shadow under a crisp ring. */
@@ -118,26 +117,25 @@
   --shadow-2:0 1px 2px rgba(0,0,0,0.5),0 0 0 1px var(--line);
   --shadow-3:0 2px 4px rgba(0,0,0,0.35),0 10px 24px -12px rgba(0,0,0,0.5),0 0 0 1px var(--line);
   --shadow-4:0 8px 20px rgba(0,0,0,0.85),0 28px 56px -22px rgba(0,0,0,0.5),0 0 0 1px var(--line-2);
-  --glass:rgba(8,8,8,0.72);
-  --on-accent:#0A080A;
+  --glass:rgba(10,10,12,0.72);
+  --on-accent:#08080A;
 }
 
-/* AZURE — dark azure, lifted off the brand gradient to clear AA.
-   Palette: #000000  #004A6B  #00638E  #8CB9CC  #BFD8E3  #2B2B2B */
+/* AZURE — cool near-black. */
 [data-theme=azure]{
   color-scheme:dark;
-  /* Ground relLum 0.0069 — a shade of black, never pure black. */
-  --bg:#121416;--bg-deep:#0A0B0C;
-  --s1:#1A1F22;--s2:#222829;--s3:#2B2F33;
-  --line:rgba(242,245,247,0.1);--line-2:rgba(242,245,247,0.18);
-  --fg:#F2F5F7;--fg-2:#BFD8E3;--fg-3:#8CB9CC;
-  /* ONE accent, so colour means something when it appears. The label on an
-     accent fill stays the quiet half: deep ink on a light accent, porcelain on
-     a dark one. */
-  --accent:#5496B3;--accent-fg:#0A080A;--accent-soft:rgba(84,150,179,0.16);
+  --bg:#0A0C0D;--bg-deep:#060808;
+  --s1:#141719;--s2:#1C2022;--s3:#242829;
+  --line:rgba(239,241,242,0.1);--line-2:rgba(239,241,242,0.18);
+  --fg:#EFF1F2;--fg-2:#92989C;--fg-3:#909699;
+  /* ONE accent, and in monochrome it is the opposite pole of the ground: a
+     near-white on a near-black, so it is maximally distinct from the secondary
+     ink (ΔE) and clears AA as text on its own ground. The label on an accent
+     fill is the ground itself. */
+  --accent:#D8DADD;--accent-fg:#0A0C0D;--accent-soft:rgba(146,152,156,0.16);
   --ok:#A8C079;--warn:#E5B94E;--bad:#CD8070;
-  --ok-soft:rgba(168,192,121,0.14);--warn-soft:rgba(229,185,78,0.13);--bad-soft:rgba(205,128,112,0.14);
-  --accent-2:#42758C;--accent-3:#87B6CA;
+  --ok-soft:rgba(146,152,156,0.14);--warn-soft:rgba(146,152,156,0.13);--bad-soft:rgba(146,152,156,0.14);
+  --accent-2:#A4A4A8;--accent-3:#EDEDF0;
   --sb:#5A5D60;
   /* Real depth. A 1px ring alone cannot describe "this floats above that" on a
      near-black ground; these pair a tight contact shadow with a wide ambient
@@ -146,61 +144,57 @@
   --shadow-2:0 1px 2px rgba(0,0,0,0.5),0 0 0 1px var(--line);
   --shadow-3:0 2px 4px rgba(0,0,0,0.35),0 10px 24px -12px rgba(0,0,0,0.5),0 0 0 1px var(--line);
   --shadow-4:0 8px 20px rgba(0,0,0,0.85),0 28px 56px -22px rgba(0,0,0,0.5),0 0 0 1px var(--line-2);
-  --glass:rgba(14,15,17,0.72);
-  --on-accent:#0A080A;
+  --glass:rgba(12,14,15,0.72);
+  --on-accent:#0A0C0D;
 }
 
-/* PLATINUM — platinum ground, french gray steps, gunmetal accent.
-   Palette: #D3D0D5  #A4A2AB  #292B39 */
+/* PLATINUM — cool near-white. One of the two day finishes. */
 [data-theme=platinum]{
   color-scheme:light;
-  /* Ground relLum 0.6376 — light, never screen-white. */
-  --bg:#D3D0D5;--bg-deep:#b2b0b3;
-  --s1:#E6E4E9;--s2:#DAD8DE;--s3:#C6C3CA;
-  --line:rgba(41,43,57,0.14);--line-2:rgba(41,43,57,0.24);
-  --fg:#292B39;--fg-2:#41424f;--fg-3:#4b4d58;
-  /* ONE accent, so colour means something when it appears. The label on an
-     accent fill stays the quiet half: deep ink on a light accent, porcelain on
-     a dark one. */
-  --accent:#292B39;--accent-fg:#F7F4EE;--accent-soft:rgba(41,43,57,0.1);
+  --bg:#E9EAEC;--bg-deep:#C8C9CD;
+  --s1:#F4F5F6;--s2:#DEDDDF;--s3:#D1D2D5;
+  --line:rgba(25,26,28,0.14);--line-2:rgba(25,26,28,0.24);
+  --fg:#191A1C;--fg-2:#47484D;--fg-3:#4F5057;
+  /* ONE accent, and in monochrome it is the opposite pole of the ground: a
+     near-black on a near-white, so it is maximally distinct from the secondary
+     ink (ΔE) and clears AA as text on its own ground. The label on an accent
+     fill is the ground itself. */
+  --accent:#1C1D20;--accent-fg:#F5F6F7;--accent-soft:rgba(28,29,32,0.1);
   /* 20.2 — .pill.ok/.warn/.bad are 10.5px uppercase mono, so NORMAL-SIZE text
-     under SC 1.4.3 and the bar is 4.5:1, not 3:1. On their own washes over the
-     ground these were 3.80 / 3.86 / 4.03:1. Darkened in step with the shell
-     sheet's copy of the same tokens and with --fg-3 (4.54 -> 5.00:1); the
-     washes keep their original lighter rgb, which is what gives the darker ink
-     its room. Now 5.33 / 5.36 / 5.24:1. */
+     under SC 1.4.3 and the bar is 4.5:1, not 3:1. These three inks were tuned
+     dark for exactly that, and their wash is now the secondary-ink neutral, so
+     they still clear it. */
   --ok:#3B4921;--warn:#5D3E15;--bad:#732F23;
-  --ok-soft:rgba(78,96,43,0.14);--warn-soft:rgba(121,81,27,0.13);--bad-soft:rgba(143,58,44,0.14);
-  --accent-2:#50515D;--accent-3:#20222C;
-  --sb:#737175;
+  --ok-soft:rgba(71,72,77,0.14);--warn-soft:rgba(71,72,77,0.13);--bad-soft:rgba(71,72,77,0.14);
+  --accent-2:#4A4C52;--accent-3:#101114;
+  --sb:#9C9EA2;
   /* Real depth. A 1px ring alone cannot describe "this floats above that" on a
      near-black ground; these pair a tight contact shadow with a wide ambient
      one.  */
   --shadow-1:0 0 0 1px var(--line);
-  --shadow-2:0 1px 2px rgba(41,43,57,0.07),0 0 0 1px var(--line);
-  --shadow-3:0 2px 4px rgba(41,43,57,0.06),0 10px 24px -12px rgba(41,43,57,0.16),0 0 0 1px var(--line);
-  --shadow-4:0 8px 20px rgba(41,43,57,0.1),0 28px 56px -22px rgba(41,43,57,0.22),0 0 0 1px var(--line-2);
-  --glass:rgba(240,239,240,0.82);
-  --on-accent:#F7F4EE;
+  --shadow-2:0 1px 2px rgba(0,0,0,0.07),0 0 0 1px var(--line);
+  --shadow-3:0 2px 4px rgba(0,0,0,0.06),0 10px 24px -12px rgba(0,0,0,0.16),0 0 0 1px var(--line);
+  --shadow-4:0 8px 20px rgba(0,0,0,0.1),0 28px 56px -22px rgba(0,0,0,0.22),0 0 0 1px var(--line-2);
+  --glass:rgba(250,250,252,0.82);
+  --on-accent:#F5F6F7;
 }
 
-/* TITANIUM — midnight black, steel blue steps, champagne gold accent.
-   Palette: #0D0D0D  #B8BD91  #2C3946  #C2A472 */
+/* TITANIUM — warm near-black. */
 [data-theme=titanium]{
   color-scheme:dark;
-  /* Ground relLum 0.0040 — a shade of black, never pure black. */
-  --bg:#0D0D0D;--bg-deep:#070707;
-  --s1:#1A2128;--s2:#232C34;--s3:#2C3946;
-  --line:rgba(237,233,226,0.1);--line-2:rgba(237,233,226,0.18);
-  --fg:#EDE9E2;--fg-2:#B8BD91;--fg-3:#a4a791;
-  /* ONE accent, so colour means something when it appears. The label on an
-     accent fill stays the quiet half: deep ink on a light accent, porcelain on
-     a dark one. */
-  --accent:#C2A472;--accent-fg:#0A080A;--accent-soft:rgba(194,164,114,0.16);
+  --bg:#0D0D0E;--bg-deep:#080808;
+  --s1:#171719;--s2:#1F1F22;--s3:#28282B;
+  --line:rgba(243,242,242,0.1);--line-2:rgba(243,242,242,0.18);
+  --fg:#F3F2F2;--fg-2:#9C9C9F;--fg-3:#969699;
+  /* ONE accent, and in monochrome it is the opposite pole of the ground: a
+     near-white on a near-black, so it is maximally distinct from the secondary
+     ink (ΔE) and clears AA as text on its own ground. The label on an accent
+     fill is the ground itself. */
+  --accent:#DFDDDE;--accent-fg:#0D0D0E;--accent-soft:rgba(156,156,159,0.16);
   --ok:#A8C079;--warn:#E5B94E;--bad:#CD8070;
-  --ok-soft:rgba(168,192,121,0.14);--warn-soft:rgba(229,185,78,0.13);--bad-soft:rgba(205,128,112,0.14);
-  --accent-2:#978059;--accent-3:#D4BF9C;
-  --sb:#5A656F;
+  --ok-soft:rgba(156,156,159,0.14);--warn-soft:rgba(156,156,159,0.13);--bad-soft:rgba(156,156,159,0.14);
+  --accent-2:#ABABAE;--accent-3:#F2F0F1;
+  --sb:#5F5F62;
   /* Real depth. A 1px ring alone cannot describe "this floats above that" on a
      near-black ground; these pair a tight contact shadow with a wide ambient
      one. On paper, depth comes from the contact shadow under a crisp ring. */
@@ -208,57 +202,55 @@
   --shadow-2:0 1px 2px rgba(0,0,0,0.5),0 0 0 1px var(--line);
   --shadow-3:0 2px 4px rgba(0,0,0,0.35),0 10px 24px -12px rgba(0,0,0,0.5),0 0 0 1px var(--line);
   --shadow-4:0 8px 20px rgba(0,0,0,0.85),0 28px 56px -22px rgba(0,0,0,0.5),0 0 0 1px var(--line-2);
-  --glass:rgba(10,10,10,0.72);
-  --on-accent:#0A080A;
+  --glass:rgba(14,14,15,0.72);
+  --on-accent:#0D0D0E;
 }
 
-/* AKAROA — white rock ground, akaroa steps, barley corn accent.
-   Palette: #2D2D2D  #D7C9AE  #A68763  #EAE0D2 */
+/* AKAROA — warm near-white. The second day finish. */
 [data-theme=akaroa]{
   color-scheme:light;
-  /* Ground relLum 0.7385 — light, never screen-white. */
-  --bg:#E8DECE;--bg-deep:#BEB6A9;
-  --s1:#F4EEE2;--s2:#E0D4BF;--s3:#D2C3A8;
-  --line:rgba(45,45,45,0.14);--line-2:rgba(45,45,45,0.24);
-  --fg:#2D2D2D;--fg-2:#4b4439;--fg-3:#544d41;
-  /* ONE accent, so colour means something when it appears. The label on an
-     accent fill stays the quiet half: deep ink on a light accent, porcelain on
-     a dark one. */
-  --accent:#67533d;--accent-fg:#F7F4EE;--accent-soft:rgba(110,89,65,0.1);
-  /* 20.2 — same repair as platinum, same values: 4.31 / 4.43 / 4.59:1 became
-     6.04 / 6.14 / 5.97:1. */
+  --bg:#EDEBE6;--bg-deep:#CFCBC3;
+  --s1:#F7F5F2;--s2:#E1DED8;--s3:#D5D1C9;
+  --line:rgba(27,26,24,0.14);--line-2:rgba(27,26,24,0.24);
+  --fg:#1B1A18;--fg-2:#4B4943;--fg-3:#535049;
+  /* ONE accent, and in monochrome it is the opposite pole of the ground: a
+     near-black on a near-white, so it is maximally distinct from the secondary
+     ink (ΔE) and clears AA as text on its own ground. The label on an accent
+     fill is the ground itself. */
+  --accent:#211F1A;--accent-fg:#F6F5F2;--accent-soft:rgba(33,31,26,0.1);
+  /* 20.2 — same repair as platinum, same values, and the same reason: a 10.5px
+     uppercase mono pill is normal-size text, so the bar is 4.5:1. */
   --ok:#3B4921;--warn:#5D3E15;--bad:#732F23;
-  --ok-soft:rgba(78,96,43,0.14);--warn-soft:rgba(121,81,27,0.13);--bad-soft:rgba(143,58,44,0.14);
-  --accent-2:#887763;--accent-3:#554533;
-  --sb:#7A7161;
+  --ok-soft:rgba(75,73,67,0.14);--warn-soft:rgba(75,73,67,0.13);--bad-soft:rgba(75,73,67,0.14);
+  --accent-2:#4C473E;--accent-3:#16150F;
+  --sb:#A5A199;
   /* Real depth. A 1px ring alone cannot describe "this floats above that" on a
      near-black ground; these pair a tight contact shadow with a wide ambient
      one.  */
   --shadow-1:0 0 0 1px var(--line);
-  --shadow-2:0 1px 2px rgba(45,45,45,0.07),0 0 0 1px var(--line);
-  --shadow-3:0 2px 4px rgba(45,45,45,0.06),0 10px 24px -12px rgba(45,45,45,0.16),0 0 0 1px var(--line);
-  --shadow-4:0 8px 20px rgba(45,45,45,0.1),0 28px 56px -22px rgba(45,45,45,0.22),0 0 0 1px var(--line-2);
-  --glass:rgba(247,243,238,0.82);
-  --on-accent:#F7F4EE;
+  --shadow-2:0 1px 2px rgba(0,0,0,0.07),0 0 0 1px var(--line);
+  --shadow-3:0 2px 4px rgba(0,0,0,0.06),0 10px 24px -12px rgba(0,0,0,0.16),0 0 0 1px var(--line);
+  --shadow-4:0 8px 20px rgba(0,0,0,0.1),0 28px 56px -22px rgba(0,0,0,0.22),0 0 0 1px var(--line-2);
+  --glass:rgba(250,249,246,0.82);
+  --on-accent:#F6F5F2;
 }
 
-/* CAESAR — black ground carrying a true burgundy.
-   Palette: #000000  #6D001A  #FFFFFF */
+/* CAESAR — the second neutral pole, a hair lighter than obsidian. */
 [data-theme=caesar]{
   color-scheme:dark;
-  /* Ground relLum 0.0029 — a shade of black, never pure black. */
-  --bg:#0E0809;--bg-deep:#080405;
-  --s1:#171012;--s2:#1F1618;--s3:#2A1E20;
-  --line:rgba(247,242,243,0.1);--line-2:rgba(247,242,243,0.18);
-  --fg:#F7F2F3;--fg-2:#C4B4B8;--fg-3:#96868A;
-  /* ONE accent, so colour means something when it appears. The label on an
-     accent fill stays the quiet half: deep ink on a light accent, porcelain on
-     a dark one. */
-  --accent:#b27987;--accent-fg:#0A080A;--accent-soft:rgba(173,112,127,0.16);
+  --bg:#0A0A0A;--bg-deep:#060606;
+  --s1:#141414;--s2:#1B1B1B;--s3:#242424;
+  --line:rgba(240,240,240,0.1);--line-2:rgba(240,240,240,0.18);
+  --fg:#F0F0F0;--fg-2:#909090;--fg-3:#909090;
+  /* ONE accent, and in monochrome it is the opposite pole of the ground: a
+     near-white on a near-black, so it is maximally distinct from the secondary
+     ink (ΔE) and clears AA as text on its own ground. The label on an accent
+     fill is the ground itself. */
+  --accent:#D8D8D8;--accent-fg:#0A0A0A;--accent-soft:rgba(144,144,144,0.16);
   --ok:#A8C079;--warn:#E5B94E;--bad:#CD8070;
-  --ok-soft:rgba(168,192,121,0.14);--warn-soft:rgba(229,185,78,0.13);--bad-soft:rgba(205,128,112,0.14);
-  --accent-2:#875863;--accent-3:#C69BA5;
-  --sb:#595051;
+  --ok-soft:rgba(144,144,144,0.14);--warn-soft:rgba(144,144,144,0.13);--bad-soft:rgba(144,144,144,0.14);
+  --accent-2:#A6A6A6;--accent-3:#EDEDED;
+  --sb:#5C5C5C;
   /* Real depth. A 1px ring alone cannot describe "this floats above that" on a
      near-black ground; these pair a tight contact shadow with a wide ambient
      one. On paper, depth comes from the contact shadow under a crisp ring. */
@@ -266,27 +258,26 @@
   --shadow-2:0 1px 2px rgba(0,0,0,0.5),0 0 0 1px var(--line);
   --shadow-3:0 2px 4px rgba(0,0,0,0.35),0 10px 24px -12px rgba(0,0,0,0.5),0 0 0 1px var(--line);
   --shadow-4:0 8px 20px rgba(0,0,0,0.85),0 28px 56px -22px rgba(0,0,0,0.5),0 0 0 1px var(--line-2);
-  --glass:rgba(11,6,7,0.72);
-  --on-accent:#0A080A;
+  --glass:rgba(11,11,11,0.72);
+  --on-accent:#0A0A0A;
 }
 
-/* STRATOS — black ground carrying vibe purple.
-   Palette: #000000  #AC58E9  #FFFFFF */
+/* STRATOS — the coolest dark ground; the violet cast is now a whisper. */
 [data-theme=stratos]{
   color-scheme:dark;
-  /* Ground relLum 0.0035 — a shade of black, never pure black. */
-  --bg:#0D0A12;--bg-deep:#07060A;
-  --s1:#16121F;--s2:#1E1929;--s3:#281F36;
-  --line:rgba(246,242,250,0.1);--line-2:rgba(246,242,250,0.18);
-  --fg:#F6F2FA;--fg-2:#CFC2DE;--fg-3:#9C8FB0;
-  /* ONE accent, so colour means something when it appears. The label on an
-     accent fill stays the quiet half: deep ink on a light accent, porcelain on
-     a dark one. */
-  --accent:#b367eb;--accent-fg:#0A080A;--accent-soft:rgba(174,93,234,0.16);
+  --bg:#0C0A0D;--bg-deep:#070609;
+  --s1:#16141A;--s2:#1E1B22;--s3:#27232C;
+  --line:rgba(241,239,243,0.1);--line-2:rgba(241,239,243,0.18);
+  --fg:#F1EFF3;--fg-2:#96919B;--fg-3:#93909A;
+  /* ONE accent, and in monochrome it is the opposite pole of the ground: a
+     near-white on a near-black, so it is maximally distinct from the secondary
+     ink (ΔE) and clears AA as text on its own ground. The label on an accent
+     fill is the ground itself. */
+  --accent:#DAD7DE;--accent-fg:#0C0A0D;--accent-soft:rgba(150,145,155,0.16);
   --ok:#A8C079;--warn:#E5B94E;--bad:#CD8070;
-  --ok-soft:rgba(168,192,121,0.14);--warn-soft:rgba(229,185,78,0.13);--bad-soft:rgba(205,128,112,0.14);
-  --accent-2:#8849B6;--accent-3:#C78EF0;
-  --sb:#575062;
+  --ok-soft:rgba(150,145,155,0.14);--warn-soft:rgba(150,145,155,0.13);--bad-soft:rgba(150,145,155,0.14);
+  --accent-2:#A6A3AA;--accent-3:#EFEDF2;
+  --sb:#5F5C66;
   /* Real depth. A 1px ring alone cannot describe "this floats above that" on a
      near-black ground; these pair a tight contact shadow with a wide ambient
      one. On paper, depth comes from the contact shadow under a crisp ring. */
@@ -294,8 +285,8 @@
   --shadow-2:0 1px 2px rgba(0,0,0,0.5),0 0 0 1px var(--line);
   --shadow-3:0 2px 4px rgba(0,0,0,0.35),0 10px 24px -12px rgba(0,0,0,0.5),0 0 0 1px var(--line);
   --shadow-4:0 8px 20px rgba(0,0,0,0.85),0 28px 56px -22px rgba(0,0,0,0.5),0 0 0 1px var(--line-2);
-  --glass:rgba(10,8,14,0.72);
-  --on-accent:#0A080A;
+  --glass:rgba(13,12,15,0.72);
+  --on-accent:#0C0A0D;
 }
 
 *{box-sizing:border-box;margin:0}

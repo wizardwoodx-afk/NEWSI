@@ -1,6 +1,6 @@
 [package]
 name = "selfimpulse"
-version = "1.9.1"
+version = "1.9.2"
 description = "SelfImpulse — your agents, with receipts (MJ engine)"
 authors = ["the SelfImpulse team"]
 edition = "2021"
@@ -9,6 +9,11 @@ rust-version = "1.80"
 [lib]
 name = "selfimpulse_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "selfimpulse"
+path = "src/main.rs"
+
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -35,9 +40,15 @@ chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
 parking_lot = "0.12"
 
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
 [profile.release]
 codegen-units = 1
 lto = true
 opt-level = "s"
 panic = "abort"
-strip = true
+strip = false
+
+

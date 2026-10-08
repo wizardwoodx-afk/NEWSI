@@ -53,11 +53,41 @@ const SCRATCH_FILES = new Set([
   "montage.cjs", "fleet-check.mjs", "shot.mjs", "dist.mjs", "run1.mjs", "run2.mjs",
 ]);
 
+/* walk() reads the filesystem and never consulted .gitignore — the comment above
+ * ALWAYS_EXCLUDE says so out loud, and patches that hole one name at a time for
+ * the case that matters (browser credential state). The same hole still let a
+ * stale 34 MB `web-build/` and a handful of 0-byte `err.log`/`out.txt` strays ride
+ * into a release, because git had already declared them unpublishable and the
+ * packer simply never asked.
+ *
+ * So ask git, once: the ignored set IS "files a clean checkout would not
+ * contain", which is exactly the definition of what must not ship. `--directory`
+ * collapses a wholly-ignored tree to a single entry, so a path is ignored when it
+ * or any ancestor of it appears. If git cannot be consulted the set is empty and
+ * the previous behaviour stands — ALWAYS_EXCLUDE still guards the credential dirs,
+ * so this can only ever remove junk, never weaken the security assertion.
+ */
+const IGNORED = (() => {
+  try {
+    return new Set(execFileSync("git",
+      ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory"],
+      { cwd: root, encoding: "utf8", maxBuffer: 512 * 1024 * 1024 })
+      .split("\n").filter(Boolean).map((p) => p.replace(/\/+$/, "")));
+  } catch { return new Set(); }
+})();
+const isIgnored = (rel) => {
+  if (IGNORED.size === 0) return false;
+  const parts = rel.split("/");
+  for (let i = 1; i <= parts.length; i += 1) if (IGNORED.has(parts.slice(0, i).join("/"))) return true;
+  return false;
+};
+
 function walk(dir, base = "", out = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     if (ALWAYS_EXCLUDE.includes(entry.name)) continue;
     const abs = path.join(dir, entry.name);
     const rel = base ? `${base}/${entry.name}` : entry.name;
+    if (isIgnored(rel)) continue;
     if (entry.isDirectory()) walk(abs, rel, out);
     else if (entry.isFile()) out.push(rel);
     else if (entry.isSymbolicLink()) out.push(rel);

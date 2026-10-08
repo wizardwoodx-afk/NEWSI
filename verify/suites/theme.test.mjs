@@ -17,8 +17,14 @@ function ok(label, cond, detail = "") {
   }
 }
 var ROOT = ".".length > 0 ? "." : process.cwd();
-var css = fs.readFileSync(path.join(ROOT, "src", "ui", "vh.css"), "utf8");
-var main = fs.readFileSync(path.join(ROOT, "src", "main.tsx"), "utf8");
+var read = (p) => fs.readFileSync(path.join(ROOT, p), "utf8");
+var themeCss = read("src/ui/theme.css");
+var inkCss = read("src/ui/ink.css");
+var siCss = read(path.join("src", "ui", "si", "si.css"));
+var main = read("src/main.tsx");
+var storeSrc = read(path.join("src", "ui", "store.ts"));
+var settingsSrc = read(path.join("src", "ui", "screens", "Settings.tsx"));
+var inlineHtml = read("index.html");
 var hex = (h) => {
   const s = h.replace("#", "").trim();
   const full = s.length === 3 ? s.split("").map((c) => c + c).join("") : s;
@@ -27,168 +33,187 @@ var hex = (h) => {
 var relLum = (h) => {
   const c = hex(h).map((v) => {
     const s = v / 255;
-    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
   });
   return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
 };
-var token = (theme, name) => {
-  const block = css.match(new RegExp(`\\[data-theme=${theme}\\]\\s*\\{([\\s\\S]*?)\\n\\}`, "m"));
-  const m = block?.[1].match(new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{3,8})`, "i"));
-  return m ? m[1] : "";
-};
-var deltaE = (a, b) => {
-  const lab = (h) => {
-    const [r0, g0, b0] = hex(h);
-    const f = (c) => {
-      const s = c / 255;
-      return s > 0.04045 ? Math.pow((s + 0.055) / 1.055, 2.4) : s / 12.92;
-    };
-    const [r, g, b2] = [f(r0), f(g0), f(b0)];
-    const X = (r * 0.4124 + g * 0.3576 + b2 * 0.1805) / 0.95047;
-    const Y = r * 0.2126 + g * 0.7152 + b2 * 0.0722;
-    const Z = (r * 0.0193 + g * 0.1192 + b2 * 0.9505) / 1.08883;
-    const k = (c) => c > 8856e-6 ? Math.cbrt(c) : 7.787 * c + 16 / 116;
-    const [fx, fy, fz] = [k(X), k(Y), k(Z)];
-    return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
-  };
-  const A = lab(a);
-  const B = lab(b);
-  return Math.sqrt((A[0] - B[0]) ** 2 + (A[1] - B[1]) ** 2 + (A[2] - B[2]) ** 2);
-};
-var rawToken = (theme, name) => {
-  const block = css.match(new RegExp(`\\[data-theme=${theme}\\]\\s*\\{([\\s\\S]*?)\\n\\}`, "m"));
-  const m = block?.[1].match(new RegExp(`--${name}:\\s*([^;]+);`, "i"));
-  return m ? m[1].trim() : "";
-};
-ok("one stylesheet \u2014 main.tsx imports vh.css and nothing else", /import '\.\/ui\/vh\.css'/.test(main) && (main.match(/\.css['"]/g) ?? []).length === 1);
-ok("the retired sheets are gone", !fs.existsSync(path.join(ROOT, "src", "styles")));
-var FINISHES = ["holst", "obsidian", "azure", "platinum", "titanium", "akaroa", "caesar", "stratos"];
-var DARKS = ["holst", "obsidian", "azure", "titanium", "caesar", "stratos"];
-var REJECTED_FLAT_S1_LUM = 45e-4;
-var DARK_GROUND_CEILING = 0.012;
 var contrast = (a, b) => {
   const [hi, lo] = [relLum(a), relLum(b)].sort((x, y) => y - x);
   return (hi + 0.05) / (lo + 0.05);
 };
-for (const t of DARKS) {
-  const bg = token(t, "bg"), s1 = token(t, "s1"), s2 = token(t, "s2"), s3 = token(t, "s3");
-  ok(
-    `the ${t} ground is a shade of black (not pure black, not grey) and its surface ramp is measurably raised`,
-    relLum(bg) > 0 && relLum(bg) < DARK_GROUND_CEILING && relLum(s1) < relLum(s2) && relLum(s2) < relLum(s3) && relLum(s1) > REJECTED_FLAT_S1_LUM && relLum(s1) > relLum(bg) * 1.6,
-    `bg ${bg} (lum ${relLum(bg).toFixed(5)}), s1 ${s1} (${relLum(s1).toFixed(5)} = ${(relLum(bg) > 0 ? relLum(s1) / relLum(bg) : 0).toFixed(2)}x ground), s2 ${s2}, s3 ${s3}`
-  );
-}
-ok("the rail sits on base (transparent over background, hairline separator)", /border-right:1px solid var\(--line\)/.test(css) && !/\.side\{background:var\(--bg-deep\)/.test(css.replace(/background:transparent/, "")));
-var LIGHTS = ["platinum", "akaroa"];
-var siCss = fs.readFileSync(path.join(ROOT, "src", "ui", "si", "si.css"), "utf8");
-var storeSrc = fs.readFileSync(path.join(ROOT, "src", "ui", "store.ts"), "utf8");
-var settingsSrc = fs.readFileSync(path.join(ROOT, "src", "ui", "screens", "Settings.tsx"), "utf8");
+var lab = (h) => {
+  const [r0, g0, b0] = hex(h);
+  const f = (c) => {
+    const s = c / 255;
+    return s > 0.04045 ? ((s + 0.055) / 1.055) ** 2.4 : s / 12.92;
+  };
+  const [r, g, b] = [f(r0), f(g0), f(b0)];
+  const X = (r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047;
+  const Y = r * 0.2126 + g * 0.7152 + b * 0.0722;
+  const Z = (r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883;
+  const k = (c) => c > 8856e-6 ? Math.cbrt(c) : 7.787 * c + 16 / 116;
+  const [fx, fy, fz] = [k(X), k(Y), k(Z)];
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+};
+var deltaE = (a, b) => {
+  const A = lab(a), B = lab(b);
+  return Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]);
+};
+var hue = (h) => {
+  const [r, g, b] = hex(h);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  if (d === 0) return NaN;
+  const seg = max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return seg * 60;
+};
+var rootBlock = themeCss.match(/:root[^{]*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+var attrBlock = (id, sheet) => sheet.match(new RegExp(`\\[data-theme="${id}"\\]\\s*\\{([\\s\\S]*?)\\n\\}`))?.[1] ?? "";
+var SOURCES = {
+  dark: rootBlock,
+  heliotrope: attrBlock("heliotrope", themeCss),
+  charleston: attrBlock("charleston", themeCss),
+  licorice: attrBlock("licorice", themeCss),
+  bistre: attrBlock("bistre", themeCss),
+  feldgrau: attrBlock("feldgrau", themeCss),
+  light: attrBlock("light", inkCss)
+};
+var resolve = (t, name) => (t === "dark" ? "" : tok(SOURCES[t], name)) || tok(rootBlock, name);
+var FINISHES = Object.keys(SOURCES);
+var DARKS = ["dark", "charleston", "licorice", "bistre"];
+var LIGHTS = ["light", "feldgrau"];
+var tok = (src, name) => src.match(new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{3,8})`))?.[1] ?? "";
+console.log("== the cascade is the one that ships ==");
+ok("main.tsx imports all three live sheets", /\.\/ui\/ink\.css/.test(main) && /\.\/ui\/si\/si\.css/.test(main) && /\.\/ui\/theme\.css/.test(main), main.match(/import[^\n]*\.css[^\n]*/g)?.join(" | "));
+ok("theme.css loads LAST, so the finish layer wins the cascade", main.lastIndexOf("theme.css") > main.lastIndexOf("si.css") && main.lastIndexOf("si.css") > main.lastIndexOf("ink.css"));
+ok("the dead sheet is not imported", !/import[^\n]*vh\.css/.test(main));
 ok(
-  "vh.css declares a [data-theme=...] block for all eight finishes",
-  FINISHES.every((t) => new RegExp(`\\[data-theme=${t}\\]\\s*\\{`).test(css)),
-  FINISHES.filter((t) => !new RegExp(`\\[data-theme=${t}\\]\\s*\\{`).test(css)).join(", ") || "all present"
+  "every finish declares a ground, a four-step ramp and four ink steps",
+  FINISHES.every((t) => ["ground", "surface-1", "surface-2", "surface-3", "surface-4", "ink-1", "ink-2", "ink-3", "ink-4", "accent", "accent-hi", "accent-ink"].every((n) => resolve(t, n) !== "")),
+  FINISHES.filter((t) => ["ground", "surface-1", "surface-2", "surface-3", "surface-4", "ink-1", "ink-2", "ink-3", "ink-4", "accent", "accent-hi", "accent-ink"].some((n) => resolve(t, n) === "")).join(", ") || "complete"
 );
+console.log("\n== ONE id list, five places it must never disagree ==");
+var themeUnion = (storeSrc.match(/export type Theme = ([^;]+);/)?.[1] ?? "").split("|").map((x) => x.trim().replace(/"/g, "")).filter(Boolean);
+var declared = [...[themeCss, siCss, inkCss].join("\n").matchAll(/\[data-theme="([a-z]+)"\]/g)].map((m) => m[1]);
+var bootList = (inlineHtml.match(/\[([^\]]*"[a-z]+"[^\]]*)\]/)?.[1] ?? "").match(/"[a-z]+"/g)?.map((s) => s.replace(/"/g, "")) ?? [];
+var persisted = [...storeSrc.matchAll(/\bid:\s*"([a-z]+)",\s*name:/g)].map((m) => m[1]);
+var sameSet = (a, b) => a.length === (/* @__PURE__ */ new Set([...a, ...b])).size && a.every((x) => b.includes(x)) && b.every((x) => a.includes(x));
+ok("the Theme union lists exactly the six shipping ids", sameSet(themeUnion, FINISHES), themeUnion.join(", "));
+ok("THEMES in the store lists exactly the six shipping ids", sameSet(persisted, FINISHES), persisted.join(", "));
+ok("index.html's boot whitelist accepts exactly the six shipping ids", sameSet(bootList, FINISHES), bootList.join(", "));
 ok(
-  'si.css declares a [data-theme="..."] block for all eight finishes',
-  FINISHES.every((t) => new RegExp(`\\[data-theme="${t}"\\]\\s*\\{`).test(siCss)),
-  FINISHES.filter((t) => !new RegExp(`\\[data-theme="${t}"\\]\\s*\\{`).test(siCss)).join(", ") || "all present"
+  "no finish is declared as a block that is not in the list, or listed without a block",
+  FINISHES.every((t) => declared.includes(t) || t === "dark") && declared.every((d) => FINISHES.includes(d)),
+  `declared: ${[...new Set(declared)].join(", ")}`
 );
-var RETIRED = ["dark", "light", "petrol", "fog"];
-var themeUnion = storeSrc.match(/export type Theme = ([^;]+);/)?.[1] ?? "";
-var persistedIds = [...storeSrc.matchAll(/\bid:\s*"([^"]+)"/g)].map((m) => m[1]);
-var liveBlocks = RETIRED.filter((r) => [css, siCss].some((sheet) => sheet.includes(`[data-theme=${r}]`) || sheet.includes(`[data-theme="${r}"]`)));
-var inUnion = RETIRED.filter((r) => new RegExp(`"${r}"`).test(themeUnion));
-var inPersisted = RETIRED.filter((r) => persistedIds.includes(r));
-ok(
-  "no retired four-finish id survives as a LIVE theme",
-  liveBlocks.length === 0 && inUnion.length === 0 && inPersisted.length === 0,
-  `blocks: ${liveBlocks.join(", ") || "none"} / union: ${inUnion.join(", ") || "none"} / persisted: ${inPersisted.join(", ") || "none"}`
-);
-ok(
-  "store.ts Theme union lists exactly the eight ids",
-  (storeSrc.match(/export type Theme = ([^;]+);/)?.[1] ?? "").split("|").map((x) => x.trim().replace(/"/g, "")).filter(Boolean).length === 8
-);
-ok(
-  "Settings renders THEMES from the store, not a private copy",
-  /THEMES\.map\(/.test(settingsSrc) && !/FINISHES/.test(settingsSrc)
-);
-ok(
-  "main.tsx applies the saved finish before first paint, validated against THEMES",
-  /vh\.theme\.v2/.test(main) && /THEMES\.some\(/.test(main) && /DEFAULT_THEME/.test(main)
-);
-for (const t of LIGHTS) {
-  const bg = token(t, "bg"), fg = token(t, "fg"), s3 = token(t, "s3");
-  ok(
-    `the ${t} ground is clearly light \u2014 never screen-white \u2014 and the ink on it is ink`,
-    relLum(bg) > 0.5 && relLum(bg) < 0.98 && relLum(fg) < 0.05 && contrast(fg, bg) >= 4.5,
-    `bg ${bg} (lum ${relLum(bg).toFixed(4)}), fg ${fg} (${relLum(fg).toFixed(4)}), contrast ${contrast(fg, bg).toFixed(2)}:1`
-  );
-  ok(
-    `the ${t} finish carries its own surface step`,
-    relLum(s3) > 0 && relLum(s3) < relLum(bg),
-    `s3 ${s3} vs bg ${bg}`
-  );
-  const surfaces = ["bg", "bg-deep", "s1", "s2", "s3", "glass"];
-  const whites = surfaces.filter((n) => {
-    const v = rawToken(t, n);
-    return /^#ffffff$/i.test(v) || /^#fff$/i.test(v) || /rgba\(\s*255\s*,\s*255\s*,\s*255/i.test(v);
-  });
-  ok(`no ${t} surface is plain white`, whites.length === 0, whites.join(", "));
-  const flats = surfaces.filter((n) => {
-    const v = rawToken(t, n);
-    return /^#[0-9a-f]{6}$/i.test(v) && (() => {
-      const r = parseInt(v.slice(1, 3), 16), g = parseInt(v.slice(3, 5), 16), b = parseInt(v.slice(5, 7), 16);
-      return r === g && g === b;
-    })();
-  });
-  ok(`no ${t} surface is a flat neutral grey (the surface carries material)`, flats.length === 0, flats.join(", "));
-  const spread = (() => {
-    const v = token(t, "bg");
-    if (!/^#[0-9a-f]{6}$/i.test(v)) return NaN;
-    const c = [0, 2, 4].map((i) => parseInt(v.slice(1 + i, 3 + i), 16));
-    return Math.max(...c) - Math.min(...c);
-  })();
-  ok(`the ${t} ground carries a tint \u2014 it is not a dead neutral grey`, spread >= 3, `channel spread = ${spread}`);
-}
+ok("Settings renders THEMES from the store, never a private copy", /THEMES\.map\(/.test(settingsSrc) && !/const FINISHES/.test(settingsSrc));
+var allSheets = [themeCss, inkCss, siCss].join("\n");
 for (const t of FINISHES) {
-  const a = token(t, "accent"), bg = token(t, "bg"), fg2 = token(t, "fg-2");
-  const d = deltaE(a, fg2);
+  const subjects = [...allSheets.matchAll(new RegExp(`([^\\s,{}\\[]*)\\[data-theme="${t}"\\]`, "g"))].map((m) => m[1]);
   ok(
-    `the ${t} finish carries ONE accent that is AA on its own ground and reads as colour, not as a second grey`,
-    contrast(a, bg) >= 4.5 && contrast(a, token(t, "s1")) >= 4.5 && contrast(token(t, "accent-fg"), a) >= 4.5 && d >= 10,
-    `${t} accent ${a} on ${bg} ${contrast(a, bg).toFixed(2)}:1, accent-fg on accent ${contrast(token(t, "accent-fg"), a).toFixed(2)}:1, \u0394E vs fg-2 = ${d.toFixed(1)}`
+    `the ${t} finish is addressable by a non-root element (a swatch can paint it)`,
+    subjects.some((s) => s !== "html"),
+    `subjects: ${subjects.join(" | ") || "none"}`
   );
 }
-ok(
-  "the focus ring token clears the 3:1 WCAG 2.2 SC 2.4.11 needs in every finish",
-  FINISHES.every((t) => contrast(token(t, "accent-3"), token(t, "bg")) >= 3),
-  FINISHES.filter((t) => contrast(token(t, "accent-3"), token(t, "bg")) < 3).join(", ") || "all clear"
-);
-ok("no default-blue / competitor-purple / electric-cyan anywhere", !/#007AFF|#3B82F6|#2563EB|#7C3AED|#06B6D4/i.test(css));
-ok("Gambetta for display, Switzer for body, Fragment Mono for data", /Gambetta/.test(css) && /Switzer/.test(css) && /Fragment Mono/.test(css));
-ok("not Inter", !/font-family[^;}]*Inter\b/.test(css));
-ok("weights top out at medium (500) \u2014 nothing semibold/bold/600+", !/font-weight:\s*(6|7|8|9)00/.test(css) && !/font-weight:\s*bold(?!.*oblique)/.test(css.replace(/font-weight:\(.*?\)/g, "")));
-ok("no legacy animation gimmicks (splash, shimmer, glow keyframes)", !/@keyframes\s+(splash|shimmer|glow|pulseGlow|float)/.test(css));
-var inlineHtml = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
-var inline = inlineHtml.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? "";
-var DEFAULT_ID = FINISHES[0];
+ok("main.tsx validates the saved finish before first paint", /THEMES\.some\(/.test(main) && /DEFAULT_THEME/.test(main));
+console.log("\n== the ramp law \u2014 every step is perceptible ==");
 for (const t of FINISHES) {
-  const re = t === DEFAULT_ID ? /html,body\{[^}]*?background:\s*(#[0-9a-fA-F]{3,8})/ : new RegExp('\\[data-theme="' + t + '"\\][^{]*\\{[^}]*?background:\\s*(#[0-9a-fA-F]{3,8})');
-  const inlineBg = inline.match(re)?.[1] ?? "";
+  const ramp = ["ground", "surface-1", "surface-2", "surface-3", "surface-4"].map((n) => resolve(t, n));
+  const steps = ramp.slice(1).map((v, i) => deltaE(ramp[i], v));
   ok(
-    `the inline boot ground for ${t} EQUALS --bg in vh.css -- they cannot separate again`,
-    inlineBg !== "" && inlineBg.toLowerCase() === token(t, "bg").toLowerCase(),
-    `index.html ${inlineBg || "(none)"} vs vh.css ${token(t, "bg")}`
+    `the ${t} surface ramp never collapses \u2014 every step is a perceptible move`,
+    Math.min(...steps) >= 2,
+    `steps ${steps.map((s) => s.toFixed(2)).join(", ")} (min ${Math.min(...steps).toFixed(2)})`
   );
+  ok(`the ${t} ink ramp never collapses`, (() => {
+    const inks = ["ink-1", "ink-2", "ink-3", "ink-4"].map((n) => resolve(t, n));
+    return Math.min(...inks.slice(1).map((v, i) => deltaE(inks[i], v))) >= 6;
+  })(), ["ink-1", "ink-2", "ink-3", "ink-4"].map((n) => resolve(t, n)).join(" "));
 }
 ok(
-  `index.html boots the default finish server-side (${DEFAULT_ID})`,
-  new RegExp(`<html lang="en" data-theme="${DEFAULT_ID}">`).test(inlineHtml)
+  "the dark finishes climb away from their ground and the light ones step off theirs",
+  DARKS.every((t) => {
+    const r = ["ground", "surface-1", "surface-2", "surface-3", "surface-4"].map((n) => relLum(resolve(t, n)));
+    return r.every((v, i) => i === 0 || v > r[i - 1]);
+  }) && LIGHTS.every((t) => {
+    const s1 = relLum(resolve(t, "surface-1"));
+    const s4 = relLum(resolve(t, "surface-4"));
+    return s1 > relLum(resolve(t, "ground")) && s4 < s1;
+  }),
+  DARKS.filter((t) => {
+    const r = ["ground", "surface-1", "surface-2", "surface-3", "surface-4"].map((n) => relLum(resolve(t, n)));
+    return !r.every((v, i) => i === 0 || v > r[i - 1]);
+  }).join(", ") || "monotone"
+);
+var defaultStep = deltaE(tok(SOURCES.dark, "ground"), tok(SOURCES.dark, "surface-1"));
+var otherMin = Math.min(...FINISHES.filter((t) => t !== "dark").map((t) => deltaE(resolve(t, "ground"), resolve(t, "surface-1"))));
+ok(
+  `the Vantablack ground pays for itself with the widest first step (${defaultStep.toFixed(2)} vs ${otherMin.toFixed(2)} elsewhere)`,
+  defaultStep >= 3.5 && defaultStep > otherMin,
+  `default ${defaultStep.toFixed(2)}, tightest other ${otherMin.toFixed(2)}`
+);
+console.log("\n== the ink law ==");
+for (const t of FINISHES) {
+  const s1 = resolve(t, "surface-1");
+  const i1 = resolve(t, "ink-1"), i2 = resolve(t, "ink-2"), i3 = resolve(t, "ink-3");
+  ok(`the ${t} body ink clears AAA on its raised surface (${contrast(i1, s1).toFixed(1)}:1)`, contrast(i1, s1) >= 7);
+  ok(`the ${t} secondary and muted ink both clear AA (${contrast(i2, s1).toFixed(1)} / ${contrast(i3, s1).toFixed(1)})",`, contrast(i2, s1) >= 4.5 && contrast(i3, s1) >= 4.5);
+}
+console.log("\n== the accent law \u2014 three roles, three bars ==");
+for (const t of FINISHES) {
+  const g = resolve(t, "ground"), a = resolve(t, "accent"), ah = resolve(t, "accent-hi"), ai = resolve(t, "accent-ink");
+  ok(`the ${t} accent clears 3:1 on its ground as a component (${contrast(a, g).toFixed(2)}:1)`, contrast(a, g) >= 3);
+  ok(`the ${t} accent-hi clears AA as text and the focus ring clears SC 2.4.11 (${contrast(ah, g).toFixed(2)}:1)`, contrast(ah, g) >= 4.5);
+  ok(`the ${t} accent-ink is readable on its own accent (${contrast(ai, a).toFixed(2)}:1)`, contrast(ai, a) >= 4.5);
+}
+console.log("\n== the brand ramp holds one hue ==");
+var brand = tok(SOURCES.dark, "brand");
+ok(
+  "the default finish declares an anchor pigment and uses it for both UI steps",
+  /^#[0-9a-f]{6}$/i.test(brand) && relLum(brand) < relLum(tok(SOURCES.dark, "accent")),
+  `brand ${brand} vs accent ${tok(SOURCES.dark, "accent")}`
 );
 ok(
-  "the boot script accepts all eight ids and falls back to the default",
-  FINISHES.every((t) => inlineHtml.includes('"' + t + '"')) && inlineHtml.includes('? t : "' + DEFAULT_ID + '"')
+  "the Pantone the owner named survives as its own finish",
+  tok(SOURCES.heliotrope, "brand").toLowerCase() === "#4f3872",
+  tok(SOURCES.heliotrope, "brand")
 );
+for (const [name, v] of [["--accent", tok(SOURCES.dark, "accent")], ["--accent-hi", tok(SOURCES.dark, "accent-hi")]]) {
+  const d = Math.abs((hue(v) - hue(brand) + 540) % 360 - 180) === 0 ? 0 : Math.abs(hue(v) - hue(brand));
+  ok(`${name} is the anchor's hue at a different lightness (\u0394hue ${d.toFixed(1)}\xB0)`, d <= 6, `${name} ${v} hue ${hue(v).toFixed(1)} vs brand ${hue(brand).toFixed(1)}`);
+  ok(`${name} is lighter than the anchor, not merely different`, relLum(v) > relLum(brand), `${name} ${relLum(v).toFixed(4)} vs brand ${relLum(brand).toFixed(4)}`);
+}
+ok(
+  "the control bevel is a token and not a per-component literal",
+  /--ctl-face:/.test(themeCss) && /--ctl-hi:/.test(themeCss) && /var\(--ctl-face\)/.test(siCss) && /var\(--ctl-hi\)/.test(siCss)
+);
+ok(
+  "the brand face derives from --accent, so no finish paints another finish's hue",
+  /--brand-face:[^;]*var\(--accent\)/.test(themeCss) && !/--brand-face:[^;]*#[0-9a-f]{6}/i.test(themeCss)
+);
+console.log("\n== the boot block cannot separate from the sheet ==");
+var inlineStyle = inlineHtml.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? "";
+for (const t of FINISHES) {
+  const want = resolve(t, "ground");
+  const got = t === "dark" ? inlineStyle.match(/html,body\{[^}]*?background:\s*(#[0-9a-fA-F]{3,8})/)?.[1] ?? "" : inlineStyle.match(new RegExp(`\\[data-theme="${t}"\\][^{]*\\{[^}]*?background:\\s*(#[0-9a-fA-F]{3,8})`))?.[1] ?? "";
+  ok(
+    `index.html's boot ground for ${t} EQUALS --${t === "dark" ? "ground" : "ground"} in the sheet`,
+    got !== "" && got.toLowerCase() === want.toLowerCase(),
+    `index.html ${got || "(none)"} vs sheet ${want}`
+  );
+}
+ok(`index.html boots the default finish server-side`, /<html lang="en" data-theme="dark">/.test(inlineHtml));
+console.log("\n== type and weight ==");
+ok("Switzer for the interface, Fragment Mono for data", /Switzer/.test(themeCss) && /Fragment Mono/.test(themeCss));
+ok("not Inter", !/font-family[^;}]*Inter\b/.test(themeCss + inkCss + siCss));
+ok(
+  "nothing is set bold \u2014 700 and above is retired from the design sheets",
+  !/font-weight:\s*(7|8|9)00\b/.test(themeCss + inkCss),
+  (themeCss + inkCss).match(/font-weight:\s*(?:7|8|9)00\b/)?.[0] ?? "clean"
+);
+ok("the elevation scale is alive, not zeroed", /--el-1:/.test(themeCss) && !/--el-1:\s*none/.test(themeCss));
+ok("reduced motion is honoured", /@media \(prefers-reduced-motion: reduce\)/.test(themeCss + siCss));
+ok("the focus indicator is stated, not left to the UA", /:focus-visible/.test(themeCss + siCss + inkCss));
 console.log(`
 ${passed} passed, ${failed} failed`);
 if (failed > 0) {

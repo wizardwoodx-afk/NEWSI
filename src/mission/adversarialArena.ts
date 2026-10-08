@@ -29,6 +29,26 @@ export interface AdversarialAttackVector {
   description: string;
   fuzzPayload: string;
   expectedAssertion: string;
+  /**
+   * THE SIMULATED FIXTURE, DECLARED ON THE VECTOR.
+   *
+   * When no real `testRunner` is attached the arena cannot measure anything, and
+   * the only honest thing it can report is a DECLARED defect. This is that
+   * declaration: when present, the simulated round fails with this text, and the
+   * report says the breach came from here.
+   *
+   * It used to be `if (i === 1)`, which is a different and worse thing: a breach
+   * attributed to a LOOP INDEX. Reorder `STANDARD_ATTACK_VECTORS`, filter it, or
+   * pass a one-element `vectors` array, and the concurrency breach would land on
+   * whatever vector happened to sit at index 1 — the null-pointer probe would
+   * "fail" with a token-bucket message. Keying on the vector's own id means the
+   * declared defect travels with the vector it describes.
+   *
+   * A vector WITHOUT this field invents no breach: an unmeasured round reports
+   * `defended` only in the sense that no declared defect was found, and the
+   * report's own summary says the arena measured nothing.
+   */
+  declaredDefect?: string;
 }
 
 export interface DuelRound {
@@ -74,6 +94,7 @@ export const STANDARD_ATTACK_VECTORS: AdversarialAttackVector[] = [
     description: "Simulates 100 parallel asynchronous requests within a 10ms window to test race locks and shared memory safety.",
     fuzzPayload: "Promise.all(Array.from({length: 100}, () => endpoint.consume(1)))",
     expectedAssertion: "expect(totalConsumed).toBeLessThanOrEqual(capacity)",
+    declaredDefect: "FAIL: Concurrency race invariant violated: consumed 104 tokens exceeding capacity 100!",
   },
   {
     id: "vec-03-rate-evasion",
@@ -106,10 +127,34 @@ export async function runAdversarialDuel(options: {
   vectors?: AdversarialAttackVector[];
   maxRounds?: number;
   testRunner?: (script: string) => Promise<{ exitCode: number; stdout: string; stderr: string; durationMs: number }>;
+  /**
+   * OPTIONAL. Confirms a breach was actually repaired, by running the generated
+   * probe a second time against the patched tree.
+   *
+   * Without it a VERIFIED (measured) breach is recorded as `breached`, never as
+   * `patched`. The old code incremented `patches` on every breach it saw and
+   * announced "PATCH APPLIED" on the bus, having measured nothing — a claim of
+   * repair produced by the module that found the defect. That is exactly the
+   * sentence this project does not ship, so the count now only moves when a
+   * runner says the invariant held after the fix.
+   *
+   * In the SIMULATED path there is no tree and no runner, so a declared defect
+   * is reported as `patched` and the whole report carries `isSimulated: true` and
+   * a summary labelled as simulation. The fixture is a fixture; it is labelled,
+   * not measured.
+   */
+  repairRunner?: (script: string) => Promise<{ exitCode: number; stdout: string; stderr: string; durationMs: number }>;
 }): Promise<HardeningReport> {
   const arenaId = `arena-${Date.now()}`;
   const vectors = options.vectors ?? STANDARD_ATTACK_VECTORS;
-  const maxRounds = options.maxRounds ?? Math.min(vectors.length, 3);
+  /* The round ceiling is the VECTOR SET, not an arbitrary 3. A caller asking for
+     more rounds than there are vectors used to silently re-run the same probe
+     under a fresh round number and score it twice; a caller asking for fewer got
+     the first N. Now the ask is clamped to what exists and the report says when
+     it was clamped, because a silently-truncated duel reads like a short duel. */
+  const asked = options.maxRounds ?? vectors.length;
+  const maxRounds = Math.max(0, Math.min(asked, vectors.length));
+  const clampedRounds = asked > vectors.length;
   const isSimulated = !options.testRunner;
   const rounds: DuelRound[] = [];
   let breaches = 0;
@@ -127,35 +172,34 @@ export async function runAdversarialDuel(options: {
   });
 
   for (let i = 0; i < maxRounds; i++) {
-    const vector = vectors[i % vectors.length];
+    // Rounds map onto DISTINCT vectors now (maxRounds <= vectors.length), so a
+    // round number names the vector it attacked and the report can be read.
+    const vector = vectors[i]!;
     const t0 = Date.now();
 
     // Red Team constructs attack probe
     const attackScript = `// Red Team Attack Probe: ${vector.title}\n// Vector: ${vector.kind}\nimport { describe, it, expect } from "vitest";\n\ndescribe("Adversarial Probe: ${vector.id}", () => {\n  it("${vector.description}", async () => {\n    const payload = ${vector.fuzzPayload};\n    // Assert defense invariant:\n    ${vector.expectedAssertion};\n  });\n});\n`;
 
-    let runRes = { exitCode: 0, stdout: "PASS: Invariant held against adversarial input.", stderr: "", durationMs: 120 };
-
-    if (options.testRunner) {
-      runRes = await options.testRunner(attackScript);
-    } else {
-      // Prototype simulation path
-      const isSimulatedBreach = i === 1; // Round 2 simulates a race condition flaw that gets patched
-      if (isSimulatedBreach) {
-        runRes = {
-          exitCode: 1,
-          stdout: "",
-          stderr: `FAIL: Concurrency race invariant violated: consumed 104 tokens exceeding capacity 100!`,
-          durationMs: 180,
-        };
-      }
-    }
+    /* MEASURED, or DECLARED — never invented.
+       A real runner reports what happened. Without one, the round reports the
+       vector's own `declaredDefect` and nothing else: a vector with no declared
+       defect has no breach, because the arena measured nothing about it. */
+    const runRes = options.testRunner
+      ? await options.testRunner(attackScript)
+      : vector.declaredDefect
+        ? { exitCode: 1, stdout: "", stderr: vector.declaredDefect, durationMs: 120 }
+        : { exitCode: 0, stdout: "PASS: no declared defect for this vector (nothing was measured).", stderr: "", durationMs: 120 };
 
     const durationMs = Date.now() - t0 + runRes.durationMs;
     const breached = runRes.exitCode !== 0;
+    /* A patch is a MEASURED repair. `repairRunner` re-runs the same probe after
+       the fix; only an exit 0 there moves `patches` in a measured duel. */
+    const repair = breached && options.repairRunner ? await options.repairRunner(attackScript) : null;
+    const repaired = breached ? (isSimulated ? true : repair?.exitCode === 0) : false;
 
     if (breached) {
       breaches++;
-      patches++; // Patch applied and verified in defense loop
+      if (repaired) patches++;
       globalAgentBus.publish({
         channel: "#security-audit",
         sender: { seatId: options.attackerSeatId, role: "security", harness: options.attackerHarness, name: "Red Team Hacker" },
@@ -164,13 +208,23 @@ export async function runAdversarialDuel(options: {
         content: `🚨 VULNERABILITY BREACHED in Round ${i + 1}: ${vector.title}!\nReason: ${runRes.stderr || "Assertion failed"}\nGenerated minimal reproducing test fixture for Blue Team patch.`,
       });
 
-      globalAgentBus.publish({
-        channel: "#implementation-sync",
-        sender: { seatId: options.defenderSeatId, role: "coder", harness: options.defenderHarness, name: "Blue Team Defender" },
-        mentions: [`@${options.attackerSeatId}`],
-        intent: "handoff",
-        content: `🛡️ PATCH APPLIED for ${vector.id}. Added mutex lock boundary to prevent concurrency overflow. Ready for re-fuzzing!`,
-      });
+      if (repaired) {
+        globalAgentBus.publish({
+          channel: "#implementation-sync",
+          sender: { seatId: options.defenderSeatId, role: "coder", harness: options.defenderHarness, name: "Blue Team Defender" },
+          mentions: [`@${options.attackerSeatId}`],
+          intent: "handoff",
+          content: `🛡️ PATCH APPLIED for ${vector.id}. Added mutex lock boundary to prevent concurrency overflow. Ready for re-fuzzing!`,
+        });
+      } else {
+        globalAgentBus.publish({
+          channel: "#implementation-sync",
+          sender: { seatId: options.defenderSeatId, role: "coder", harness: options.defenderHarness, name: "Blue Team Defender" },
+          mentions: [`@${options.attackerSeatId}`],
+          intent: "blocker",
+          content: `🛡️ ${vector.id} is STILL BREACHED — no repair runner confirmed the invariant held after a fix, so nothing is claimed patched.`,
+        });
+      }
 
       rounds.push({
         round: i + 1,
@@ -178,7 +232,7 @@ export async function runAdversarialDuel(options: {
         defenderSeat: options.defenderSeatId,
         vector,
         attackScript,
-        defenseStatus: "patched",
+        defenseStatus: repaired ? "patched" : "breached",
         stdout: runRes.stdout,
         stderr: runRes.stderr,
         durationMs,
@@ -207,11 +261,21 @@ export async function runAdversarialDuel(options: {
     }
   }
 
-  // Exact bounded mathematical score: strictly [0, 100]%
+  /* Exact bounded score over ROUNDS THAT ACTUALLY HELD.
+     `defendedCleanly` counts a round whose invariant held; a breach only counts
+     toward the score when a repair was MEASURED (or the round is a declared
+     fixture, which the summary labels). An unpatched measured breach is a round
+     that did not hold, so it lowers the score — which is the whole point of
+     running the arena. */
   const totalRoundsDefendedOrPatched = defendedCleanly + patches;
-  const defenseScore = Math.min(100, Math.max(0, Math.round((totalRoundsDefendedOrPatched / maxRounds) * 100)));
+  const defenseScore = maxRounds === 0 ? 0 : Math.min(100, Math.max(0, Math.round((totalRoundsDefendedOrPatched / maxRounds) * 100)));
   const hardened = defenseScore >= 90;
-  const summary = `${modeLabel} Adversarial Arena completed: ${maxRounds} rounds executed. ${breaches} vulnerability probe(s) uncovered, ${patches} verified patch(es) synthesized. Defense Score: ${defenseScore}%.`;
+  const measuredOrDeclared = isSimulated
+    ? `No test runner was attached, so nothing here was measured: each round reports the vector's own declared defect, and a vector without one invents no breach.`
+    : options.repairRunner
+      ? "Every round's outcome came from the host's test runner, and every patch was confirmed by re-running the same probe."
+      : "Every round's outcome came from the host's test runner. NO repair runner was attached, so a breach is recorded as breached and nothing is claimed patched.";
+  const summary = `${modeLabel} Adversarial Arena completed: ${maxRounds} round(s) executed${clampedRounds ? ` (${asked} were asked for and clamped to the ${vectors.length} vector(s) available — no vector is probed twice)` : ""}. ${breaches} vulnerability probe(s) uncovered, ${patches} verified patch(es) synthesized. Defense Score: ${defenseScore}%. ${measuredOrDeclared}`;
 
   globalAgentBus.publish({
     channel: "#general",

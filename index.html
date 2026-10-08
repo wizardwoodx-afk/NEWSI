@@ -1,53 +1,33 @@
 <!doctype html>
-<html lang="en" data-theme="holst">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
-    <meta name="description" content="SelfImpulse — Intelligence That Collaborates. An on-device AI captain that governs, executes, verifies and receipts every action. Built on the MJ engine." />
-    <meta name="theme-color" content="#0D1B2A" />
+    <meta name="description" content="SelfImpulse — an on-device AI captain that governs, executes and verifies every action." />
+    <meta name="theme-color" content="#0B0B0D" />
     <title>SelfImpulse — Intelligence That Collaborates</title>
     <link rel="icon" href="/brand/si-mark.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/brand/si-mark-128.png" />
     <script>
-      // Boot: surface errors early. No splash — the app paints directly.
+      // Boot: resolve the theme before the stylesheet paints, and surface errors early.
       (function(){
-        /* Resolve the theme before any stylesheet paints. vh.css carries its
-         * colour tokens only under [data-theme=…], so with no attribute set
-         * `color:var(--fg)` is invalid-at-computed-value (black) while the
-         * inline background below forces the ground — black text on a dark
-         * ground for the whole first frame. The id list here mirrors THEMES in
-         * src/ui/store.ts; probe/theme.test.ts asserts the two agree, so a new
-         * finish cannot boot unstyled. */
         try {
           var t = localStorage.getItem("vh.theme.v2");
-          document.documentElement.dataset.theme =
-            (t === "holst" || t === "obsidian" || t === "azure" || t === "platinum" ||
-             t === "titanium" || t === "akaroa" || t === "caesar" || t === "stratos") ? t : "holst";
+          // Whitelisted rather than trusted: an unknown id would paint an
+          // unstyled ground, and a retired id must fall back, not be guessed.
+          var ok = ["dark","heliotrope","light","charleston","licorice","bistre","feldgrau"];
+          document.documentElement.dataset.theme = ok.indexOf(t) > -1 ? t : "dark";
         } catch (e) {
-          document.documentElement.dataset.theme = "holst";
+          document.documentElement.dataset.theme = "dark";
         }
-        window.addEventListener('error', function(e){ console.error('[11h]', e.message); });
-        window.addEventListener('unhandledrejection', function(e){ console.error('[11h]', e.reason); });
+        window.addEventListener('error', function(e){ console.error('[si]', e.message); });
+        window.addEventListener('unhandledrejection', function(e){ console.error('[si]', e.reason); });
       })();
     </script>
-    <!-- CRITICAL GROUND. This block is the only paint that happens before the
-         stylesheet loads, and its selectors (html[data-theme=...] body)
-         outrank vh.css's `body{...}`, so if the two disagree the app shows the
-         wrong ground for as long as this rule wins -- which, being inline, is
-         forever. They drifted once already. probe/theme.test.ts now asserts
-         every finish's ground here matches its --bg in vh.css, so they cannot
-         separate again.
-
-         Eight grounds, one per finish, from the same tokens as the stylesheet.
-         The default (holst) is the bare html,body rule; the other seven are
-         attribute-scoped. vh.css, si.css and this block moved TOGETHER, which
-         is the only way this block may ever change: it wins over both sheets
-         for the whole first frame, so a value that disagrees with them is a
-         visible flash that never corrects itself. -->
-
-    <style>html,body{margin:0;padding:0;background:#0D1B2A}html[data-theme="obsidian"],html[data-theme="obsidian"] body{background:#0A0A0A}html[data-theme="azure"],html[data-theme="azure"] body{background:#121416}html[data-theme="platinum"],html[data-theme="platinum"] body{background:#D3D0D5}html[data-theme="titanium"],html[data-theme="titanium"] body{background:#0D0D0D}html[data-theme="akaroa"],html[data-theme="akaroa"] body{background:#E8DECE}html[data-theme="caesar"],html[data-theme="caesar"] body{background:#0E0809}html[data-theme="stratos"],html[data-theme="stratos"] body{background:#0D0A12}#root{min-height:100vh}</style>
-  </head>
+    <!-- The ground is set here as well as in ink.css because this block paints
+         before the stylesheet loads. The two must agree. -->
+    <style>html,body{margin:0;padding:0;background:#000100}html[data-theme="light"],html[data-theme="light"] body{background:#EBEEE9}html[data-theme="charleston"],html[data-theme="charleston"] body{background:#232B2B}html[data-theme="licorice"],html[data-theme="licorice"] body{background:#1A1110}html[data-theme="bistre"],html[data-theme="bistre"] body{background:#3D2B1F}html[data-theme="feldgrau"],html[data-theme="feldgrau"] body{background:#E4E7E1}html[data-theme="heliotrope"],html[data-theme="heliotrope"] body{background:#000100}#root{min-height:100vh}</style>  </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>

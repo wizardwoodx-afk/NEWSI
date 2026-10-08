@@ -67,7 +67,11 @@ written outside that.
 ## 5. First run — sanity checklist
 
 1. The sidebar says **SelfImpulse** and Settings → About names the engine (the product shows no version number by design).
-2. Settings → **Themes**: try `ink` (true-black flagship), `pitch`, `slag`, `fern`, `ivory`, `travertine`.
+2. Settings → **Themes**: try the eight finishes. Six for the night — **Holst**
+   (the default), **Obsidian**, **Azure**, **Titanium**, **Caesar**, **Stratos** —
+   and two for the day, **Platinum** and **Akaroa**. `src/ui/store.ts:86` is the
+   one list; the names elsewhere in this repo's older notes (`ink`, `pitch`,
+   `slag`, `fern`, `ivory`, `travertine`) are dead and will not appear.
 3. Settings → MCP: the control server advertises **5 tools** and implements **5 tools** — the
    counts must match; that equality is the whole W2 story.
 4. Any agent node: attach a provider (cloud ref or local Ollama) — the assist panel tells you

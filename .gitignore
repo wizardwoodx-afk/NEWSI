@@ -78,3 +78,9 @@ dist.mjs
 .tmp-*.mjs
 _probe_*.txt
 _verify_*.txt
+
+# Root-level transient stdout/stderr from ad-hoc runs. Untracked and
+# zero bytes; listed here so the release packer (which now asks git what is
+# ignored) drops them alongside *.log.
+/err.txt
+/out.txt

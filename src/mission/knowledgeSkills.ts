@@ -18,9 +18,17 @@
  *     "knowledge" that NEVER claims measured effect (it was not learned from
  *     a verified mission). A human approves or discards it; only approved
  *     proposals mirror into the shared skill memory (vh.skills.v1) as
- *     approved RECOURSE (governed write, human), and only then do they ride
- *     every future mission briefing via approvedSkillDefs — the SAME path
- *     verified-mission skills use.
+ *     approved RECOURSE (governed write, human). From here they travel two
+ *     ways, and both of them reach a model:
+ *       • the CHAT path — `approvedKnowledgeBriefing` in src/engine/generalist.ts
+ *         reads THIS store through `loadKnowledgeProposals`, keeps only
+ *         `status === "approved"`, ranks by relevance to the current ask, and
+ *         puts the bounded digest into the system briefing every answering path
+ *         assembles. (Before that wire existed, no file under src/engine/ read
+ *         knowledge at all, so a document dropped in Chat could not change an
+ *         answer no matter how many a human approved here.)
+ *       • the MISSION path — the mirror rides mission briefings via
+ *         approvedSkillDefs, the same path verified-mission skills use.
  *
  *   DATA HANDLING — stated precisely (12.1.1, after the 12.1.0 review):
  *   the MECHANICAL extractor is fully local — content never leaves the
@@ -188,11 +196,39 @@ export function loadKnowledgeProposals(): KnowledgeProposal[] {
   return [];
 }
 
-export function saveKnowledgeProposals(memory: KnowledgeProposal[]): void {
+/** What writing the proposal store actually did — three states, not a boolean.
+ *  A caller must be able to tell "saved", "saved nowhere because there is no
+ *  store here" and "the store refused" apart, because only the first two are
+ *  the same outcome for the human and only the third is a failure worth a
+ *  refusal. Declared as the return of `saveKnowledgeProposals` below. */
+export interface KnowledgeSaveResult {
+  ok: boolean;
+  /** The storage layer's own words, set only when storage exists and refused. */
+  error: string | null;
+  /** False when there is no localStorage in this runtime at all. */
+  persistent: boolean;
+}
+
+export function saveKnowledgeProposals(memory: KnowledgeProposal[]): KnowledgeSaveResult {
+  const store = globalThis.localStorage as Storage | undefined;
+  /* No storage at all is the documented memory-only case (a probe host, a
+   * quarantined webview), NOT a failure — and `loadKnowledgeProposals` already
+   * treats it that way. Saying so here keeps the two honest about the same
+   * situation. */
+  if (!store) return { ok: false, error: null, persistent: false };
   try {
-    globalThis.localStorage?.setItem(LS_KEY, JSON.stringify(memory));
-  } catch {
-    /* memory-only when storage is unavailable */
+    store.setItem(LS_KEY, JSON.stringify(memory));
+    return { ok: true, error: null, persistent: true };
+  } catch (e) {
+    /* The catch used to be empty and to comment itself "memory-only when
+     * storage is unavailable", and that is exactly the defect: a QUOTA failure
+     * was indistinguishable from "there is no storage here, so this row lives
+     * in memory", so a proposal the human approved rendered as saved, vanished
+     * on restart, and nothing — receipt, ledger, log — recorded that the write
+     * had ever failed. Storage that EXISTS and REFUSES is a failure of this
+     * pipeline, and it is reported on the channel the pipeline already uses for
+     * refusals. */
+    return { ok: false, error: `${e instanceof Error ? e.message : String(e)}`.slice(0, 180), persistent: true };
   }
 }
 
@@ -272,9 +308,12 @@ export async function proposeKnowledgeSkill(args: ProposeArgs): Promise<ProposeR
     return { ok: false, error: `document too large (${content.length} chars; cap ${MAX_CONTENT}) — distill a chapter, not a library` };
   }
   const structure = extractStructure(content);
-  if (structure.frameworks.length === 0 && structure.decisionRules.length === 0 && structure.chapterHints.length === 0) {
-    return { ok: false, error: "no extractable structure (headings, rules, frameworks) — VH distills structure, not summaries; a raw blob is refused" };
-  }
+  /* A document with no headings, rules or frameworks is still a document the
+     operator owns and wants readable. This used to REFUSE it, which surfaced to
+     the user as "your PDF/Excel/ZIP was refused" when in fact it had parsed
+     perfectly and only the distiller had found nothing to distil. The structure
+     gate now decides how much skill we can forge, not whether the file is
+     accepted. */
   const nowIso = args.nowIso ?? new Date().toISOString();
   const sourceName = args.sourceName?.trim() || null;
   const sha = await sha256Hex(content);
@@ -365,7 +404,14 @@ export async function proposeKnowledgeSkill(args: ProposeArgs): Promise<ProposeR
     ...(frameworks.length > 0 ? [`Frameworks: ${frameworks.join("; ")}`] : []),
     ...rules.map((r) => `- ${r}`),
   ].join("\n");
-  const procedure = llmProcedure ? `LLM-distilled guidance:\n${llmProcedure}\n\nExtracted rules:\n${mechanicalProcedure}` : mechanicalProcedure || "Structured notes extracted from the source document.";
+  /* When the distiller produced nothing to distil, carry the parsed document
+     itself rather than a placeholder sentence. A spreadsheet has headings but no
+     frameworks and no decision rules, so `mechanicalProcedure` is empty for it —
+     and the reader's markdown, which DOES contain every row and figure, was being
+     discarded and replaced with "Structured notes extracted from the source
+     document." That made an accepted Excel contribute nothing to the model. */
+  const distilled = llmProcedure ? `LLM-distilled guidance:\n${llmProcedure}\n\nExtracted rules:\n${mechanicalProcedure}` : mechanicalProcedure;
+  const procedure = distilled || `Source content (no rules distilled — carried verbatim):\n${content.replace(/^\s*>\s*Read notes:[\s\S]*$/m, "").trim().slice(0, 2400)}`;
   const knownFailureModes = llmFailureModes.length > 0 ? llmFailureModes.join("\n- ") : "Not measured: knowledge skill — failures are only knowable after real use.";
 
   const proposal: KnowledgeProposal = {
@@ -389,7 +435,14 @@ export async function proposeKnowledgeSkill(args: ProposeArgs): Promise<ProposeR
   };
   const memory = loadKnowledgeProposals();
   memory.push(proposal);
-  saveKnowledgeProposals(memory);
+  const saved = saveKnowledgeProposals(memory);
+  if (!saved.ok && saved.error) {
+    /* The proposal was distilled and would not fit. That is a refusal, on the
+     * same channel every other refusal in this pipeline travels, because the
+     * alternative is the one this module got wrong before: telling the human "1
+     * proposed — review in Docs" about a row that will not survive the window. */
+    return { ok: false, error: `the knowledge proposal was distilled but could not be saved: ${saved.error} Nothing was persisted — this document is not in Docs and nothing is awaiting your decision. Free up on-device storage (Docs proposals and the ingest log share it) and send the document again.` };
+  }
   return { ok: true, proposal };
 }
 
@@ -417,13 +470,40 @@ export function decideKnowledgeProposal(args: DecideArgs): DecideResult {
   if (!p) return { ok: false, error: `no knowledge proposal matches ${args.id}` };
   if (p.status !== "proposed") return { ok: false, error: `proposal ${args.id} was already ${p.status} — one decision per proposal` };
   const nowIso = args.nowIso ?? new Date().toISOString();
+  p.status = args.decision === "APPROVED" ? "approved" : "discarded";
+  p.decidedBy = args.by;
+  p.decidedAt = nowIso;
+  p.decidedNote = args.note ?? null;
+
+  /* ORDER MATTERS AND IT WAS WRONG. The decision used to be written LAST, after
+   * the skill mirror, with its own empty catch — so a storage failure left
+   * `vh.skills.v1` holding an approved skill while the Docs row still read
+   * "proposed", which hands the human a second approval of the same document and
+   * a duplicated skill. Persisting the HUMAN DECISION first makes the row the
+   * authority: if it cannot be written, nothing downstream has been touched yet
+   * and the refusal is complete and true. */
+  const saved = saveKnowledgeProposals(memory);
+  if (!saved.ok && saved.error) {
+    return { ok: false, error: `the decision could not be recorded: ${saved.error} Nothing was approved and no skill was mirrored — the proposal is still awaiting its one decision.` };
+  }
+
   let mirrored = false;
   if (args.decision === "APPROVED") {
     const skills = loadSkills();
     const line: SkillProposal = {
       id: `kn-${p.id.replace("kn-", "")}`,
       name: p.title.slice(0, 60),
-      description: `[knowledge] ${p.summary.slice(0, 160)} — ${p.procedure.slice(0, 440)}`,
+      /* 440 was the whole procedure budget, and a real mechanical digest is
+       * longer than that by design: `extractStructure` keeps up to 12 framework
+       * names and 16 decision rules, and `proposeKnowledgeSkill` joins them with
+       * the LLM text on top. Truncating at 440 characters cut most of a
+       * document's guidance off at roughly the third rule — so even on the
+       * mission path, where this mirror is the only thing that travels, what a
+       * member read was a stub. The chat path no longer depends on this mirror
+       * (see `approvedKnowledgeBriefing` in engine/generalist.ts, which reads
+       * `p.procedure` directly); this cap now only bounds the learned-NODE
+       * library entry, and it bounds it far above where a procedure dies. */
+      description: `[knowledge] ${p.summary.slice(0, 320)} — ${p.procedure.slice(0, 2400)}`,
       source: "knowledge",
       sourceMissionId: `knowledge:${p.provenance.sourceSha256.slice(0, 16)}`,
       status: "approved",
@@ -432,11 +512,6 @@ export function decideKnowledgeProposal(args: DecideArgs): DecideResult {
     saveSkills(mergeProposals(skills, [line]), "human");
     mirrored = true;
   }
-  p.status = args.decision === "APPROVED" ? "approved" : "discarded";
-  p.decidedBy = args.by;
-  p.decidedAt = nowIso;
-  p.decidedNote = args.note ?? null;
-  saveKnowledgeProposals(memory);
   return { ok: true, proposal: p, mirrored };
 }
 

@@ -9,6 +9,244 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
+// node_modules/@tauri-apps/api/external/tslib/tslib.es6.js
+function __classPrivateFieldGet(receiver, state, kind, f) {
+  if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+  if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+  return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+}
+function __classPrivateFieldSet(receiver, state, value, kind, f) {
+  if (kind === "m") throw new TypeError("Private method is not writable");
+  if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+  if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+  return kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value), value;
+}
+var init_tslib_es6 = __esm({
+  "node_modules/@tauri-apps/api/external/tslib/tslib.es6.js"() {
+  }
+});
+
+// node_modules/@tauri-apps/api/core.js
+function transformCallback(callback, once = false) {
+  return window.__TAURI_INTERNALS__.transformCallback(callback, once);
+}
+async function addPluginListener(plugin, event, cb) {
+  const handler = new Channel(cb);
+  try {
+    await invoke(`plugin:${plugin}|register_listener`, {
+      event,
+      handler
+    });
+    return new PluginListener(plugin, event, handler.id);
+  } catch {
+    await invoke(`plugin:${plugin}|registerListener`, { event, handler });
+    return new PluginListener(plugin, event, handler.id);
+  }
+}
+async function invoke(cmd, args = {}, options) {
+  return window.__TAURI_INTERNALS__.invoke(cmd, args, options);
+}
+var _Channel_onmessage, _Channel_nextMessageIndex, _Channel_pendingMessages, _Channel_messageEndIndex, _Resource_rid, SERIALIZE_TO_IPC_FN, Channel, PluginListener;
+var init_core = __esm({
+  "node_modules/@tauri-apps/api/core.js"() {
+    init_tslib_es6();
+    SERIALIZE_TO_IPC_FN = "__TAURI_TO_IPC_KEY__";
+    Channel = class {
+      constructor(onmessage) {
+        _Channel_onmessage.set(this, void 0);
+        _Channel_nextMessageIndex.set(this, 0);
+        _Channel_pendingMessages.set(this, []);
+        _Channel_messageEndIndex.set(this, void 0);
+        __classPrivateFieldSet(this, _Channel_onmessage, onmessage || (() => {
+        }), "f");
+        this.id = transformCallback((rawMessage) => {
+          const index = rawMessage.index;
+          if ("end" in rawMessage) {
+            if (index == __classPrivateFieldGet(this, _Channel_nextMessageIndex, "f")) {
+              this.cleanupCallback();
+            } else {
+              __classPrivateFieldSet(this, _Channel_messageEndIndex, index, "f");
+            }
+            return;
+          }
+          const message = rawMessage.message;
+          if (index == __classPrivateFieldGet(this, _Channel_nextMessageIndex, "f")) {
+            __classPrivateFieldGet(this, _Channel_onmessage, "f").call(this, message);
+            __classPrivateFieldSet(this, _Channel_nextMessageIndex, __classPrivateFieldGet(this, _Channel_nextMessageIndex, "f") + 1, "f");
+            while (__classPrivateFieldGet(this, _Channel_nextMessageIndex, "f") in __classPrivateFieldGet(this, _Channel_pendingMessages, "f")) {
+              const message2 = __classPrivateFieldGet(this, _Channel_pendingMessages, "f")[__classPrivateFieldGet(this, _Channel_nextMessageIndex, "f")];
+              __classPrivateFieldGet(this, _Channel_onmessage, "f").call(this, message2);
+              delete __classPrivateFieldGet(this, _Channel_pendingMessages, "f")[__classPrivateFieldGet(this, _Channel_nextMessageIndex, "f")];
+              __classPrivateFieldSet(this, _Channel_nextMessageIndex, __classPrivateFieldGet(this, _Channel_nextMessageIndex, "f") + 1, "f");
+            }
+            if (__classPrivateFieldGet(this, _Channel_nextMessageIndex, "f") === __classPrivateFieldGet(this, _Channel_messageEndIndex, "f")) {
+              this.cleanupCallback();
+            }
+          } else {
+            __classPrivateFieldGet(this, _Channel_pendingMessages, "f")[index] = message;
+          }
+        });
+      }
+      cleanupCallback() {
+        window.__TAURI_INTERNALS__.unregisterCallback(this.id);
+      }
+      set onmessage(handler) {
+        __classPrivateFieldSet(this, _Channel_onmessage, handler, "f");
+      }
+      get onmessage() {
+        return __classPrivateFieldGet(this, _Channel_onmessage, "f");
+      }
+      [(_Channel_onmessage = /* @__PURE__ */ new WeakMap(), _Channel_nextMessageIndex = /* @__PURE__ */ new WeakMap(), _Channel_pendingMessages = /* @__PURE__ */ new WeakMap(), _Channel_messageEndIndex = /* @__PURE__ */ new WeakMap(), SERIALIZE_TO_IPC_FN)]() {
+        return `__CHANNEL__:${this.id}`;
+      }
+      toJSON() {
+        return this[SERIALIZE_TO_IPC_FN]();
+      }
+    };
+    PluginListener = class {
+      constructor(plugin, event, channelId) {
+        this.plugin = plugin;
+        this.event = event;
+        this.channelId = channelId;
+      }
+      async unregister() {
+        return invoke(`plugin:${this.plugin}|remove_listener`, {
+          event: this.event,
+          channelId: this.channelId
+        });
+      }
+    };
+    _Resource_rid = /* @__PURE__ */ new WeakMap();
+  }
+});
+
+// node_modules/@tauri-apps/plugin-notification/dist-js/index.js
+var dist_js_exports = {};
+__export(dist_js_exports, {
+  Importance: () => Importance,
+  Schedule: () => Schedule,
+  ScheduleEvery: () => ScheduleEvery,
+  Visibility: () => Visibility,
+  active: () => active,
+  cancel: () => cancel,
+  cancelAll: () => cancelAll,
+  channels: () => channels,
+  createChannel: () => createChannel,
+  isPermissionGranted: () => isPermissionGranted,
+  onAction: () => onAction,
+  onNotificationReceived: () => onNotificationReceived,
+  pending: () => pending,
+  registerActionTypes: () => registerActionTypes,
+  removeActive: () => removeActive,
+  removeAllActive: () => removeAllActive,
+  removeChannel: () => removeChannel,
+  requestPermission: () => requestPermission,
+  sendNotification: () => sendNotification
+});
+async function isPermissionGranted() {
+  if (window.Notification.permission !== "default") {
+    return await Promise.resolve(window.Notification.permission === "granted");
+  }
+  return await invoke("plugin:notification|is_permission_granted");
+}
+async function requestPermission() {
+  return await window.Notification.requestPermission();
+}
+function sendNotification(options) {
+  if (typeof options === "string") {
+    new window.Notification(options);
+  } else {
+    new window.Notification(options.title, options);
+  }
+}
+async function registerActionTypes(types) {
+  await invoke("plugin:notification|register_action_types", { types });
+}
+async function pending() {
+  return await invoke("plugin:notification|get_pending");
+}
+async function cancel(notifications) {
+  await invoke("plugin:notification|cancel", { notifications });
+}
+async function cancelAll() {
+  await invoke("plugin:notification|cancel");
+}
+async function active() {
+  return await invoke("plugin:notification|get_active");
+}
+async function removeActive(notifications) {
+  await invoke("plugin:notification|remove_active", { notifications });
+}
+async function removeAllActive() {
+  await invoke("plugin:notification|remove_active");
+}
+async function createChannel(channel) {
+  await invoke("plugin:notification|create_channel", { ...channel });
+}
+async function removeChannel(id) {
+  await invoke("plugin:notification|delete_channel", { id });
+}
+async function channels() {
+  return await invoke("plugin:notification|listChannels");
+}
+async function onNotificationReceived(cb) {
+  return await addPluginListener("notification", "notification", cb);
+}
+async function onAction(cb) {
+  return await addPluginListener("notification", "actionPerformed", cb);
+}
+var ScheduleEvery, Schedule, Importance, Visibility;
+var init_dist_js = __esm({
+  "node_modules/@tauri-apps/plugin-notification/dist-js/index.js"() {
+    init_core();
+    (function(ScheduleEvery2) {
+      ScheduleEvery2["Year"] = "year";
+      ScheduleEvery2["Month"] = "month";
+      ScheduleEvery2["TwoWeeks"] = "twoWeeks";
+      ScheduleEvery2["Week"] = "week";
+      ScheduleEvery2["Day"] = "day";
+      ScheduleEvery2["Hour"] = "hour";
+      ScheduleEvery2["Minute"] = "minute";
+      ScheduleEvery2["Second"] = "second";
+    })(ScheduleEvery || (ScheduleEvery = {}));
+    Schedule = class {
+      static at(date, repeating = false, allowWhileIdle = false) {
+        return {
+          at: { date, repeating, allowWhileIdle },
+          interval: void 0,
+          every: void 0
+        };
+      }
+      static interval(interval, allowWhileIdle = false) {
+        return {
+          at: void 0,
+          interval: { interval, allowWhileIdle },
+          every: void 0
+        };
+      }
+      static every(kind, count, allowWhileIdle = false) {
+        return {
+          at: void 0,
+          interval: void 0,
+          every: { interval: kind, count, allowWhileIdle }
+        };
+      }
+    };
+    (function(Importance2) {
+      Importance2[Importance2["None"] = 0] = "None";
+      Importance2[Importance2["Min"] = 1] = "Min";
+      Importance2[Importance2["Low"] = 2] = "Low";
+      Importance2[Importance2["Default"] = 3] = "Default";
+      Importance2[Importance2["High"] = 4] = "High";
+    })(Importance || (Importance = {}));
+    (function(Visibility2) {
+      Visibility2[Visibility2["Secret"] = -1] = "Secret";
+      Visibility2[Visibility2["Private"] = 0] = "Private";
+      Visibility2[Visibility2["Public"] = 1] = "Public";
+    })(Visibility || (Visibility = {}));
+  }
+});
+
 // src/selfimpulse/ipc/client.ts
 var client_exports = {};
 __export(client_exports, {
@@ -18,27 +256,30 @@ __export(client_exports, {
 function isNativeHost() {
   return typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
 }
-var invoke, ipc;
+var invoke2, ipc;
 var init_client = __esm({
   "src/selfimpulse/ipc/client.ts"() {
     "use strict";
-    invoke = (cmd, args) => {
+    invoke2 = (cmd, args) => {
       const internals = window.__TAURI_INTERNALS__;
       if (!internals) throw new Error("not in the native host \u2014 no __TAURI_INTERNALS__");
       return internals.invoke(cmd, args);
     };
     ipc = {
       async secretGet(secretRef) {
-        return await invoke("secret_get", { secretRef });
+        return await invoke2("secret_get", { secretRef });
       },
       async secretSet(secretRef, value) {
-        return await invoke("secret_set", { secretRef, value });
+        return await invoke2("secret_set", { secretRef, value });
       },
       async notifyApproval(title, body) {
-        await invoke("notify_approval", { title, body });
+        const { isPermissionGranted: isPermissionGranted2, requestPermission: requestPermission2, sendNotification: sendNotification2 } = await Promise.resolve().then(() => (init_dist_js(), dist_js_exports));
+        let granted = await isPermissionGranted2();
+        if (!granted) granted = await requestPermission2() === "granted";
+        if (granted) sendNotification2({ title, body });
       },
       async appInfo() {
-        return await invoke("app_info");
+        return await invoke2("app_info");
       }
     };
   }

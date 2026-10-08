@@ -37,10 +37,22 @@
  *                    not a library" must be one cap, not two that drift.
  *
  * SCOPE HONESTY: this reads PDF, DOCX, XLSX, XLSM, PPTX, JSON, Markdown and
- * plain text, plus those members inside a ZIP. It does NOT read the pre-2007
- * binary Office formats (.doc/.xls/.ppt — OLE compound files), does not do OCR,
- * and does not open a second archive inside an archive. Each of those is a
- * refusal in words with the reason, not a quiet zero.
+ * plain text, plus those members inside a ZIP — and, since §13, PNG and JPEG.
+ *
+ * IT DOES DO OCR, AND THE OLD COMMENT SAYING IT DID NOT WAS A LIE THAT OUTLIVED
+ * THE FEATURE BY ONE EDIT. `read()` dispatches both image formats to
+ * `parseImage`, and a PDF page with no text layer is rasterised by `pdfRender`
+ * and read by the same recogniser; the recogniser is tesseract.js, running on
+ * this machine. What is still true, and was the point the old sentence was
+ * fumbling for: OCR never reaches the network. The trained language data must
+ * already be on this machine (`ocr.ts` refuses rather than downloading it), a
+ * missing pack is a refusal in words naming the remedy, and a page that reads
+ * below the confidence floor is reported as unreliable rather than kept quiet.
+ *
+ * What this door still does NOT do: it does not read the pre-2007 binary Office
+ * formats (.doc/.xls/.ppt — OLE compound files), it does not call a vision
+ * model or a provider, and it does not open a second archive inside an archive.
+ * Each of those is a refusal in words with the reason, not a quiet zero.
  */
 import { ARCHIVE_LIMITS, extractVetted, looksLikeZip, refuse, scanContainer, unsafeEntryName } from "./archiveScan";
 import type { ArchiveLimits, Refusal, RefusalCode } from "./archiveScan";
@@ -94,6 +106,19 @@ export interface IngestReceipt {
   egressDuringParse: false;
 }
 
+/** A file the run turned away for CAPACITY — the drop was too big or too slow —
+ *  as opposed to a file that was bad. The distinction is the whole reason this
+ *  type exists: `too-many-files` and `run-deadline` describe a drop that was
+ *  cut short, and they read in a flat receipt list exactly like a document that
+ *  failed on its own merits. A human looking at "3 refused" cannot tell "3 files
+ *  were unsafe" from "the folder was bigger than one run and I never saw the
+ *  rest of it". */
+export interface CapacityRefusal {
+  file: string;
+  code: RefusalCode;
+  words: string;
+}
+
 export interface IngestRun {
   readonly startedAt: number;
   readonly deadlineAt: number;
@@ -103,11 +128,44 @@ export interface IngestRun {
   files: number;
   expandedBytes: number;
   receipts: IngestReceipt[];
+  /** Capacity cut-offs, kept beside the receipts so a run can be reported as
+   *  TRUNCATED rather than merely as having refused some files. See
+   *  `ingestTruncationNotice`. */
+  capacityRefusals: CapacityRefusal[];
 }
 
 export function createIngestRun(limits: IngestLimits = INGEST_LIMITS, now: () => number = Date.now): IngestRun {
   const startedAt = now();
-  return { startedAt, deadlineAt: startedAt + limits.runDeadlineMs, limits, files: 0, expandedBytes: 0, receipts: [] };
+  return { startedAt, deadlineAt: startedAt + limits.runDeadlineMs, limits, files: 0, expandedBytes: 0, receipts: [], capacityRefusals: [] };
+}
+
+/** The capacity codes: a refusal that means "the run stopped taking files", not
+ *  "this file was refused". Everything else is about the document itself. */
+const CAPACITY_CODES: RefusalCode[] = ["too-many-files", "run-deadline"];
+
+/**
+ * Did this drop get cut short? Returns honest words when it did, `null` when the
+ * run took everything it was handed.
+ *
+ * WHAT THIS CAN AND CANNOT SEE, stated because the limit is the point. The door
+ * can only report a file it was actually handed the bytes of. The file-picker
+ * (`src/ui/screens/Composer.tsx`, MAX_FILES 500 / MAX_DEPTH 8) stops the WALK
+ * before anything reaches this module, so files it never enqueued are invisible
+ * here by construction and cannot be reported from this side of the seam — only
+ * from the UI, by comparing the count it collected against what it asked for.
+ * What this function does cover is the door's own, much tighter, budget: 25 files
+ * and 60s against the picker's 500, so a 60-file folder passes the picker's cap
+ * untouched and is then truncated here, silently, unless the caller asks.
+ */
+export function ingestTruncationNotice(run: IngestRun): string | null {
+  const cut = run.capacityRefusals.length;
+  if (cut === 0) return null;
+  const names = run.capacityRefusals.slice(0, 3).map((r) => `"${r.file}"`).join(", ");
+  const more = cut > 3 ? ` and ${cut - 3} more` : "";
+  const why = run.capacityRefusals[0]?.code === "run-deadline"
+    ? `this run used up its ${Math.round(run.limits.runDeadlineMs / 1000)}s budget`
+    : `this run takes ${run.limits.maxFilesPerRun} files at a time`;
+  return `${run.files} file(s) were opened and ${cut} were turned away because ${why}: ${names}${more}. The drop was larger than one run — send the rest, and the ones listed here were not read at all.`;
 }
 
 export interface DroppedFile { name: string; bytes: Uint8Array }
@@ -117,6 +175,17 @@ export type IngestOutcome =
   | { ok: false; refusal: Refusal; receipt: IngestReceipt };
 
 const OLE_MAGIC = [0xd0, 0xcf, 0x11, 0xe0];
+
+/**
+ * Does the NAME claim to be a container? The Office trio is deliberately NOT in
+ * this set: a `.docx` whose bytes are not a zip is a plain-OLE file or a lie, and
+ * both already carry their own refusal (the OLE one names the pre-2007 format).
+ * What is here is the plain archive family, where nothing downstream would ever
+ * notice that the container gate was skipped.
+ */
+function claimsAnArchive(name: string): boolean {
+  return /\.(zip|jar|war|ear|apk|epub|cbz|egg|whl|kmz|7z|rar|tar|tgz|gz|bz2|xz|zst)$/i.test(name);
+}
 
 /**
  * Magic bytes decide, the extension only names. A file called `invoice.pdf`
@@ -216,7 +285,13 @@ export async function ingestFile(
     return o.ok ? { ok: true, content: o.content, sourceName: o.sourceName, receipt } : { ok: false, refusal: o.refusal, receipt };
   };
 
-  const blocked = (code: RefusalCode, words: string, format: IngestFormat) => finish({ ok: false, refusal: { code, words } }, format);
+  const blocked = (code: RefusalCode, words: string, format: IngestFormat) => {
+    /* Record the cut-off on the RUN as well as in the receipt. A receipt says
+     * "this file was refused"; only the run can say "the drop was truncated",
+     * which is a different fact and the one the human is owed. */
+    if (CAPACITY_CODES.includes(code)) activeRun.capacityRefusals.push({ file: name, code, words });
+    return finish({ ok: false, refusal: { code, words } }, format);
+  };
 
   /* — the run budget first: a 200-file drop must not spend the door's time on
        file 26 after refusing 25. — */
@@ -230,6 +305,15 @@ export async function ingestFile(
     return blocked("too-large-compressed", `${name} is ${(file.bytes.length / 1e6).toFixed(1)} MB, above the ${(limits.maxFileBytes / 1e6).toFixed(0)} MB ceiling for one file. Nothing was opened, not even to look.`, "unknown");
   }
 
+  /* A 0-byte file has no signature to sniff, so it fell through to
+     `unrecognised-binary` and was told it is "not a format this door reads".
+     That is false — the format may be perfectly supported and the file simply
+     never finished downloading — and it sends the operator hunting for a format
+     problem that does not exist. Name the actual condition. */
+  if (file.bytes.length === 0) {
+    return blocked("empty-document", `${name} is 0 bytes — there is nothing in it. This is an unfinished download or export, not an unsupported format. Save it again and drop that.`, "unknown");
+  }
+
   const format = sniffFormat(name, file.bytes);
   if (format === "unknown") {
     const isOle = OLE_MAGIC.every((b, i) => file.bytes[i] === b);
@@ -237,10 +321,20 @@ export async function ingestFile(
       ? `${name} is a pre-2007 binary Office file (an OLE compound document). SelfImpulse reads the XML-era formats — .docx, .xlsx, .pptx — not the legacy binary ones. Save it in the modern format and drop that.`
       : `${name} is not a format this door reads. It takes PDF, DOCX, XLSX/XLSM, PPTX, JSON, ZIP, Markdown and plain text — and says so rather than returning an empty document for it.`, "unknown");
   }
-  /* A `.zip` whose bytes are not a zip would otherwise fall through the
-     container branch and into a dispatcher that has no case for it. */
-  if (format === "zip" && !looksLikeZip(file.bytes)) {
-    return blocked("not-an-archive", `${name} is labelled .zip but does not open as one. SelfImpulse does not rename a file to make a format fit.`, format);
+  /* A NAME that claims a container the bytes do not are refused, in words.
+   *
+   * This check used to be written `format === "zip" && !looksLikeZip(bytes)` — a
+   * condition that cannot fire: `sniffFormat` only ever returns "zip" for bytes
+   * that already opened as one, so the branch was unreachable. The result was
+   * that `notes.zip` containing plain ASCII was read as PROSE and offered as a
+   * document, which is the same class of lie as an empty acceptance: the receipt
+   * says a container arrived and the content says a paragraph did. (A document
+   * label that lies is deliberately NOT this error — the door's own rule is that
+   * content decides and the extension only names, so ASCII named `fake.png` is
+   * read as the ASCII it is. A CONTAINER label is different: it is the one claim
+   * that decides whether the containment gate runs at all.) */
+  if (claimsAnArchive(name) && !looksLikeZip(file.bytes)) {
+    return blocked("not-an-archive", `${name} is named like a container (${name.split(".").pop()}) but does not open as one. SelfImpulse does not rename a file to make a format fit, and it does not read a container label off something that is not a container.`, format);
   }
 
   const fileDeadline = started + limits.perFileDeadlineMs;

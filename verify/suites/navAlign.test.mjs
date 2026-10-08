@@ -49,14 +49,14 @@ ok(
 );
 ok(
   "the Docs door renders the document-distillation surface",
-  rendersThroughBoundary("docs", "Docs") && /Propose knowledge/.test(read("src/ui/screens/Docs.tsx")) && /Nothing is installed until you decide/.test(read("src/ui/screens/Docs.tsx")),
+  rendersThroughBoundary("docs", "Docs") && /Propose knowledge/.test(read("src/ui/screens/Docs.tsx")) && /Nothing is installed until you approve/.test(read("src/ui/screens/Docs.tsx")),
   "the Docs door must reach the knowledge proposal seam and install nothing itself"
 );
 var specSrc = read("src/ui/screens/Specialists.tsx");
 ok(
-  "the Specialists door renders the generalist pack",
-  rendersThroughBoundary("specialists", "Specialists") && /from "\.\.\/\.\.\/specialists"/.test(specSrc) && /toolsForDomain\(domain\)/.test(specSrc) && /DOMAINS\.map/.test(specSrc),
-  "the door must render the pack's own tool registry, not a hand-written list"
+  "the Specialists door shows the agents that are actually working",
+  rendersThroughBoundary("specialists", "Specialists") && /from "\.\.\/\.\.\/engine\/registry"/.test(specSrc) && /crewRunning/.test(specSrc) && !/DOMAINS\.map/.test(specSrc),
+  "the door must read live run records; a curated domain list cannot be kept true"
 );
 ok(
   "the generalist surface states the same boundary for every domain",
@@ -64,7 +64,8 @@ ok(
   "the generalist door must carry the compute-not-act statement too"
 );
 ok("no Crew door \xE2\u20AC\u201D the crew is internal", !/label:\s*"Crew"/.test(shellSrc) && !/label:\s*"Agents"/.test(shellSrc), "the crew must not face the user");
-ok("the status pill and the owner card sit below the doors and open Settings", /className="si-provider" onClick=\{\(\) => go\("settings"\)\}/.test(shellSrc) && /className="si-owner" onClick=\{\(\) => go\("settings"\)\}/.test(shellSrc), "sidebar foot not wired");
+ok("the status pill sits below the doors and opens Settings", /className="si-provider" onClick=\{\(\) => go\("settings"\)\}/.test(shellSrc), "sidebar foot not wired");
+ok("the owner card sits below the doors and opens the profile, not Settings", /className="si-owner" onClick=\{\(\) => go\("profile"\)\}/.test(shellSrc) && !/className="si-owner" onClick=\{\(\) => go\("settings"\)\}/.test(shellSrc), "the owner card must open the profile");
 ok("no keyboard-shortcut hints on the surface", !/âŒ˜K|âŒ˜N|Cmd\+K|Ctrl\+K/.test(shellSrc + read("src/ui/screens/Steward.tsx")), "shortcut hints leaked");
 ok("the composer is the single command surface and Enter sends", /onKeyDown=\{\(e\) => \{ if \(e\.key === "Enter" && !e\.shiftKey\)/.test(composerSrc) && /onSend\(\)/.test(composerSrc), "composer not wired to send");
 ok(
@@ -72,10 +73,43 @@ ok(
   /send:\s*async \(raw\)/.test(storeSrc) && /await askSelfImpulse19\(\{ text: sentText, userId: subject \}, runDeps\(get, set, gateFn\)\)/.test(storeSrc) && /provider: get\(\)\.provider, gate: gateFn,/.test(storeSrc) && /onHandoff:/.test(storeSrc) && /const subject = currentSubject\(\);/.test(storeSrc) && /if \(!subject\)/.test(storeSrc),
   "store send is not the engine path, or an unattributed run is not refused first"
 );
-ok("the human gate is a card with approve and refuse, never a silent skip", /Your approval is needed/.test(gateSrc) && /Approve once/.test(gateSrc) && /Refuse/.test(gateSrc), "gate card missing");
+ok("the human gate is a card with approve and reject, never a silent skip", /Your approval is needed/.test(gateSrc) && />Approve</.test(gateSrc) && />Reject</.test(gateSrc), "gate card missing");
 ok("Work names agents AGENT nn \xE2\u20AC\u201D never by specialist name", /AGENT \$\{String\(i \+ 1\)\.padStart\(2, "0"\)\}/.test(workSrc) && !/sp\?\.name|specialist\.name/.test(workSrc), "agent names leaked");
 ok("first-time users can connect a model provider inside Settings", /Provider/.test(settingsSrc) && /PROVIDER_DEFAULTS/.test(settingsSrc) && /setProvider\(/.test(settingsSrc), "provider onboarding missing");
 ok("the federation key resolves through the hardened authority seam", /authorityOwnerIdentity/.test(read("src/engine/federation/live.ts")) && !/exportKey\(["']jwk["']\)/.test(read("src/engine/federation/live.ts")), "raw key storage in the live seam");
+console.log("== chat history is reachable from the chat itself ==");
+var stewardSrc = read("src/ui/screens/Steward.tsx");
+ok(
+  "the Captain door carries its own History control",
+  /History/.test(stewardSrc) && /sessions/.test(stewardSrc) && /aria-expanded=\{hist\}/.test(stewardSrc),
+  "history lived only two doors away, in Memory, among the beliefs"
+);
+ok(
+  "opening a conversation rehydrates it through the store, not a re-typed prompt",
+  /openConversation\(s\.id\)/.test(stewardSrc) && /openConversation: \(id: string\)/.test(storeSrc)
+);
+ok(
+  "a conversation the operator did not start can be removed from here",
+  /forgetSession\(s\.id\)/.test(stewardSrc)
+);
+ok(
+  "the empty state never claims nothing has run while history exists",
+  /This chat is empty/.test(stewardSrc) && /sessions\.length > 0 \? "This chat is empty"/.test(stewardSrc)
+);
+ok("a continued thread says which one it is", /si-continued/.test(stewardSrc) && /Reading “\{openSession\.title\}”/.test(stewardSrc));
+console.log("== the key-persistence choice is real ==");
+ok(
+  "the persist switch drives setProvider's second argument",
+  /setProvider\(\{[^}]*\}, remember\)/.test(settingsSrc) && /const \[remember, setRemember\]/.test(settingsSrc)
+);
+ok(
+  "session-only returns before any storage write",
+  /if \(!persist\) return \{ ok: true, note: "key kept in memory for this session only" \};/.test(storeSrc)
+);
+ok(
+  "the desktop path does not offer a checkbox that changes nothing",
+  /\{!native && <div className="field">/.test(settingsSrc)
+);
 console.log(`
 ${passed} passed, ${failed} failed`);
 if (failed > 0) {

@@ -1077,6 +1077,70 @@ function validateSuite(suite2) {
   return problems;
 }
 
+// src/security/auditScrub.ts
+var AUDIT_SCRUB_MARKER = "[redacted]";
+var AUDIT_SCRUB_MAX_DEPTH = 16;
+var SENSITIVE_MEMBER = /(?:access[_-]?token|api[_-]?key|authorization|auth[_-]?header|bearer|client[_-]?secret|cookie|credential|password|passphrase|private[_-]?key|provider[_-]?(?:credential|token)|refresh[_-]?token|secret|session[_-]?(?:cookie|token)|token|wallet|x-api[-_])$/i;
+var SAFE_REFERENCE_TAIL = /(?:ids?|refs?|references?|names?|kinds?|counts?|types?|prefixes)$/i;
+var UNSAFE_MEMBER = /^(?:__proto__|constructor|prototype)$/;
+var SECRET_SHAPES = [
+  // any `Authorization`-shaped header line, with or without the header name
+  /\bauthor(?:ization|isation)\s*:?\s*\S+|\bcookie\s*:\s*\S+/gi,
+  // bearer / basic / digest schemes, quoted with or without their scheme word
+  /\b(?:bearer|basic|digest)\s+[A-Za-z0-9._~+/=-]{6,}/gi,
+  // the long key idioms this product's providers actually issue
+  /\b(?:sk|sa|pd|np|sk-proj|sk-svcacct)-[A-Za-z0-9_-]{8,}/gi,
+  /\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{8,}/gi,
+  /\bxox[baprs]-[A-Za-z0-9-]{6,}/gi,
+  /\bAIza[0-9A-Za-z_-]{20,}/g,
+  /\bya29\.[A-Za-z0-9_=-]{10,}/g,
+  /\bAKIA[0-9A-Z]{12,}/g,
+  // a signed token, wherever it came from
+  /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}/g,
+  // an inline `key = value` / `token=value` assignment
+  /\b(?:api[_-]?key|secret|access[_-]?token|refresh[_-]?token|password|passwd|pwd|credential|auth[_-]?token)\s*[:=]\s*[^\s,;]{4,}/gi,
+  // a PEM private key body
+  /-----BEGIN (?:[A-Z ]*)PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z ]*)PRIVATE KEY-----/g
+];
+var CREDENTIAL_URL = /\b([a-z][a-z0-9+.-]*:\/\/)([^\s/:@'"]+):([^\s/@'"]+)@/gi;
+var CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/g;
+function scrubAuditText(text) {
+  if (!text) return text;
+  let out = text.replace(CREDENTIAL_URL, (_all, scheme, user) => `${scheme}${user}:${AUDIT_SCRUB_MARKER}@`);
+  for (const shape of SECRET_SHAPES) out = out.replace(shape, AUDIT_SCRUB_MARKER);
+  return out.replace(CONTROL_CHARACTER, " ");
+}
+function isSensitiveAuditMember(key) {
+  return SENSITIVE_MEMBER.test(key) && !SAFE_REFERENCE_TAIL.test(key);
+}
+function scrubAuditValue(value, visited = /* @__PURE__ */ new WeakSet(), depth = 0) {
+  if (depth > AUDIT_SCRUB_MAX_DEPTH) return AUDIT_SCRUB_MARKER;
+  if (typeof value === "string") return scrubAuditText(value);
+  if (value === null || typeof value !== "object") {
+    return typeof value === "bigint" ? value.toString() : value;
+  }
+  if (visited.has(value)) return AUDIT_SCRUB_MARKER;
+  visited.add(value);
+  if (Array.isArray(value)) return value.map((entry) => scrubAuditValue(entry, visited, depth + 1));
+  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Error) return { name: value.name, reason: AUDIT_SCRUB_MARKER };
+  if (value instanceof Map) {
+    return Object.fromEntries(
+      [...value].map(([k, v]) => [String(k), isSensitiveAuditMember(String(k)) ? AUDIT_SCRUB_MARKER : scrubAuditValue(v, visited, depth + 1)])
+    );
+  }
+  if (value instanceof Set) return [...value].map((v) => scrubAuditValue(v, visited, depth + 1));
+  const scrubbed = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (UNSAFE_MEMBER.test(key)) continue;
+    scrubbed[key] = isSensitiveAuditMember(key) ? AUDIT_SCRUB_MARKER : scrubAuditValue(entry, visited, depth + 1);
+  }
+  return scrubbed;
+}
+function scrubAuditLines(lines) {
+  return (lines ?? []).map(scrubAuditText);
+}
+
 // src/mission/flightRecorder.ts
 var listeners = /* @__PURE__ */ new Set();
 var FlightRecorder = class {
@@ -1118,10 +1182,10 @@ var FlightRecorder = class {
       actor: input.actor,
       authority: input.authority,
       policy: input.policy || "none-required",
-      reason: input.reason,
-      evidence: input.evidence ?? [],
+      reason: scrubAuditText(input.reason),
+      evidence: scrubAuditLines(input.evidence),
       subjectId: input.subjectId ?? null,
-      data: input.data ?? {}
+      data: scrubAuditValue(input.data ?? {})
     };
     this.events.push(event);
     for (const fn of listeners) {

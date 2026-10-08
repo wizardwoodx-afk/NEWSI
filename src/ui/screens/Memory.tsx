@@ -1,178 +1,133 @@
 import React, { useMemo, useState } from "react";
-import { useVh, memoryGraphData, memoryStats, memorySecurity } from "../store";
-import { ForceGraph, type FgNode, type FgLink } from "../graph/ForceGraph";
-import { dreamStatus, loadDurable, forgetMemory, forgetAllDurable, MIN_EVIDENCE, MIN_SESSIONS, DECAY_GRACE_DAYS, type DurableMemory } from "../../engine/dreaming";
-import { dreamTick, dreamCursor, dreamJournal } from "../../engine/dreamBridge";
-import { currentSubject } from "../store";
+import { useVh, memorySecurity, currentSubject } from "../store";
+import { dreamStatus, loadDurable, forgetMemory, forgetAllDurable, MIN_EVIDENCE, MIN_SESSIONS } from "../../engine/dreaming";
+import { dreamTick, dreamCursor } from "../../engine/dreamBridge";
 
 /**
- * MEMORY — a cool, organic cluster of everything the Captain remembers.
- * Sessions are the large nodes; keywords the small ones. Double-click a session to open it.
+ * MEMORY — what the Captain holds, read as entries: a statement that survived the
+ * dreaming gates, or a conversation one came from, each with its provenance in prose.
+ * The node cloud is gone; a keyword orbiting another keyword answered nothing.
  */
 
-/**
- * WHAT THE DEPLOYMENT HAS LEARNED.
- *
- * The graph above this panel shows the raw material: sessions and the topics in
- * them. This shows the OUTPUT of consolidation — the few statements that survived
- * repetition, independence and confidence, each carrying how many sightings and
- * how many separate days stand behind it.
- *
- * The second half matters as much as the first. A memory system that only shows
- * what it believes gives a person no way to see that it is being appropriately
- * cautious, and no way to see WHY something they expected is not here. So the
- * candidates that repeated but did not clear a gate are shown too, with the gate
- * that stopped them named in words ("evidence: 2/3 sightings"). Honest silence is
- * a feature; unexplained silence is a bug.
- */
-function Learned(): React.ReactElement {
-  const [tick, setTick] = React.useState(0);
-  /* Whose memory. The ledger has always been per-user, and now the beliefs are
-   * too — so the panel asks for this subject's, rather than for whatever the
-   * installation happens to hold. */
-  const who = currentSubject() ?? "default";
-  const st = React.useMemo(() => dreamStatus(who), [tick, who]);
-  const live = React.useMemo(() => loadDurable(who).filter((m) => !m.retired), [tick, who]);
-  const cursor = React.useMemo(() => dreamCursor(who), [tick, who]);
-  /* A row still reading `running` means a pass was interrupted. Said plainly:
-   * a memory system that hides an unfinished pass is one nobody can audit. */
-  const interrupted = React.useMemo(() => dreamJournal(who).find((r) => r.state === "running"), [tick, who]);
+interface Entry { id: string; tag: string; line: string; meta: string; led: string; body: React.ReactNode }
 
-  const run = () => {
-    /* The heartbeat's own path, forced: a person pressing the button IS a
-     * statement that something has changed, which is exactly what the gap guard
-     * is there to wait for. */
-    dreamTick(who, undefined, { force: true });
-    setTick((n) => n + 1);
-  };
-
-  const strength = (m: DurableMemory) => m.strength >= 0.75 ? "well established" : m.strength >= 0.5 ? "settling" : "fading";
-
-  return (
-    <div className="card soft" style={{ marginTop: 12 }}>
-      <div className="card-b">
-        <div className="row" style={{ alignItems: "baseline" }}>
-          <b>What the deployment has learned</b>
-          <span className="hint" style={{ marginLeft: "auto" }}>
-            {st.passes} consolidation {st.passes === 1 ? "pass" : "passes"}
-            {cursor?.state === "done" ? ` · last ${new Date(cursor.at).toLocaleString()}` : st.lastPass ? ` · last ${new Date(st.lastPass).toLocaleDateString()}` : ""}
-            {st.held > 0 ? ` · ${st.held} held at the gates` : ""}
-          </span>
-          <button className="btn sm ghost" onClick={run} title="Replay the staged records and re-run the gates">Consolidate now</button>
-        </div>
-
-        {live.length === 0 ? (
-          <p className="hint" style={{ margin: "10px 0 0" }}>
-            Nothing has been learned yet, and that is the honest answer rather than an empty box: a statement is only
-            written here once it has been seen at least {MIN_EVIDENCE} times across at least {MIN_SESSIONS} separate days.
-            A single rejection is an event, not a preference.
-            {st.held > 0 ? ` ${st.held} ${st.held === 1 ? "candidate is" : "candidates are"} being held until then.` : ""}
-          </p>
-        ) : (
-          <div className="dream-list">
-            {live.sort((a, b) => b.strength - a.strength).map((m) => (
-              <div className="dream-item" key={m.id}>
-                <span className={`dream-kind ${m.kind}`}>{m.kind}</span>
-                <div className="dream-body">
-                  <p className="dream-stmt">{m.statement}</p>
-                  <span className="dream-meta">
-                    {m.sightings} sightings over {m.days} {m.days === 1 ? "day" : "days"} · {strength(m)} ·{" "}
-                    {Math.round(m.strength * 100)}% strength
-                  </span>
-                </div>
-                <button className="btn sm ghost danger" onClick={() => { forgetMemory(m.id, who); setTick((n) => n + 1); }} title="Forget this belief. The records behind it are kept.">Forget</button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {interrupted ? (
-          <p className="hint" style={{ marginTop: 10 }}>
-            One consolidation {interrupted.state === "running" ? "did not finish" : "is in progress"} — the pass was
-            interrupted while it ran, so it was recorded and left alone rather than quietly repeated. The next pass will
-            pick up whatever it staged.
-          </p>
-        ) : null}
-
-        <p className="hint" style={{ marginTop: 10 }}>
-          Consolidation runs on the initiative heartbeat whenever autonomy is above zero. A belief is only charged for
-          silence after {DECAY_GRACE_DAYS} quiet days, so a schedule can never be what retires it.
-        </p>
-
-        {st.retired > 0 ? (
-          <p className="hint" style={{ marginTop: 10 }}>
-            {st.retired} earlier {st.retired === 1 ? "belief has" : "beliefs have"} been retired — nothing reconfirmed
-            them, so they faded rather than staying loud forever. They are kept in the record, not deleted.
-          </p>
-        ) : null}
-      </div>
-    </div>
-  );
+const day = (iso: string) => { try { return new Date(iso).toLocaleDateString([], { month: "short", day: "2-digit" }); } catch { return "—"; } };
+const stamp = (iso: string) => { try { return new Date(iso).toLocaleString([], { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" }); } catch { return "—"; } };
+/** Age is what makes a memory trustworthy or stale, so it is a word, not a date. */
+function ago(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return "today";
+  const d = Math.floor(ms / 86_400_000);
+  if (d < 1) return "today";
+  if (d === 1) return "yesterday";
+  if (d < 30) return `${d} days ago`;
+  return `${Math.floor(d / 30)} months ago`;
 }
 
 export function Memory(): React.ReactElement {
   const { sessions, memOn, setMemory, clearMemory, openConversation, forgetSession, vault } = useVh();
-  const [spin, setSpin] = useState(true);
-  const [fit, setFit] = useState(0);
-  const [sel, setSel] = useState<FgNode | null>(null);
+  const [sel, setSel] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
+  const [tick, setTick] = useState(0);
+  const who = currentSubject() ?? "default";
 
-  const { nodes, links, stats, sec } = useMemo(() => {
-    const g = memoryGraphData(); const stats = memoryStats(); const sec = memorySecurity();
-    const nodes: FgNode[] = [];
-    const links: FgLink[] = [];
-    for (const s of sessions) nodes.push({ id: `s:${s.id}`, name: s.title, kind: "session", val: 4 + Math.min(8, s.messageCount), sub: `${s.messageCount} messages · ${new Date(s.startedAt).toLocaleDateString()}` });
-    for (const n of g.nodes) { nodes.push({ id: `k:${n.id}`, name: n.label, kind: "keyword", val: 1 + Math.min(5, n.weight) }); for (const sid of n.sessionIds) if (sessions.some((s) => s.id === sid)) links.push({ source: `s:${sid}`, target: `k:${n.id}` }); }
-    for (const e of g.edges) links.push({ source: `k:${e.a}`, target: `k:${e.b}` });
-    return { nodes, links, stats, sec };
-  }, [sessions]);
+  const sec = memorySecurity();
+  const st = useMemo(() => dreamStatus(who), [tick, who]);
+  const held = useMemo(() => loadDurable(who).filter((m) => !m.retired).sort((a, b) => b.strength - a.strength), [tick, who]);
+  const cursor = useMemo(() => dreamCursor(who), [tick, who]);
 
-  const selSession = sel?.id.startsWith("s:") ? sessions.find((s) => `s:${s.id}` === sel.id) ?? null : null;
-  const open = (n: FgNode) => { if (n.id.startsWith("s:")) openConversation(n.id.slice(2)); };
+  /* One thread in the order it is read: what the Captain believes now, then the
+     conversations those beliefs were drawn from. */
+  const rows: Entry[] = [];
+  for (const m of held) {
+    rows.push({
+      id: `d:${m.id}`, tag: m.kind, line: m.statement, led: m.strength >= 0.5 ? "ok" : "warn",
+      meta: `${m.sightings} sighting${m.sightings === 1 ? "" : "s"} over ${m.days} day${m.days === 1 ? "" : "s"} · believed since ${ago(m.ts)} · ${Math.round(m.strength * 100)}% strength`,
+      body: <>
+        <p className="prose">{m.statement}</p>
+        {/* The provenance in the order it was earned: how often, how independent, how
+            old, and which pass promoted it. An unreconfirmed belief is not a fact. */}
+        <p className="hint">Said {m.sightings} time{m.sightings === 1 ? "" : "s"} on {m.days} separate day{m.days === 1 ? "" : "s"}, last heard {ago(m.lastSeen)}. Promoted {stamp(m.ts)} on consolidation pass {st.passes}.</p>
+        {(m.words?.length ?? 0) > 0 && <p className="hint">In the words it was first said: {m.words!.slice(0, 3).map((w) => `“${w}”`).join(" ")}</p>}
+        <p className="hint">Evidence — {m.evidence.length ? m.evidence.map((e) => e.slice(0, 12)).join(" · ") : "this entry carries no record ids"}</p>
+        <div className="acts"><button className="btn sm ghost danger" onClick={() => { forgetMemory(m.id, who); setTick((n) => n + 1); setSel(null); }}>Forget this</button></div>
+      </>,
+    });
+  }
+  if (st.held > 0) {
+    rows.push({
+      id: "held", tag: "not yet a memory", led: "warn",
+      line: `${st.held} pattern${st.held === 1 ? "" : "s"} repeated enough to watch, not enough to believe`,
+      meta: `${st.retired} retired${st.retired === 1 ? "" : "s"} for going quiet`,
+      body: <p className="hint">A statement becomes a memory only past {MIN_EVIDENCE} sightings on {MIN_SESSIONS} separate days. Below that the Captain keeps counting and says nothing.</p>,
+    });
+  }
+  for (const s of sessions) {
+    rows.push({
+      id: `s:${s.id}`, tag: "conversation", led: "",
+      line: s.title,
+      meta: `${s.messageCount} message${s.messageCount === 1 ? "" : "s"} · started ${day(s.startedAt)}${s.endedAt ? ` · last heard ${ago(s.endedAt)}` : ""}`,
+      body: <>
+        <p className="hint">{s.keywords.length > 0 ? `Remembered under ${s.keywords.slice(0, 8).join(", ")}.` : "No topics were drawn out of this one."}</p>
+        <div className="acts">
+          <button className="btn primary sm" onClick={() => openConversation(s.id)}>Open the conversation</button>
+          <button className="btn sm ghost" onClick={() => { forgetSession(s.id); setSel(null); }}>Forget</button>
+        </div>
+      </>,
+    });
+  }
+
+  const consolidate = () => {
+    /* Forced: pressing the button is itself a statement that something changed,
+       which is exactly what the heartbeat's gap guard waits for. */
+    dreamTick(who, undefined, { force: true });
+    setTick((n) => n + 1);
+  };
 
   return (
     <>
-      <header className="top"><h2>Memory</h2><span className="sub">everything the crew remembers · {sessions.length} conversation{sessions.length === 1 ? "" : "s"}</span>
+      <header className="top"><h2>Memory</h2>
         <div className="right"><span className={`pill ${sec.mode === "sealed" ? "ok" : "warn"}`}>{sec.mode === "sealed" ? "encrypted at rest" : sec.mode === "locked" ? "vault locked" : vault.status === "no-passphrase" ? "on device · no vault" : "plaintext on device"}</span><label className="switch"><input type="checkbox" checked={memOn} onChange={(e) => setMemory(e.target.checked)} /><i /><span>Remember</span></label></div></header>
-      {nodes.length === 0 ? (
-        <div className="scroll"><div className="empty" style={{ height: "100%" }}><h3>Nothing remembered yet</h3><p>{memOn ? "Conversations you have with the Captain will cluster here by topic — nothing leaves this device." : "Memory is off. Turn it on to keep conversations on this device."}</p></div></div>
-      ) : (
-        <div className="graph-wrap memory">
-          <ForceGraph mode="memory" nodes={nodes} links={links} autoRotate={spin} fitSignal={fit} onNodeClick={setSel} onNodeDoubleClick={open} />
-          <div className="hud">
-            <div className="card"><div className="card-b">
-              <span className="mode-tag memory"><i />Memory graph · frosted cluster · no arrows</span>
-              <div className="klist" style={{ marginTop: 8 }}>
-                <div><span>Conversations</span><span>{sessions.length}</span></div>
-                <div><span>Topics</span><span>{stats.nodes}</span></div>
-                <div><span>Links</span><span>{stats.edges}</span></div>
-                <div><span>At rest</span><span>{sec.mode}</span></div>
-              </div>
-              <div className="legend memory"><span><i style={{ background: "#E9EBEE" }} />conversations</span><span><i style={{ background: "#AEB8B5" }} />topics</span></div>
-            </div></div>
+
+      <div className="scroll"><div className="read-col">
+        {rows.length === 0 ? (
+          <div className="empty"><h3>Nothing remembered yet</h3>
+            {/* The two reasons this is empty are different and only one of them is
+                the user's doing, so they are not the same sentence. */}
+            <p className="hint">{memOn ? "Nothing has run on this device yet, so there is nothing here. Conversations and the patterns drawn from them appear in this column, oldest last." : "Memory is off, so nothing is kept on this device. Turn it on above and each conversation starts showing up here."}</p>
           </div>
-          <div className="hud-r">
-            {sel ? (
-              <div className="card"><div className="card-b">
-                <span className="lbl">{sel.kind === "session" ? "Conversation" : "Topic"}</span>
-                <h3 style={{ margin: "4px 0 2px" }}>{sel.name}</h3>
-                {sel.sub && <p className="faint" style={{ margin: 0 }}>{sel.sub}</p>}
-                {selSession && <>
-                  <div className="tags">{selSession.keywords.slice(0, 8).map((k) => <span key={k}>{k}</span>)}</div>
-                  <div className="acts"><button className="btn primary sm" onClick={() => open(sel)}>Open the conversation</button><button className="btn sm ghost" onClick={() => { forgetSession(selSession.id); setSel(null); }}>Forget</button></div>
-                </>}
-                {!selSession && <p className="hint">Double-click a conversation node to open it.</p>}
-              </div></div>
-            ) : (
-              <div className="card soft"><div className="card-b"><p className="hint" style={{ margin: 0 }}>Click a node for detail · double-click a conversation to open it</p></div></div>
-            )}
-          </div>
-          <div className="graph-foot"><button className="btn sm" onClick={() => setFit((n) => n + 1)}>Fit</button><button className={`btn sm ${spin ? "" : "ghost"}`} onClick={() => setSpin((s) => !s)}>Auto-rotate</button>
-            {!confirm ? <button className="btn sm ghost danger" onClick={() => setConfirm(true)}>Forget everything</button> : <><span className="hint">This cannot be undone.</span><button className="btn sm danger" onClick={() => { clearMemory(); forgetAllDurable(); setConfirm(false); setSel(null); }}>Yes, forget</button><button className="btn sm ghost" onClick={() => setConfirm(false)}>Keep</button></>}
-          </div>
-        </div>
-      )}
-      <div className="scroll"><div className="page narrow"><Learned /></div></div>
+        ) : (
+          <>
+            <div className="row mem-foot">
+              <span className="hint">{st.passes} consolidation {st.passes === 1 ? "pass" : "passes"}{cursor?.state === "done" ? ` · last ${stamp(cursor.at)}` : st.lastPass ? ` · last ${day(st.lastPass)}` : ""}</span>
+              <button className="btn sm ghost" onClick={consolidate}>Consolidate now</button>
+              {!confirm ? <button className="btn sm ghost danger" onClick={() => setConfirm(true)}>Forget everything</button> : <>
+                <span className="hint">This cannot be undone.</span>
+                <button className="btn sm danger" onClick={() => { clearMemory(); forgetAllDurable(); setConfirm(false); setSel(null); }}>Yes, forget</button>
+                <button className="btn sm ghost" onClick={() => setConfirm(false)}>Keep</button>
+              </>}
+            </div>
+            <ol className="steps">
+              {rows.map((r) => (
+                <li key={r.id}>
+                  <button className="step" aria-expanded={sel === r.id} aria-controls={`mem-${r.id}`} onClick={() => setSel(sel === r.id ? null : r.id)}>
+                    <span className="av" aria-hidden />
+                    <span className="step-body">
+                      <span className="who"><b>{r.tag}</b></span>
+                      <span className="say">{r.line}</span>
+                    </span>
+                    <span className={`led ${r.led}`} aria-hidden />
+                  </button>
+                  {sel === r.id && <div className="step-open" id={`mem-${r.id}`}>
+                    <p className="hint">{r.meta}</p>
+                    {r.body}
+                  </div>}
+                </li>
+              ))}
+            </ol>
+          </>
+        )}
+      </div></div>
     </>
   );
 }

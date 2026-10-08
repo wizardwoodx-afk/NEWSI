@@ -40,15 +40,18 @@ verify later, offline, with one command. Built on the **MJ** engine.
   behind the vault; one switch turns it off. Memory compounds: working,
   episodic and semantic tiers, with promotion you can walk back to the
   episodes it was distilled from.
-- **Durable runs** — in progress. The tamper-evident checkpoint chain, the
-  resume verdict and the journal serializer are built and pinned
-  (`src/mission/runCheckpoints.ts`, `probe/durableRuns.test.ts`), and a settled
-  mission wave already appends to the chain. What does not work yet: the chain
-  is held in memory, so it dies with the process, and the loader that would
-  restore it after a restart (`restoreRunJournal`) has no caller in `src/`. A
-  crash therefore resumes from the mission runtime's own task state, not yet
-  from this chain. Treat "a crash resumes instead of restarting" as the
-  intended behaviour, not the current one.
+- **Durable runs** — mostly built, one seam short. The checkpoint chain, the
+  resume verdict, and a versioned journal serializer live in
+  `src/mission/runCheckpoints.ts` and are pinned by `probe/durableRuns.test.ts`.
+  The chain now actually survives the process: `missionRuntime.ts:395` calls
+  `resumeRun(...)` before any new work, which loads the journal the checkpoints
+  wrote, re-verifies it, and refuses to start fresh over a journal that exists
+  but will not load. What is still unwired: `resumeDurableRun()` and
+  `flushRunJournal()` have no caller in `src/ui/`, so the two paths that matter
+  most in practice — "can my interrupted run continue?" on startup, and "save
+  now" when the window is closing — are reachable only from the runtime, not
+  from the app. Treat "a crash resumes instead of restarting" as true at the
+  engine layer and untested at the UI.
 - **Intake triggers** — schedules, signed webhooks and named events that
   start runs for you. A trigger is a doorbell, not a key: everything it starts
   goes through the same gate as your own requests.
@@ -74,6 +77,37 @@ verify later, offline, with one command. Built on the **MJ** engine.
   bootstrap cannot resurrect a seat — and the read-only registry seals at
   trusted startup, so loaded code can never redefine what "read" means.
 
+## What works today
+
+Plain status, so nothing above has to be taken on faith. Two gates, both real:
+
+| Gate | Command | What it covers |
+|---|---|---|
+| Dev gate | `npm test` | **200** probe suites, bundled and run one at a time. Needs `npm install`. |
+| Offline pack | `node verify/run.mjs` | **199** pre-bundled suites, zero install, no network. This is the one a reviewer with only Node can run. |
+
+The pack is the same suite list the dev gate runs, minus the freshness gate
+that builds the pack itself — `tools/probe-list.mjs` is the single list both
+read, so the two cannot drift.
+
+Where the features actually stand:
+
+| Surface | State |
+|---|---|
+| Captain, routing, the human gate, receipts, proofs, the vault | **Live.** Wired from `src/ui/store.ts` and reachable from the UI. |
+| The eight tools (`fs.*`, `net.fetch`, `wiki.search`, `pc.exec`, `pc.browser`, `mcp.call`) | **Live.** `store.ts` supplies `workspaceRoot` and `fsImpl`; the per-tool risk tier fires. |
+| Eight finishes, contrast-checked | **Live.** 584 pairings gated, 16 advisory. |
+| Docs distillation, memory graph, triggers, governance evals, ledgers, capabilities | **Live** in the shipped app. |
+| Federation (A2A across owners) | **Wiring in progress.** The protocol, the caps, the hop bound and the receipts are built and tested; the mount/pair UI is being connected. Do not treat a cross-machine run as working yet. |
+| Durable runs (crash resumes instead of restarting) | **Wiring in progress.** Engine layer done and wired inside the runtime; the UI entry points are still being connected. |
+| Crew execution (multi-seat teams end to end) | **Wiring in progress.** The executor, gate, budget admission, merge and idempotency are built and tested; the UI path is still being connected. |
+| Self-improvement loop (`runRsiCycle`) | **Not wired.** Correct code, no caller. See `docs/internal/IMPLEMENTATION-GAP.md` OPEN-1. |
+| `crew.ts` (the 25-lane concurrent runner) | **Not wired.** Dead code; the shipped path uses a bounded map instead. OPEN-2. |
+
+Three rows are marked *wiring in progress* because that work is landing
+**right now**, in parallel, and is not finished. They are listed so the gap is
+visible, not as a claim about the current tree — read the gate output for that.
+
 ## Eight finishes
 
 Holst, Obsidian, Azure, Titanium, Caesar and Stratos for the night; Platinum
@@ -84,23 +118,32 @@ Two stylesheets paint those finishes and both are measured:
 `node tools/contrast-check.mjs` parses `src/ui/vh.css` (the screen interiors)
 and `src/ui/si/si.css` (the shell chrome, under its own `--si-*` names),
 composites every translucent wash over the ground it is painted on, and
-computes real WCAG 2.x ratios across all eight finishes: text at 4.5:1, and
-focus indicators and component state at 3:1, which is the bar WCAG's Non-text
-Contrast and Focus Appearance criteria set.
+computes real WCAG 2.x ratios across all eight finishes.
 
-It currently exits non-zero, and that is the point: the tool is a gate, not a
-certificate. The open failures it names are in the two stylesheets — the primary
-action's label drops under 4.5:1 on its hover fill, the light finishes' rail
-tertiary ink falls short on the rail ground, the field placeholder and the
-deepest-ground code block fall short on their own fills, and the accent pill's
-ink falls short on its own wash. Run it for the current list rather than taking
-this paragraph's word for it; the count moves as the sheets change.
+What it actually checks, precisely: **584 ink-on-ground pairings**, every one a
+pairing some rule in those two sheets really paints. Gated rows are held to the
+bar the relevant WCAG 2.x criterion sets: text at 4.5:1 (Contrast Minimum), and
+focus indicators, component state and other non-text marks at 3:1 (Non-text
+Contrast and Focus Appearance). The tool exits zero: every gated pairing clears
+its minimum today.
 
-This is not a claim of AA compliance. It is a list of the pairings a rule
-actually paints, checked against the ground each is painted on, plus an
-explicit statement of what the check does not cover: a pairing no rule paints,
-a font size read from the cascade rather than declared, and any ink or wash an
-image, gradient or filter contributes.
+**16 rows are ADVISORY, not gated.** Each is a 1px decorative border whose own
+contrast is decorative-only — WCAG's Non-text Contrast criterion exempts purely
+decorative boundaries, so these are reported, printed with a `~`, and
+deliberately excluded from the exit code. They are listed so nobody mistakes
+silence for a pass.
+
+Run the tool for the current numbers rather than taking this paragraph's word
+for it. The pairing count, the advisory set **and the tightest gated ratio all
+move** as the sheets change — the worst gated value shifted twice while this
+paragraph was being written — so this one deliberately names no specific
+figure.
+
+This is not a claim of AA compliance, and the tool does not make one. It is a
+list of the pairings a rule actually paints, checked against the ground each is
+painted on, plus an explicit statement of what the check does not cover: a
+pairing no rule paints, a font size read from the cascade rather than declared,
+and any ink or wash an image, gradient or filter contributes.
 
 ## The law the code enforces
 
@@ -123,13 +166,37 @@ image, gradient or filter contributes.
 ```bash
 npm install
 npm test                # the full gate — every suite
-npm run dev             # the web app
+npm run dev             # the web app (DEV ONLY — localhost:5173)
+npm run web:build       # the production artifact: static files in dist/
 npm run tauri:build     # the desktop shell
 node verify/run.mjs     # the offline verification pack — zero install
 ```
 
 Node 22.12+. Desktop build needs the Rust toolchain
 ([docs/setup/DESKTOP-NATIVE.md](docs/setup/DESKTOP-NATIVE.md)).
+
+### What actually ships
+
+**The production artifact is the static `dist/` directory.** `npm run web:build`
+emits it and `vercel.json` serves it (`outputDirectory: "dist"`). It needs no
+server of its own: no Node process, no `npm start`, nothing to keep alive.
+Opening `dist/index.html` through any static host is the whole deployment.
+`npm run build` produces the same thing, and additionally runs `tsc --noEmit`
+first, so it fails on a type error instead of shipping one.
+
+`npm run dev` on `localhost:5173` is a **development server only**. It is not
+the product, it is not the artifact, and nothing in `dist/` depends on it being
+running.
+
+**A2A federation is the only feature that binds a TCP port**
+(`src/mission/a2aServer.ts`). It defaults to `127.0.0.1` and refuses to widen
+itself — `0.0.0.0` is rejected in words, and a hostname is refused because a
+name can resolve anywhere. In the static `dist/` edition that listener does not
+exist, so the browser edition holds no port at all.
+
+`npm run web:build` works on Windows. It used to shell out to POSIX `rm -rf`
+and `cp`, which failed *after* a successful Vite build and exited 1 — a broken
+build that looked like a broken app.
 
 ## Where to read more
 

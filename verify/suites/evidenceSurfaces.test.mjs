@@ -327,7 +327,7 @@ var ENGINE_VERSION, ENGINE_SHORT, ENGINE_CODENAME, PRODUCT_TITLE;
 var init_version = __esm({
   "src/version.ts"() {
     "use strict";
-    ENGINE_VERSION = "19.7.15";
+    ENGINE_VERSION = "19.7.16";
     ENGINE_SHORT = "19.7";
     ENGINE_CODENAME = "SelfImpulse";
     PRODUCT_TITLE = `SelfImpulse (engine MJ ${ENGINE_SHORT} "${ENGINE_CODENAME}")`;

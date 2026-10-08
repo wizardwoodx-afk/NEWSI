@@ -106,7 +106,13 @@ export function loadInitiative(): InitiativeState {
     /* sandboxed embeds: module memory only */
   }
   state = {
-    level: 1,
+    /* A fresh install now boots on ME. It shipped at level 1, which meant the
+       heartbeat was live before anyone had asked it to be — on a product whose
+       whole claim is that nothing acts without the operator, defaulting to
+       self-initiation contradicted that in the one moment there was no
+       operator decision to point at. Anyone who already chose a level keeps it:
+       this is the fallback for absent state, not a reset. */
+    level: 0,
     followUps: [],
     acts: [],
     lastWakeAt: null,

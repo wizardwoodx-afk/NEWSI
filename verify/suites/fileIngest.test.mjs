@@ -73738,9 +73738,13 @@ function loadKnowledgeProposals() {
   return [];
 }
 function saveKnowledgeProposals(memory) {
+  const store = globalThis.localStorage;
+  if (!store) return { ok: false, error: null, persistent: false };
   try {
-    globalThis.localStorage?.setItem(LS_KEY2, JSON.stringify(memory));
-  } catch {
+    store.setItem(LS_KEY2, JSON.stringify(memory));
+    return { ok: true, error: null, persistent: true };
+  } catch (e) {
+    return { ok: false, error: `${e instanceof Error ? e.message : String(e)}`.slice(0, 180), persistent: true };
   }
 }
 function defaultVendorFor(harness) {
@@ -73773,9 +73777,6 @@ async function proposeKnowledgeSkill(args) {
     return { ok: false, error: `document too large (${content.length} chars; cap ${MAX_CONTENT}) \u2014 distill a chapter, not a library` };
   }
   const structure = extractStructure(content);
-  if (structure.frameworks.length === 0 && structure.decisionRules.length === 0 && structure.chapterHints.length === 0) {
-    return { ok: false, error: "no extractable structure (headings, rules, frameworks) \u2014 VH distills structure, not summaries; a raw blob is refused" };
-  }
   const nowIso = args.nowIso ?? (/* @__PURE__ */ new Date()).toISOString();
   const sourceName = args.sourceName?.trim() || null;
   const sha = await sha256Hex(content);
@@ -73853,11 +73854,13 @@ async function proposeKnowledgeSkill(args) {
     ...frameworks.length > 0 ? [`Frameworks: ${frameworks.join("; ")}`] : [],
     ...rules.map((r) => `- ${r}`)
   ].join("\n");
-  const procedure = llmProcedure ? `LLM-distilled guidance:
+  const distilled = llmProcedure ? `LLM-distilled guidance:
 ${llmProcedure}
 
 Extracted rules:
-${mechanicalProcedure}` : mechanicalProcedure || "Structured notes extracted from the source document.";
+${mechanicalProcedure}` : mechanicalProcedure;
+  const procedure = distilled || `Source content (no rules distilled \u2014 carried verbatim):
+${content.replace(/^\s*>\s*Read notes:[\s\S]*$/m, "").trim().slice(0, 2400)}`;
   const knownFailureModes = llmFailureModes.length > 0 ? llmFailureModes.join("\n- ") : "Not measured: knowledge skill \u2014 failures are only knowable after real use.";
   const proposal = {
     id: `kn-${uid("knw").slice(0, 14)}`,
@@ -73880,7 +73883,10 @@ ${mechanicalProcedure}` : mechanicalProcedure || "Structured notes extracted fro
   };
   const memory = loadKnowledgeProposals();
   memory.push(proposal);
-  saveKnowledgeProposals(memory);
+  const saved = saveKnowledgeProposals(memory);
+  if (!saved.ok && saved.error) {
+    return { ok: false, error: `the knowledge proposal was distilled but could not be saved: ${saved.error} Nothing was persisted \u2014 this document is not in Docs and nothing is awaiting your decision. Free up on-device storage (Docs proposals and the ingest log share it) and send the document again.` };
+  }
   return { ok: true, proposal };
 }
 function decideKnowledgeProposal(args) {
@@ -73889,13 +73895,31 @@ function decideKnowledgeProposal(args) {
   if (!p) return { ok: false, error: `no knowledge proposal matches ${args.id}` };
   if (p.status !== "proposed") return { ok: false, error: `proposal ${args.id} was already ${p.status} \u2014 one decision per proposal` };
   const nowIso = args.nowIso ?? (/* @__PURE__ */ new Date()).toISOString();
+  p.status = args.decision === "APPROVED" ? "approved" : "discarded";
+  p.decidedBy = args.by;
+  p.decidedAt = nowIso;
+  p.decidedNote = args.note ?? null;
+  const saved = saveKnowledgeProposals(memory);
+  if (!saved.ok && saved.error) {
+    return { ok: false, error: `the decision could not be recorded: ${saved.error} Nothing was approved and no skill was mirrored \u2014 the proposal is still awaiting its one decision.` };
+  }
   let mirrored = false;
   if (args.decision === "APPROVED") {
     const skills = loadSkills();
     const line = {
       id: `kn-${p.id.replace("kn-", "")}`,
       name: p.title.slice(0, 60),
-      description: `[knowledge] ${p.summary.slice(0, 160)} \u2014 ${p.procedure.slice(0, 440)}`,
+      /* 440 was the whole procedure budget, and a real mechanical digest is
+       * longer than that by design: `extractStructure` keeps up to 12 framework
+       * names and 16 decision rules, and `proposeKnowledgeSkill` joins them with
+       * the LLM text on top. Truncating at 440 characters cut most of a
+       * document's guidance off at roughly the third rule — so even on the
+       * mission path, where this mirror is the only thing that travels, what a
+       * member read was a stub. The chat path no longer depends on this mirror
+       * (see `approvedKnowledgeBriefing` in engine/generalist.ts, which reads
+       * `p.procedure` directly); this cap now only bounds the learned-NODE
+       * library entry, and it bounds it far above where a procedure dies. */
+      description: `[knowledge] ${p.summary.slice(0, 320)} \u2014 ${p.procedure.slice(0, 2400)}`,
       source: "knowledge",
       sourceMissionId: `knowledge:${p.provenance.sourceSha256.slice(0, 16)}`,
       status: "approved",
@@ -73904,11 +73928,6 @@ function decideKnowledgeProposal(args) {
     saveSkills(mergeProposals(skills, [line]), "human");
     mirrored = true;
   }
-  p.status = args.decision === "APPROVED" ? "approved" : "discarded";
-  p.decidedBy = args.by;
-  p.decidedAt = nowIso;
-  p.decidedNote = args.note ?? null;
-  saveKnowledgeProposals(memory);
   return { ok: true, proposal: p, mirrored };
 }
 var KNOWLEDGE_TOOL, LS_KEY2, RULE_HINTS, ARROW, LLM_PROMPT, MIN_CONTENT, MAX_CONTENT;
@@ -73962,6 +73981,8 @@ var METHOD_BZIP2 = 12;
 var METHOD_ZSTD = 20;
 var METHOD_AES = 99;
 var FLAG_ENCRYPTED = 1;
+var UNIX_KIND_DIRECTORY = 16384;
+var UNIX_KIND_SYMLINK = 40960;
 function looksLikeZip(bytes) {
   if (bytes.length < 4) return false;
   const sig = bytes[0] | bytes[1] << 8 | bytes[2] << 16 | bytes[3] << 24;
@@ -74016,13 +74037,21 @@ function readCentralDirectory(bytes) {
     const extAttrs = view.getUint32(p + 38, true);
     if (p + 46 + nameLen > bytes.length) return { entries, zip64, error: `entry ${n + 1} declares a name beyond the end of the file` };
     const name = new TextDecoder().decode(bytes.subarray(p + 46, p + 46 + nameLen));
+    const unixMode = extAttrs >>> 16 & 65535;
+    const unixKind = unixMode & 61440;
     entries.push({
       name,
       compressedSize,
       expandedSize,
       method,
       encrypted: (flags & FLAG_ENCRYPTED) !== 0,
-      directory: name.endsWith("/") || extAttrs >>> 16 === 16384
+      directory: name.endsWith("/") || unixKind === UNIX_KIND_DIRECTORY,
+      /* S_IFLNK. The bytes stored under a symlink entry are a PATH, not a
+         document — so a member called `notes.md` whose content is
+         `../../.ssh/id_rsa` would otherwise be read as prose and quoted into a
+         proposal as if the owner had written it. This door never writes to disk,
+         which is why the entry is harmless to inflate and unacceptable to KEEP. */
+      symlink: unixKind === UNIX_KIND_SYMLINK
     });
     p += 46 + nameLen + extraLen + commentLen;
   }
@@ -74052,8 +74081,19 @@ function scanContainer(bytes, limits = ARCHIVE_LIMITS) {
     compressedBytes: files.reduce((a, e) => a + e.compressedSize, 0)
   };
   const fail = (code, words) => ({ ok: false, refusal: { code, words }, report });
+  if (cd.entries.length > limits.maxEntries) {
+    return fail("too-many-entries", `${cd.entries.length} entries in this container, above the cap of ${limits.maxEntries}. Nothing was opened.`);
+  }
   if (files.length > limits.maxEntries) {
     return fail("too-many-entries", `${files.length} files in this container, above the cap of ${limits.maxEntries}. Nothing was opened.`);
+  }
+  const seenNames = /* @__PURE__ */ new Set();
+  for (const e of cd.entries) {
+    if (!seenNames.has(e.name)) {
+      seenNames.add(e.name);
+      continue;
+    }
+    return fail("duplicate-entry", `the archive declares "${e.name}" more than once. A container with two records for one name has no single honest reading \u2014 the bytes read would not be the bytes counted \u2014 so it is refused, in words, rather than resolved by picking one.`);
   }
   const encrypted = files.find((e) => e.encrypted);
   if (encrypted) {
@@ -74068,6 +74108,9 @@ function scanContainer(bytes, limits = ARCHIVE_LIMITS) {
     }
     const bad = unsafeEntryName(e.name);
     if (bad) return fail("unsafe-entry-name", `refused by name, before any inflation: the archive carries ${bad}. SelfImpulse does not normalise a name it could not approve.`);
+    if (e.symlink) {
+      return fail("symlink-entry", `"${e.name}" is a symlink, so what it stores is a path to another file rather than the document. This door never resolves a link \u2014 a claim about the filesystem is not a document, and a member whose bytes are someone else's path must not be quoted into a proposal. Refused, in words.`);
+    }
     if (limits.maxDepth < 2 && looksLikeArchiveName(e.name)) {
       return fail("nested-archive", `"${e.name}" is itself an archive inside an archive. This door opens ONE container per dropped file (depth cap ${limits.maxDepth}) \u2014 a nested one is a DoS amplifier, not a document.`);
     }
@@ -74084,7 +74127,15 @@ function scanContainer(bytes, limits = ARCHIVE_LIMITS) {
   return { ok: true, report };
 }
 async function extractVetted(bytes, report, limits = ARCHIVE_LIMITS, deadlineAt = Number.POSITIVE_INFINITY, now = Date.now) {
-  const approved = report.entries.filter((e) => !e.directory && !unsafeEntryName(e.name));
+  const members = report.entries.filter((e) => !e.directory);
+  const approved = members.filter((e) => unsafeEntryName(e.name) === null && !e.symlink);
+  if (members.length > 0 && approved.length === 0) {
+    const first2 = members[0];
+    return refuse(
+      first2.symlink ? "symlink-entry" : "unsafe-entry-name",
+      `none of this archive's ${members.length} member(s) is something this door will read \u2014 the first, "${first2.name}", is ${unsafeEntryName(first2.name) ?? "a symlink"}. Nothing was read from it.`
+    );
+  }
   if (approved.length === 0) return { ok: true, files: [] };
   let zip;
   try {
@@ -74354,6 +74405,18 @@ async function readImages(inputs, options) {
         langPath: dataPath2,
         cachePath: dataPath2,
         gzip: true,
+        // DESKTOP CSP — this is the switch that makes OCR run at all.
+        // tesseract.js defaults `workerBlobURL` to true (its
+        // constants/defaultOptions.js), and spawnWorker.js then builds a Blob of
+        // `importScripts(workerPath)` and calls `new Worker(blobUrl)`. Under the
+        // Tauri CSP (`worker-src 'self'`, inherited from `default-src 'self'`
+        // when unset) a `blob:` worker is not a permitted worker source, so the
+        // worker never loads and every image and every scanned PDF is refused
+        // with "reader-unavailable". Spawning the SAME-ORIGIN worker script we
+        // were handed (workerPath, bundled at `ocr/worker.min.js`) is both the
+        // fix and the stricter choice: the worker's code comes from the app
+        // bundle, never from a generated blob.
+        workerBlobURL: false,
         // Pass through only when set. In Node leaving them undefined is correct — the
         // engine resolves them from the installed package, locally. In a browser the
         // guard above has already refused if they are missing.
@@ -74906,14 +74969,15 @@ async function openParts(bytes) {
   try {
     const zip = await import_jszip2.default.loadAsync(bytes);
     return {
+      ok: true,
       zip,
       text: async (name) => {
         const f = zip.file(name);
         return f ? utf8.decode(await f.async("uint8array")) : null;
       }
     };
-  } catch {
-    return null;
+  } catch (e) {
+    return { ok: false, reason: String(e instanceof Error ? e.message : e).slice(0, 160) || "the archive reader gave no reason" };
   }
 }
 function attr(tag, name) {
@@ -74952,9 +75016,10 @@ function columnIndexOf(ref) {
 }
 var MAX_SHEETS = 40;
 var SAMPLE_ROWS = 12;
+var MAX_SHEET_ROWS = 400;
 async function parseXlsx(bytes, maxChars) {
   const parts = await openParts(bytes);
-  if (!parts) return refuse("unrecognised-binary", "that .xlsx would not open as a spreadsheet.");
+  if (!parts.ok) return refuse("corrupt-archive", `that .xlsx would not open as a spreadsheet: ${parts.reason}`);
   const workbook = await parts.text("xl/workbook.xml");
   if (!workbook) return refuse("unrecognised-binary", "this .xlsx has no xl/workbook.xml, so it is not a workbook.");
   const rels = relTargets(await parts.text("xl/_rels/workbook.xml.rels"));
@@ -74973,7 +75038,7 @@ async function parseXlsx(bytes, maxChars) {
       continue;
     }
     lines.push(`## Sheet: ${name}`);
-    const rows = rowValues(xml, shared);
+    const { rows, hitRowCap } = rowValues(xml, shared);
     if (rows.length === 0) {
       lines.push("(empty sheet)");
       continue;
@@ -74985,8 +75050,13 @@ async function parseXlsx(bytes, maxChars) {
       const cells = r.map((c) => c || "").join(" \xB7 ").trim();
       if (cells.replace(/[ ·]/g, "")) lines.push(`- ${clip(cells)}`);
     }
-    if (rows.length > SAMPLE_ROWS) lines.push(`- \u2026and ${rows.length - SAMPLE_ROWS} further rows on this sheet`);
-    notes.push(`sheet "${name}": ${rows.length} row${rows.length === 1 ? "" : "s"} \xD7 ${width} column${width === 1 ? "" : "s"}`);
+    if (hitRowCap) {
+      lines.push(`- \u2026and more rows beyond the ${MAX_SHEET_ROWS}-row reading cap for one sheet \u2014 this reader stopped counting at ${MAX_SHEET_ROWS}, so the rows after it were not read and their number is not known here`);
+      notes.push(`sheet "${name}" was read to its ${MAX_SHEET_ROWS}-row cap; rows beyond it were not read and are not counted`);
+    } else if (rows.length > SAMPLE_ROWS) {
+      lines.push(`- \u2026and ${rows.length - SAMPLE_ROWS} further row${rows.length - SAMPLE_ROWS === 1 ? "" : "s"} on this sheet (${rows.length} in total, all of them read)`);
+    }
+    notes.push(`sheet "${name}": ${rows.length} row${rows.length === 1 ? "" : "s"} \xD7 ${width} column${width === 1 ? "" : "s"}${hitRowCap ? " (at the read cap)" : ""}`);
     if (lines.join("\n").length > maxChars) {
       return refuse("parsed-too-large", `this workbook is larger than one proposal can hold (${Math.round(maxChars / 1e3)}k characters of structure). Drop the sheet that matters.`);
     }
@@ -75020,14 +75090,14 @@ function rowValues(xml, shared) {
       cells[index] = text;
     }
     if (cells.some((c) => c !== "")) rows.push(cells);
-    if (rows.length >= 400) break;
+    if (rows.length >= MAX_SHEET_ROWS) return { rows, hitRowCap: true };
   }
-  return rows;
+  return { rows, hitRowCap: false };
 }
 var MAX_SLIDES = 200;
 async function parsePptx(bytes, maxChars) {
   const parts = await openParts(bytes);
-  if (!parts) return refuse("unrecognised-binary", "that .pptx would not open as a deck.");
+  if (!parts.ok) return refuse("corrupt-archive", `that .pptx would not open as a deck: ${parts.reason}`);
   const presentation = await parts.text("ppt/presentation.xml");
   const presRels = relTargets(await parts.text("ppt/_rels/presentation.xml.rels"));
   const ordered = [];
@@ -75378,9 +75448,13 @@ var INGEST_LIMITS = {
 };
 function createIngestRun(limits = INGEST_LIMITS, now = Date.now) {
   const startedAt = now();
-  return { startedAt, deadlineAt: startedAt + limits.runDeadlineMs, limits, files: 0, expandedBytes: 0, receipts: [] };
+  return { startedAt, deadlineAt: startedAt + limits.runDeadlineMs, limits, files: 0, expandedBytes: 0, receipts: [], capacityRefusals: [] };
 }
+var CAPACITY_CODES = ["too-many-files", "run-deadline"];
 var OLE_MAGIC = [208, 207, 17, 224];
+function claimsAnArchive(name) {
+  return /\.(zip|jar|war|ear|apk|epub|cbz|egg|whl|kmz|7z|rar|tar|tgz|gz|bz2|xz|zst)$/i.test(name);
+}
 function sniffFormat(name, bytes) {
   const lower = name.toLowerCase();
   const starts = (sig) => sig.every((b, i) => bytes.length > i && bytes[i] === b);
@@ -75452,7 +75526,10 @@ async function ingestFile(run, file, limitsOverride = null, now = Date.now, iso 
     activeRun.receipts.push(receipt);
     return o.ok ? { ok: true, content: o.content, sourceName: o.sourceName, receipt } : { ok: false, refusal: o.refusal, receipt };
   };
-  const blocked = (code, words, format2) => finish({ ok: false, refusal: { code, words } }, format2);
+  const blocked = (code, words, format2) => {
+    if (CAPACITY_CODES.includes(code)) activeRun.capacityRefusals.push({ file: name, code, words });
+    return finish({ ok: false, refusal: { code, words } }, format2);
+  };
   if (activeRun.files >= limits.maxFilesPerRun) {
     return blocked("too-many-files", `this drop already brought ${activeRun.files} files, past the ${limits.maxFilesPerRun} a single run takes. "${name}" was not opened.`, "unknown");
   }
@@ -75462,13 +75539,16 @@ async function ingestFile(run, file, limitsOverride = null, now = Date.now, iso 
   if (file.bytes.length > limits.maxFileBytes) {
     return blocked("too-large-compressed", `${name} is ${(file.bytes.length / 1e6).toFixed(1)} MB, above the ${(limits.maxFileBytes / 1e6).toFixed(0)} MB ceiling for one file. Nothing was opened, not even to look.`, "unknown");
   }
+  if (file.bytes.length === 0) {
+    return blocked("empty-document", `${name} is 0 bytes \u2014 there is nothing in it. This is an unfinished download or export, not an unsupported format. Save it again and drop that.`, "unknown");
+  }
   const format = sniffFormat(name, file.bytes);
   if (format === "unknown") {
     const isOle = OLE_MAGIC.every((b, i) => file.bytes[i] === b);
     return blocked("unrecognised-binary", isOle ? `${name} is a pre-2007 binary Office file (an OLE compound document). SelfImpulse reads the XML-era formats \u2014 .docx, .xlsx, .pptx \u2014 not the legacy binary ones. Save it in the modern format and drop that.` : `${name} is not a format this door reads. It takes PDF, DOCX, XLSX/XLSM, PPTX, JSON, ZIP, Markdown and plain text \u2014 and says so rather than returning an empty document for it.`, "unknown");
   }
-  if (format === "zip" && !looksLikeZip(file.bytes)) {
-    return blocked("not-an-archive", `${name} is labelled .zip but does not open as one. SelfImpulse does not rename a file to make a format fit.`, format);
+  if (claimsAnArchive(name) && !looksLikeZip(file.bytes)) {
+    return blocked("not-an-archive", `${name} is named like a container (${name.split(".").pop()}) but does not open as one. SelfImpulse does not rename a file to make a format fit, and it does not read a container label off something that is not a container.`, format);
   }
   const fileDeadline = started + limits.perFileDeadlineMs;
   let containerMarkdown = null;

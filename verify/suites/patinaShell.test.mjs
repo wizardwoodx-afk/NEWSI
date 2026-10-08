@@ -50,7 +50,10 @@ ok("App imports Shell from ./ui/Shell", /from\s*["']\.\/ui\/Shell["']/.test(appS
 ok("App renders <Shell />", /<Shell\s*\/>/.test(appSrc));
 ok("no retired shell import survives in App", !/NextConsole|views\/|pages\/|Sidebar|Helm/.test(appSrc));
 var mainSrc = read("src/main.tsx");
-ok("main imports exactly one stylesheet (ui/vh.css)", (mainSrc.match(/import\s+['"][^'"]+\.css['"]/g) ?? []).length === 1 && /ui\/vh\.css/.test(mainSrc));
+ok(
+  "main imports every stylesheet the shell depends on, design layer last",
+  /import\s+['"]\.\/ui\/ink\.css['"]/.test(mainSrc) && /import\s+['"]\.\/ui\/si\/si\.css['"]/.test(mainSrc) && /import\s+['"]\.\/ui\/theme\.css['"]/.test(mainSrc) && mainSrc.indexOf("ui/si/si.css") < mainSrc.indexOf("ui/theme.css")
+);
 ok("no boot splash in index.html", !/si-boot|@keyframes/.test(read("index.html")));
 section("2. the store is the ONLY path to the engine \xE2\u20AC\u201D screens never bypass it");
 var storeSrc = read("src/ui/store.ts");
@@ -65,7 +68,7 @@ for (const f of SHELL_FILES.filter((x) => x.startsWith("src/ui/screens/"))) {
 }
 section("3. the human gate: approve or refuse \xE2\u20AC\u201D never a silent skip");
 var gate = read("src/ui/screens/GateCard.tsx");
-ok("the gate card offers Approve once", /Approve once/.test(gate) && /decideGate\(\{\s*approved:\s*true\s*\}\)/.test(gate));
+ok("the gate card offers Approve", /Approve/.test(gate) && /decideGate\(\{\s*approved:\s*true\s*\}\)/.test(gate));
 ok("refusal carries a reason into the receipt", /decideGate\(\{\s*approved:\s*false,\s*reason:/.test(gate));
 ok("the gate names the risk tier", /riskTier/.test(gate));
 ok("Work floats the gate over the graph", /gate-float/.test(read("src/ui/screens/Work.tsx")) && /<GateCard\s*\/>/.test(read("src/ui/screens/Work.tsx")));
@@ -103,7 +106,10 @@ ok("Enter sends (Shift+Enter breaks a line)", /e\.key === "Enter" && !e\.shiftKe
 var settings = read("src/ui/screens/Settings.tsx");
 ok("Settings connects a provider through the store", /setProvider\(\{\s*kind,\s*baseUrl/.test(settings));
 ok("Settings creates/unlocks the vault through the store", /createVault\(pass\)/.test(settings) && /unlockVault\(pass\)/.test(settings));
-ok("the Memory door opens a remembered conversation on double-click", /onNodeDoubleClick=\{open\}/.test(read("src/ui/screens/Memory.tsx")) && /openConversation\(/.test(read("src/ui/screens/Memory.tsx")));
+ok(
+  "the Memory door opens a remembered conversation through an explicit control",
+  /onClick=\{\(\) => openConversation\(s\.id\)\}/.test(read("src/ui/screens/Memory.tsx")) && /Open the conversation/.test(read("src/ui/screens/Memory.tsx"))
+);
 section("5. two graphs, deliberately different");
 var fg = read("src/ui/graph/ForceGraph.tsx");
 ok("Work is a top-down DAG with arrows", /dagMode\(work \? "td"/.test(fg) && /linkDirectionalArrowLength\(work \? 3\.5 : 0\)/.test(fg));

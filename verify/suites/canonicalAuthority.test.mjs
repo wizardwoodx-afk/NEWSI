@@ -9,6 +9,13 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
+// src/security/auditScrub.ts
+var init_auditScrub = __esm({
+  "src/security/auditScrub.ts"() {
+    "use strict";
+  }
+});
+
 // src/security/actionGraph.ts
 function stableStringify(value) {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
@@ -65,6 +72,7 @@ var RISK_ORDER;
 var init_actionGraph = __esm({
   "src/security/actionGraph.ts"() {
     "use strict";
+    init_auditScrub();
     RISK_ORDER = { low: 0, medium: 1, high: 2, critical: 3 };
   }
 });

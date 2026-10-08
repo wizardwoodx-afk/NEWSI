@@ -67,13 +67,33 @@ export function asKV(store: DurableKVLike): DurableKV {
 
 /** The host default: localStorage when it really exists (with getItem — the
  * 16.10.1 structural fix), else an ephemeral Map (probes, non-persistent
- * hosts — honest, nothing pretends to persist). */
+ *  hosts — honest, nothing pretends to persist).
+ *
+ *  MEMOIZED per module instance on purpose (19.7.16). It used to hand back a
+ *  brand-new ephemeral Map on every call, so two callers that both said
+ *  "the host default" got two different stores: `durableSave` wrote to one
+ *  and the DoneLedger read from another, and the run journal's write seat
+ *  was not the seat its resume read. The host default is the host default —
+ *  one seat, resolved on first use (not at module load, so a host that
+ *  installs a `localStorage` shim in its own body still gets it). */
+let hostDefault: DurableKV | null = null;
 export function defaultDurableKV(): DurableKV {
+  if (hostDefault) return hostDefault;
   const ls = (globalThis as { localStorage?: Storage }).localStorage;
-  if (ls && typeof ls.getItem === "function") return asKV(ls);
-  // ephemeral: probes and non-persistent hosts — works, persists nothing, says so
-  const mem = new Map<string, string>();
-  return { get: (k) => mem.get(k) ?? null, set: (k, v) => void mem.set(k, v) };
+  if (ls && typeof ls.getItem === "function") hostDefault = asKV(ls);
+  else {
+    // ephemeral: probes and non-persistent hosts — works, persists nothing, says so
+    const mem = new Map<string, string>();
+    hostDefault = { get: (k) => mem.get(k) ?? null, set: (k, v) => void mem.set(k, v) };
+  }
+  return hostDefault;
+}
+
+/** Drop the memoized host default. A probe that swaps the host's storage
+ *  (installs a `localStorage` shim mid-process) calls this so the next
+ *  `defaultDurableKV()` sees the new host instead of the old seat. */
+export function resetDurableKVDefault(): void {
+  hostDefault = null;
 }
 
 /**

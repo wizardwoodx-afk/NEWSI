@@ -259,9 +259,13 @@ function loadKnowledgeProposals() {
   return [];
 }
 function saveKnowledgeProposals(memory2) {
+  const store = globalThis.localStorage;
+  if (!store) return { ok: false, error: null, persistent: false };
   try {
-    globalThis.localStorage?.setItem(LS_KEY4, JSON.stringify(memory2));
-  } catch {
+    store.setItem(LS_KEY4, JSON.stringify(memory2));
+    return { ok: true, error: null, persistent: true };
+  } catch (e) {
+    return { ok: false, error: `${e instanceof Error ? e.message : String(e)}`.slice(0, 180), persistent: true };
   }
 }
 function defaultVendorFor(harness) {
@@ -300,9 +304,6 @@ async function proposeKnowledgeSkill(args) {
     return { ok: false, error: `document too large (${content.length} chars; cap ${MAX_CONTENT}) \u2014 distill a chapter, not a library` };
   }
   const structure = extractStructure(content);
-  if (structure.frameworks.length === 0 && structure.decisionRules.length === 0 && structure.chapterHints.length === 0) {
-    return { ok: false, error: "no extractable structure (headings, rules, frameworks) \u2014 VH distills structure, not summaries; a raw blob is refused" };
-  }
   const nowIso = args.nowIso ?? (/* @__PURE__ */ new Date()).toISOString();
   const sourceName = args.sourceName?.trim() || null;
   const sha = await sha256Hex(content);
@@ -380,11 +381,13 @@ async function proposeKnowledgeSkill(args) {
     ...frameworks.length > 0 ? [`Frameworks: ${frameworks.join("; ")}`] : [],
     ...rules.map((r) => `- ${r}`)
   ].join("\n");
-  const procedure = llmProcedure ? `LLM-distilled guidance:
+  const distilled = llmProcedure ? `LLM-distilled guidance:
 ${llmProcedure}
 
 Extracted rules:
-${mechanicalProcedure}` : mechanicalProcedure || "Structured notes extracted from the source document.";
+${mechanicalProcedure}` : mechanicalProcedure;
+  const procedure = distilled || `Source content (no rules distilled \u2014 carried verbatim):
+${content.replace(/^\s*>\s*Read notes:[\s\S]*$/m, "").trim().slice(0, 2400)}`;
   const knownFailureModes = llmFailureModes.length > 0 ? llmFailureModes.join("\n- ") : "Not measured: knowledge skill \u2014 failures are only knowable after real use.";
   const proposal = {
     id: `kn-${uid("knw").slice(0, 14)}`,
@@ -407,7 +410,10 @@ ${mechanicalProcedure}` : mechanicalProcedure || "Structured notes extracted fro
   };
   const memory2 = loadKnowledgeProposals();
   memory2.push(proposal);
-  saveKnowledgeProposals(memory2);
+  const saved = saveKnowledgeProposals(memory2);
+  if (!saved.ok && saved.error) {
+    return { ok: false, error: `the knowledge proposal was distilled but could not be saved: ${saved.error} Nothing was persisted \u2014 this document is not in Docs and nothing is awaiting your decision. Free up on-device storage (Docs proposals and the ingest log share it) and send the document again.` };
+  }
   return { ok: true, proposal };
 }
 function decideKnowledgeProposal(args) {
@@ -416,13 +422,31 @@ function decideKnowledgeProposal(args) {
   if (!p) return { ok: false, error: `no knowledge proposal matches ${args.id}` };
   if (p.status !== "proposed") return { ok: false, error: `proposal ${args.id} was already ${p.status} \u2014 one decision per proposal` };
   const nowIso = args.nowIso ?? (/* @__PURE__ */ new Date()).toISOString();
+  p.status = args.decision === "APPROVED" ? "approved" : "discarded";
+  p.decidedBy = args.by;
+  p.decidedAt = nowIso;
+  p.decidedNote = args.note ?? null;
+  const saved = saveKnowledgeProposals(memory2);
+  if (!saved.ok && saved.error) {
+    return { ok: false, error: `the decision could not be recorded: ${saved.error} Nothing was approved and no skill was mirrored \u2014 the proposal is still awaiting its one decision.` };
+  }
   let mirrored = false;
   if (args.decision === "APPROVED") {
     const skills = loadSkills();
     const line = {
       id: `kn-${p.id.replace("kn-", "")}`,
       name: p.title.slice(0, 60),
-      description: `[knowledge] ${p.summary.slice(0, 160)} \u2014 ${p.procedure.slice(0, 440)}`,
+      /* 440 was the whole procedure budget, and a real mechanical digest is
+       * longer than that by design: `extractStructure` keeps up to 12 framework
+       * names and 16 decision rules, and `proposeKnowledgeSkill` joins them with
+       * the LLM text on top. Truncating at 440 characters cut most of a
+       * document's guidance off at roughly the third rule — so even on the
+       * mission path, where this mirror is the only thing that travels, what a
+       * member read was a stub. The chat path no longer depends on this mirror
+       * (see `approvedKnowledgeBriefing` in engine/generalist.ts, which reads
+       * `p.procedure` directly); this cap now only bounds the learned-NODE
+       * library entry, and it bounds it far above where a procedure dies. */
+      description: `[knowledge] ${p.summary.slice(0, 320)} \u2014 ${p.procedure.slice(0, 2400)}`,
       source: "knowledge",
       sourceMissionId: `knowledge:${p.provenance.sourceSha256.slice(0, 16)}`,
       status: "approved",
@@ -431,11 +455,6 @@ function decideKnowledgeProposal(args) {
     saveSkills(mergeProposals(skills, [line]), "human");
     mirrored = true;
   }
-  p.status = args.decision === "APPROVED" ? "approved" : "discarded";
-  p.decidedBy = args.by;
-  p.decidedAt = nowIso;
-  p.decidedNote = args.note ?? null;
-  saveKnowledgeProposals(memory2);
   return { ok: true, proposal: p, mirrored };
 }
 
@@ -649,12 +668,14 @@ async function main() {
   ok("headings/frameworks are found", ex.frameworks.some((f) => /framework/i.test(f)), ex.frameworks.join("|"));
   ok("decision rules with 'never/when/only' arrows are extracted", ex.decisionRules.length >= 3, `${ex.decisionRules.length} rules`);
   ok("a second run extracts the identical structure (determinism)", JSON.stringify(ex) === JSON.stringify(extractStructure(DOC)));
-  section("1. G1/G2 \u2014 provenance mandatory, structure required");
+  section("1. G1/G2 \u2014 provenance mandatory, structure graded rather than required");
   const tooSmall = await proposeKnowledgeSkill({ content: "tiny", sourceName: "x.md" });
   ok("a too-small document is refused in words", !tooSmall.ok && /too small/.test(tooSmall.error ?? ""), tooSmall.error ?? "");
   const blob = await proposeKnowledgeSkill({ content: UNSTRUCTURED, sourceName: "blob.txt" });
-  ok("an unstructured blob is refused (structure, not summaries)", !blob.ok && /no extractable structure/.test(blob.error ?? ""), blob.error ?? "");
-  ok("refusals touched no store", loadKnowledgeProposals().length === 0);
+  const blobProp = blob.ok ? blob.proposal : null;
+  ok("an unstructured blob is accepted, not refused", blob.ok === true, blob.ok ? "" : blob.error ?? "");
+  ok("a structureless document carries its own content verbatim", !!blobProp && /Source content \(no rules distilled/.test(blobProp.procedure), blobProp?.procedure.slice(0, 60) ?? "");
+  ok("only the accepted blob reached the store (the too-small refusal wrote nothing)", loadKnowledgeProposals().length === 1);
   const p1 = await proposeKnowledgeSkill({ content: DOC, sourceName: "authorize-rulebook.md" });
   ok("a structured document distills into a proposal", p1.ok === true && p1.proposal.status === "proposed");
   const prop = p1.proposal;

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "checkpoints": [
+    {
+      "label": "pre-extract-v1-5-0-backup",
+      "sha": "54ca46048f21d66ed3a08d7c6bbc07178eabaf5f",
+      "timestamp": "2026-10-05T04:58:34.331Z"
+    }
+  ]
+}

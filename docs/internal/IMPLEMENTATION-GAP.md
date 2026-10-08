@@ -1,6 +1,7 @@
-# Implementation-gap document — 19.7.15
+# Implementation-gap document — 19.7.16
 
-Engine audit against the frozen architecture. Written 2026-09-26.
+Engine audit against the frozen architecture. Written 2026-09-26, revised
+2026-10-06.
 Baseline and final state are both the full green gate. The runners print the
 exact suite count; this file deliberately does not repeat one, and
 `probe/docConsistency.test.ts` fails the build if a live document ever states a
@@ -8,6 +9,16 @@ count that disagrees with the tree.
 
 This document is a record of what was found, what was changed, and what was
 deliberately left alone. Items marked **OPEN** are real and are not done.
+
+**Revision note (19.7.16).** §3.5 records six findings that have since landed,
+each re-verified against the source for this revision. OPEN-2 is now closed —
+`crew.ts` reached the UI. Two new items were added by this revision:
+**OPEN-14** (a 4-bit A2A seat id that makes an intermittent test failure a
+dice roll rather than a race) and **OPEN-15** (the offline pack verifies the
+live working tree, not the tree it was built from). Every OPEN item not marked
+"re-verified" below was **not** re-counted in this pass; where the module graph
+moved underneath the original figure, that is said so rather than quietly
+repeated.
 
 ---
 
@@ -138,6 +149,33 @@ did not describe a sequence.
 
 ---
 
+## 3.5 What landed after this audit (re-verified 19.7.16)
+
+Six items were carried as findings and have since landed. Each was re-checked
+against the source for this revision, not taken from a changelog.
+
+| Item | Where it lives now | Verdict |
+|---|---|---|
+| Skill imports are scanned for injection | `src/engine/skillsImport.ts:162` `assessImport` strips invisible characters, runs `scanForInjection`, and refuses a `critical` tier in words. The scan line rides the stored record as `scanNote`, so the finding is disclosed rather than swallowed. | landed |
+| …and re-scanned at composition time | `skillsImport.ts:366-398`. A body written by an older build predates the scan, so the store-write path alone is not a boundary. Three refusal paths close it. | landed |
+| Federation depth bound | `src/mission/selfimpulseTeams.ts:360` `MAX_FEDERATION_HOPS = 2`. The sender's claimed hop is never authoritative (`:329-347`); the receiver counts its **own** observed hops and refuses past the limit (`:455-458`). A forged `hop: 1` buys a peer nothing. | landed |
+| Federation spend caps | `src/mission/caps.ts:84` `INBOUND_DELEGATION_CAPS` — $2, 40 turns, 4 invocations, 30 min, all strictly under the owner's own defaults. | landed |
+| Pre-dispatch budget check | `src/mission/a2aBridge.ts:425` refuses before dispatch on `ledger.admissionError()`; `src/mission/teamExecutor.ts:1413-1416` refuses per turn as `blocked_budget`; `src/engine/agentLoop.ts:246-260` applies a pre-dispatch token ceiling. The repair rung is admitted separately so a ceiling cannot be evaded by retrying (`:333-337`). | landed |
+| Durable-run persistence | `src/mission/runCheckpoints.ts` now has a full path — `persistRunJournal`, `restoreRunJournal`, `loadRunJournal`, `resumeRun`, and a lazily-resolved store (`:81-105`, so a graph installed after module load is not silently missed). `missionRuntime.ts:395` calls `resumeRun` **before any new work**, so the verdict is on the record first. | landed, with a seam open — see below |
+| Crew idempotency | `src/mission/teamExecutor.ts:1616-1653` gates `git add -A`/`commit` on `dispatchedAnyTurn`, so a resumed seat cannot re-apply work it already applied; `src/mission/crewMission.ts:399,414` consumes `seat.idempotency.reused` and reports the count. | landed |
+| Undefined `--si-*` tokens | **0 remain.** Measured across `src/ui/vh.css` + `src/ui/si/si.css`: 41 tokens declared, 39 consumed via `var()`, 0 undefined. The 15 that were referenced without a declaration are now declared. | landed |
+
+### 3.5.1 The durable-run seam that is still open
+
+The engine path is complete and wired. The **UI** path is not:
+`resumeDurableRun()` and `flushRunJournal()` are defined at
+`missionRuntime.ts:1441` and `:1462` and have **no caller in `src/ui/`**. So
+the two cases that matter most in practice — "can my interrupted run
+continue?" at startup, and "save now" while the window is closing — are
+reachable from the runtime but not from the app. Carried forward as **OPEN-14**.
+
+---
+
 ## 4. OPEN — not done
 
 These are real. None is cosmetic.
@@ -149,10 +187,17 @@ constitution, drift, canary and rollback governance. `runRsiCycle`,
 `recordRsiSignal` and `revertRsiMemory` are wired. The pinned external
 verifier at `verifier/si-verifier.mjs` is never spawned by the app. The
 machinery is correct and unreachable.
+*Re-verified 19.7.16: still open. The three exports are defined at
+`src/engine/rsi.ts:215,263,333` and referenced from doc comments only.*
 
-**OPEN-2 · `crew.ts` is dead (472 lines).** The only code with true
-concurrency, per-member failover, a circuit breaker and hot mode switching.
-No UI or `src/` caller. §2.3 works around this rather than through it.
+**OPEN-2 · ~~`crew.ts` is dead (472 lines).~~ CLOSED 19.7.16.** This item said
+the only code with true concurrency, per-member failover, a circuit breaker and
+hot mode switching had no `src/` caller. It now has one:
+`src/mission/crewMission.ts:97` imports `runCrewSession` and calls it at
+`:492`, and `src/ui/screens/Work.tsx:39-45` calls `runCrewMission` from the
+screen. The breaker, the 25-lane bounded concurrency (`crew.ts:63,362`) and
+mode switching are now on a live path. §2.3's workaround is still the path
+`store.ts` uses; the crew module is the path `Work.tsx` uses. Both are real.
 
 **OPEN-3 · The clock tool is hard-wired to one city's timezone.** `selfimpulse.ts`
 computes IST and `SelfImpulsePage.tsx` ships a starter button that asks for that
@@ -162,16 +207,23 @@ probes, and it is a product decision rather than a defect.
 
 **OPEN-4 · `gateRules.ts` is unwired.** `answerGateWithRules` is called only
 by a probe.
+*Re-verified 19.7.16: still open. Defined at `src/engine/gateRules.ts:57`,
+no caller in `src/`.*
 
 **OPEN-5 · 27 modules are unreachable from `store.ts`.** Includes `byoa.ts`,
 `wings.ts`, `graph3d.ts`, `modes.ts`, `steward.ts`, `lotus.ts`, `teams`
 (`groups.ts`), and `finance/` entirely — so the finance engine, `xlsxLite` and
 the demo generator ship in the bundle but run only under probes.
+*Not re-counted this pass — the module graph moved while four agents were
+editing `src/`. The figure is stale, not disproved; re-count before citing it.*
 
 **OPEN-6 · `SELF_EVOLUTION_FLOOR` and `RSI_FLOOR` are decorative.** Both are
 string arrays explicitly `void`-ed. Tighten-only is enforced *structurally* by
 the override store's shape, which is the honest mechanism, but the named
 "floor" is words. Either enforce it or delete it.
+*Re-verified 19.7.16: still open. `SELF_EVOLUTION_FLOOR`
+(`selfEvolve.ts:40`) is joined into a display string at `:151`;
+`RSI_FLOOR` (`rsi.ts:43`) appears only inside a doc string at `:47`.*
 
 **OPEN-7 · `reach/delegationGrant.ts` is the weakest oracle.** It is the only
 cross-principal decision point whose output is an unsigned hash, and
@@ -204,6 +256,46 @@ candidate pool to `MAX_K = 3`*, which is a real effect on routing. Removing it
 would change routing outcomes and needs its own probe cycle, so it was left
 in place. The attribution bug in §2.4 is fixed; the wasted call is not.
 
+**OPEN-14 · An A2A seat id carries 4 bits of entropy, and worktree branches
+are never deleted.** Found 19.7.16 while diagnosing an intermittent test
+failure; it is a product defect, not a test artifact.
+
+- `src/mission/a2aBridge.ts:184` builds a seat id as
+  `` `a2a-${teammate.id.slice(0,8)}-${uid("seat").slice(0,6)}` ``. `uid()`
+  returns `seat-<csprng token>`, so `slice(0, 6)` keeps the five literal
+  characters `seat-` plus **one** hex character. Measured over 4,000 draws:
+  **16 distinct values — 4 bits.**
+- `src/mission/collaboration.ts:78` turns that id into a branch
+  (`vh/<missionSlug>/<seatId>`) and into the worktree directory path.
+- `collaboration.ts:94` removes a worktree with `git worktree remove --force`,
+  which removes the **directory** and leaves the **branch** behind.
+- So a second delegation against the same repository and the same teammate asks
+  `git worktree add -b` for a branch that already exists. Git exits 255 with
+  `fatal: a branch named '…' already exists`, `teamExecutor.ts:818` records the
+  seat as failed ("its worktree could not be created"), the run reports
+  `blocked`, and the bridge returns `ok: false`.
+- **Failure rate 1/16 ≈ 6.25% per run, independent of machine load.** Measured:
+  39 green / 1 red over 40 strictly sequential solo runs on an idle machine, and
+  1 red in 16 concurrent runs. It is a dice roll, not a race.
+
+The fix belongs to whoever owns `src/`: widen the slice so real entropy
+survives (and stop slicing a prefixed id at all — slice the token, not
+`seat-<token>`), and delete or reuse the branch on teardown so the second run
+against one repo is a legitimate operation. Until then, treat any intermittent
+`a2aBridge` / `a2aRuntime` failure as **this**, and read the git message rather
+than assuming a regression.
+
+**OPEN-15 · The offline pack verifies the live tree, not the tree it was built
+from.** Several packed bundles re-read `src/` or a committed bundle from disk
+at runtime — `stubSurface.test.ts` scans `src/` for `node:*` imports,
+`a2aRuntime.test.mjs` and `mcpRouter.test.mjs` rebuild `tools/si-host-engine.mjs`
+and `tools/mcp-engine.mjs` and compare. So the pack is not hermetic: edit a
+source file and a pre-built bundle will legitimately fail against it. This is
+the freshness discipline working as designed, but it means "the offline pack is
+reproducible with zero install" holds for the *bundles*, not for the *working
+tree*. Say so in `docs/VERIFICATION.md` rather than leaving a reviewer to
+rediscover it.
+
 ---
 
 ## 5. Standing instruction
@@ -213,5 +305,10 @@ that already satisfy the invariants. Change only what materially violates
 them. Do not rebuild working infrastructure to match a diagram. Produce a gap
 document before destructive changes.
 
-**This document is that gap document. Items §1 and §2 are done and verified.
-Items §4 are not done and are not to be reported as done.**
+**This document is that gap document.**
+
+- Sections 1 and 2 are done and verified.
+- Section 3.5 is landed and re-verified (19.7.16).
+- The items in section 4 are **not** done and are not to be reported as done.
+  OPEN-2 is the only exception: it is closed, and it now has both a src/
+  caller and a UI path.

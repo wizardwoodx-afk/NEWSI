@@ -30,6 +30,42 @@
  * exits with code 3 — INCOMPLETE, never 0 — so no CI can mistake a partial run for a
  * pass. Suites not reached are NAMED in the summary. The default invocation prints
  * exactly what it always printed.
+ *
+ * WHY A SUITE NOW PRINTS ITS EXIT CONDITION (19.7.15). For several releases this runner
+ * printed `FAIL: <suite>` and nothing else: no exit code, no signal, no wall-clock, and
+ * stderr was discarded outright. An intermittent failure was therefore undiagnosable,
+ * and the wrong cause was written down — the timeout comment below blamed pool
+ * contention for a2aBridge.test.mjs flipping between 46/46 and 45/46. It did not.
+ * Measured, the mechanism is a 4-bit id collision inside that suite:
+ *
+ *   src/mission/a2aBridge.ts:184  builds a seat id as
+ *     `a2a-${teammate.id.slice(0,8)}-${uid("seat").slice(0,6)}`
+ *   and uid() returns `seat-<csprng token>`, so slice(0,6) keeps the five literal
+ *   characters "seat-" plus ONE hex character. That is 16 possible seat ids: 4 bits.
+ *
+ *   src/mission/collaboration.ts:78 turns the seat id into a branch
+ *   (`vh/<missionSlug>/<seatId>`) and into the worktree directory. The suite runs the
+ *   bridge more than once against ONE repo with ONE teammate, and
+ *   `git worktree remove --force` removes the worktree directory but NOT the branch it
+ *   created. The second `git worktree add -b <same name>` therefore fails with
+ *   `fatal: a branch named ... already exists`, teamExecutor.ts records the seat as
+ *   failed ("its worktree could not be created"), the run goes `blocked`, and the
+ *   suite fails.
+ *
+ *   Probability per run: 1/16 = 6.25%, independent of machine load. That is the whole
+ *   "identical trees, different results" mystery: it is a 1-in-16 dice roll, not a
+ *   race. Nothing in this runner can fix it — the defect is in the seat id, and it
+ *   belongs to whoever owns src/. It is recorded here so the next person starts from
+ *   the measurement instead of re-deriving it.
+ *
+ * What this runner DOES own, and now does:
+ *   · stderr is captured and printed, so a suite that dies on stderr is not silent.
+ *   · every FAIL names its exit code, signal, and wall-clock, and says KILLED when the
+ *     budget actually ran out — so a timeout can never again be confused with a
+ *     regression.
+ *   · `--diagnose` prints per-suite durations and exit conditions.
+ *   · `--pool N` makes the width explicit, so contention can be tested rather than
+ *     asserted.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -46,6 +82,12 @@ const flag = (name, fallback = null) => {
 };
 const shardArg = flag("--shard");
 const budgetSec = flag("--time-budget") === null ? null : Number(flag("--time-budget"));
+/* --pool N overrides the width for diagnosis. The default is chosen from the
+   machine, which is correct for a developer box and wrong for a shared CI box
+   that is already running four builds; being able to state the width is what
+   makes contention reproducible instead of folklore. */
+const poolArg = flag("--pool");
+const diagnose = argv.includes("--diagnose");
 
 /* A shard is a deterministic slice of the sorted suite list: shard i of n takes every
    suite whose index ≡ i-1 (mod n). Sorting first means two machines with the same tree
@@ -89,40 +131,90 @@ const NEEDS_DEPS = new RegExp([
 // and two runs of the same tree print the same transcript.
 const { execFile } = await import("node:child_process");
 const os = await import("node:os");
-const POOL = Math.max(2, Math.min(6, os.cpus().length));
 const results = new Map();
 
+/* Per-suite wall-clock budget. Matches the dev gate's own limit
+   (tools/run-all-probes.mjs, suiteTimeoutMs) so a suite the sequential gate
+   finishes in 9s is never SIGKILLed here for being slow in a pool. */
+const SUITE_TIMEOUT_MS = (() => {
+  const n = Number(process.env.HANDLE_PROBE_TIMEOUT_MS);
+  return Number.isFinite(n) && n > 0 ? n : 300_000;
+})();
+
+/* Pool width. Six, capped by the core count — UNCHANGED, and deliberately so.
+ *
+ * This number was briefly narrowed to 2 on Windows on the theory that memory was
+ * the constraint. It is not, and the measurements say so: six concurrent bundles
+ * peak at ~400 MB combined working set on a 13.8 GB box, the slowest suite in the
+ * pack runs 96 s against a 300 s budget, and no suite has ever been killed here.
+ * Narrowing it would have made the shipped gate roughly three times slower on an
+ * unproven theory. `--pool N` exists so that claim can be tested instead of
+ * asserted; it is how the 19.7.x flake was pinned down. */
+const POOL = (() => {
+  const n = Number(poolArg);
+  if (Number.isFinite(n) && n >= 1) return Math.floor(n);
+  return Math.max(2, Math.min(6, os.cpus().length));
+})();
+
 async function runSuite(s) {
+  const t0 = Date.now();
+  /* Every suite's exit condition is recorded, not just its verdict. A gate that
+     prints FAIL without saying WHY it failed cannot be debugged and cannot be
+     trusted: "the suite failed" and "the pool ran it out of budget" are
+     different bugs with different fixes, and until the runner distinguishes
+     them every intermittent failure looks like a regression. */
+  let meta = { ms: 0, code: null, signal: null, killed: false };
   try {
     const stdout = await new Promise((resolve, reject) => {
-      const child = execFile(
+      execFile(
         process.execPath,
         [path.join(suitesDir, s)],
         {
           cwd: root,
-          /* 300s, matching tools/run-all-probes.mjs. At 120s this cap was the
-             tightest number in the repo and it was BELOW the dev gate's own
-             limit for the identical suite: suites here run in a pool of up to
-             six, so a heavy suite that the sequential dev gate finishes in 9s
-             was SIGKILLed at 120s purely because five others were running
-             beside it. That produced a gate that failed at random — observed
-             as a2aBridge.test.mjs flipping between 46/46 and FAIL across
-             identical trees. A time limit is a budget, not a verdict; the
-             pool, not the budget, is what makes this runner fast. */
-          timeout: 300_000,
+          /* 300s, matching the dev gate's own limit (tools/run-all-probes.mjs,
+             suiteTimeoutMs). A time limit is a budget, not a verdict.
+
+             The earlier version of this comment blamed the pool for the
+             a2aBridge.test.mjs flake — "SIGKILLed at 120s purely because five
+             others were running beside it". That was measured and it is WRONG.
+             a2aBridge finishes in 9s solo and 15-18s in a pool of six, against
+             a 300s budget: it was never near a timeout, and no suite in this
+             pack has ever been killed here. The real cause is a 4-bit id
+             collision inside the suite — see the note at the top of this file.
+             The wrong diagnosis cost the next person a long time, so it is
+             recorded here rather than quietly deleted. */
+          timeout: SUITE_TIMEOUT_MS,
           killSignal: "SIGKILL",
           maxBuffer: 256 * 1024 * 1024,
           encoding: "utf8",
         },
-        (err, so) => (err ? reject(Object.assign(err, { stdout: so })) : resolve(so)),
+        (err, so, se) => {
+          if (err) {
+            err.stdout = so;
+            /* stderr was being thrown away. A suite that dies on an uncaught
+               exception, a native abort or a stack overflow reports there and
+               nowhere else, so the runner was printing FAIL followed by nothing
+               at all — an unattributable failure. */
+            err.stderr = se;
+            reject(err);
+          } else resolve(so);
+        },
       );
-      void child;
     });
-    results.set(s, { status: "pass", stdout });
+    meta = { ms: Date.now() - t0, code: 0, signal: null, killed: false };
+    results.set(s, { status: "pass", stdout, ...meta });
   } catch (err) {
-    const text = `${err && typeof err === "object" ? `${err.stdout || ""}${err.stderr || ""}` : ""}${err?.message || ""}`;
-    if (NEEDS_DEPS.test(text)) results.set(s, { status: "skip", stdout: err?.stdout || "" });
-    else results.set(s, { status: "fail", stdout: err && typeof err === "object" && "stdout" in err && typeof err.stdout === "string" ? err.stdout : "" });
+    const so = err && typeof err === "object" && typeof err.stdout === "string" ? err.stdout : "";
+    const se = err && typeof err === "object" && typeof err.stderr === "string" ? err.stderr : "";
+    meta = {
+      ms: Date.now() - t0,
+      code: typeof err?.code === "number" ? err.code : null,
+      signal: err?.signal ?? null,
+      killed: err?.killed === true || err?.signal === "SIGKILL",
+    };
+    const text = `${so}${se}${err?.message || ""}`;
+    if (NEEDS_DEPS.test(text)) results.set(s, { status: "skip", stdout: so, ...meta });
+    else results.set(s, { status: "fail", stdout: so, stderr: se, ...meta });
   }
 }
 
@@ -159,14 +251,41 @@ for (const s of suites) {
     skipped.push(s);
     skippedNeedDeps++;
   } else {
-    console.log(`FAIL: ${s}\n`);
+    /* Name the exit condition. "FAIL: x.test.mjs" with no reason is the thing
+       that made this gate undebuggable: a killed suite and an asserting suite
+       print the same line, so an intermittent failure could be neither
+       reproduced nor attributed. */
+    const why = res.killed
+      ? `KILLED after ${(res.ms / 1000).toFixed(1)}s (exit ${res.code}, signal ${res.signal}) — budget was ${(SUITE_TIMEOUT_MS / 1000).toFixed(0)}s`
+      : `exit ${res.code}${res.signal ? ` signal ${res.signal}` : ""} after ${(res.ms / 1000).toFixed(1)}s`;
+    console.log(`FAIL: ${s} — ${why}\n`);
     process.stdout.write(res.stdout);
-    failures.push(s);
+    /* A suite that dies on stderr without saying anything on stdout would
+       otherwise print FAIL followed by silence. */
+    if (res.stderr) process.stderr.write(res.stderr);
+    failures.push(`${s} (${why})`);
     fail++;
   }
 }
 
 console.log("========================================");
+if (diagnose) {
+  /* Per-suite cost and exit condition. This is the instrumentation the 19.6.x
+     flake needed and did not have: without durations and exit codes, "FAILED"
+     was the only fact available, so a memory-starved kill and an assertion
+     failure were indistinguishable. */
+  const rows = suites
+    .filter((s) => results.has(s))
+    .map((s) => ({ suite: s, ...results.get(s) }))
+    .sort((a, b) => b.ms - a.ms);
+  const slowest = rows.slice(0, 12);
+  console.log(`DIAGNOSE: pool=${POOL} budget=${(SUITE_TIMEOUT_MS / 1000).toFixed(0)}s elapsed=${elapsed.toFixed(1)}s suites=${results.size}`);
+  for (const r of slowest) {
+    console.log(`DIAGNOSE:   ${(r.ms / 1000).toFixed(1).padStart(7)}s  exit=${r.code}${r.signal ? `/${r.signal}` : ""}  ${r.status.padEnd(5)} ${r.suite}`);
+  }
+  const killed = rows.filter((r) => r.killed);
+  if (killed.length > 0) console.log(`DIAGNOSE:   KILLED: ${killed.map((r) => r.suite).join(", ")}`);
+}
 const skipNote = skippedNeedDeps > 0 ? `, ${skippedNeedDeps} skipped (need node_modules — esbuild)` : "";
 const partial = notRun.length > 0;
 const scopeNote = shard && !partial ? ` [shard ${shard.index}/${shard.count} of ${allSuites.length}]` : "";

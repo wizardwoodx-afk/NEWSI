@@ -10,6 +10,7 @@
  */
 
 import { uid } from "../app/id";
+import { scrubAuditLines, scrubAuditText, scrubAuditValue } from "../security/auditScrub";
 import type { FlightEvent, FlightEventKind } from "./types";
 
 export interface RecordInput {
@@ -80,6 +81,21 @@ export class FlightRecorder {
     if (!input.actor) throw new Error("governance: every event needs an actor");
     if (!input.authority) throw new Error("governance: every event needs an authority");
     if (!input.reason) throw new Error("governance: every event needs a reason");
+    /* §AUDIT SCRUB (claw-enterprise, MIT) — this is the ONE append path every
+     * governed mutation goes through, so it is where the trail is scrubbed: a
+     * human's denial reason quoting the token it was shown, a router rationale
+     * carrying the endpoint it was refused, a tool's stderr tail with the git
+     * remote in it. Scrubbed HERE rather than by caller discipline, because a
+     * caller that forgets once leaves a secret in a document that is replayed,
+     * exported and read by people other than the one who wrote it. Ordinary
+     * prose is untouched — see src/security/auditScrub.ts.
+     *
+     * `seq`, `actor`, `authority`, `policy`, `subjectId` are this runtime's own
+     * identifiers, never user text, so they pass through unscrubbed rather than
+     * being treated as suspect. `reason` is validated ABOVE, on the caller's
+     * string: the scrub must not be able to turn a real reason into an empty
+     * one and then trip the "every event needs a reason" rule with a message
+     * that blames the caller. */
     const event: FlightEvent = {
       seq: this.nextSeq++,
       missionId: input.missionId ?? this.missionId,
@@ -88,10 +104,10 @@ export class FlightRecorder {
       actor: input.actor,
       authority: input.authority,
       policy: input.policy || "none-required",
-      reason: input.reason,
-      evidence: input.evidence ?? [],
+      reason: scrubAuditText(input.reason),
+      evidence: scrubAuditLines(input.evidence),
       subjectId: input.subjectId ?? null,
-      data: input.data ?? {},
+      data: scrubAuditValue(input.data ?? {}) as Record<string, unknown>,
     };
     this.events.push(event);
     for (const fn of listeners) {

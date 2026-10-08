@@ -126,6 +126,18 @@ export function connectedConnectors(): AppConnector[] {
   return APP_CONNECTORS.filter((c) => connectorState(c.id).connected);
 }
 
+/**
+ * Persist a toggle ONLY.
+ *
+ * This writes one boolean (plus an optional https base) to localStorage. There is
+ * no OAuth dance, no handshake, no credential and no verification of any kind
+ * here — the connector is not "connected" to anything, and nothing on this
+ * machine proves the vendor would accept the user's request later. The only
+ * downstream effect is textual: `connectorSkills()` turns the flag into a
+ * playbook that `engine/skills.ts` can bind to a specialist. Because no key is
+ * ever collected, a call a playbook encourages still has nothing to authenticate
+ * with, so the UI labels this control enable/disable and promises nothing more.
+ */
 export function setConnectorConnected(id: string, connected: boolean, base?: string): ConnectorState[] {
   const c = getConnector(id);
   if (!c) return APP_CONNECTORS.map((x) => connectorState(x.id));

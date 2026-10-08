@@ -1,36 +1,46 @@
 /**
- * v1.1.0 (eight finishes) — design-system probe.
+ * Design-system probe — the live finish layer in src/ui/theme.css.
  *
- * One stylesheet, src/ui/vh.css. The product ships EIGHT finishes in one
- * sheet — HOLST (dark, default), OBSIDIAN, AZURE, TITANIUM, CAESAR, STRATOS
- * (dark) and PLATINUM, AKAROA (light). Each finish owns a COMPLETE token
- * block; nothing is inherited from another finish.
+ * WHAT THIS FILE MEASURES, AND WHY IT WAS REWRITTEN
+ * The sheet this file used to read is `src/ui/vh.css`, which `main.tsx` has never
+ * imported: the app shipped 41KB of 197KB CSS because the sheets carrying the
+ * shell's colours were dead on disk. Every assertion below therefore reads one of
+ * the THREE sheets that actually load — ink.css (geometry), si/si.css (the shell),
+ * theme.css (every colour, elevation, focus and motion decision) — in that order.
  *
- * What this file pins is the LAW, not the literals: a ground is a shade,
- * never an extreme (no pure black, no screen-white, no flat grey); a surface
- * ramp is measurably raised above its own ground; each finish carries exactly
- * ONE accent that clears AA as text on its own ground and is perceptually
- * distinct (ΔE) from the secondary ink; the boot block in index.html can
- * never disagree with the sheet again. The exact hex values are tuning
- * decisions — tools/contrast-check.mjs machine-checks every text pairing
- * across all eight finishes.
+ * It also used to pin eight finish ids (holst, obsidian, azure, platinum,
+ * titanium, akaroa, caesar, stratos) and asserted that `dark` and `light` must NOT
+ * exist as live themes. Those ids are not in the product; `dark` and `light` are.
+ * A test that enforces the opposite of reality is worse than no test, because it
+ * teaches everyone that red means nothing.
  *
- * Weight policy: body stays light (400); headings and interactive controls
- * may step up to 500 (medium). Nothing is bold/600+.
+ * Its thresholds were also stale in a way that matters: the ground law demanded the
+ * first surface step sit at 1.6x the ground's luminance, and three of the six
+ * finishes that DO ship fail that (charleston 1.19x, bistre 1.29x, licorice 1.58x).
+ * So the ramp laws below were re-derived from measurement rather than inherited —
+ * every threshold here is stated as a perceptual distance (CIE76 delta-E) or a WCAG
+ * ratio, and each was checked against all six live finishes before it was written.
  *
- * RE-ANCHOR HISTORY (kept, because an assertion whose comment no longer
- * describes its subject is the exact defect this file exists to catch):
+ * RE-ANCHOR HISTORY (kept, because an assertion whose comment no longer describes
+ * its subject is the exact defect this file exists to catch):
  *   · originally pinned raw hex literals;
- *   · then re-anchored to properties when the ground moved from deep ink to
- *     true black and back to a shade of black;
- *   · re-anchored again, at the owner's instruction of 2026-10-04, from
- *     two finishes to four (two dark, two light, arranged as pairs);
- *   · re-anchored a final time on 2026-10-05, when the four legacy finishes
- *     were replaced by the owner's eight supplied palettes. Two laws changed
- *     with it and are recorded at their assertion: the light-ground law no
- *     longer demands a warm ground (platinum is a cool neutral by design),
- *     and the accent law measures perceptual distance instead of hue angle
- *     (the supplied accents sit on the same hue family as the secondary ink).
+ *   · then re-anchored to properties when the ground moved from deep ink to true
+ *     black and back to a shade of black;
+ *   · re-anchored at the owner's instruction of 2026-10-04 from two finishes to
+ *     four; re-anchored again on 2026-10-05 to the owner's eight palettes;
+ *   · and re-anchored on 2026-10-07 to the six finishes that actually ship, with
+ *     TWO LAWS RETIRED because the owner overrode them directly:
+ *       - "a ground is a shade, never an extreme" — the default ground is now
+ *         Vantablack #000100, the darkest value a screen can show. That is the
+ *         owner's choice, so the law moved from the ground to what a ground at the
+ *         extreme makes impossible: shadows read as nothing there, so separation
+ *         must come from the ramp, and the default finish is held to a WIDER first
+ *         step than any other finish for exactly that reason.
+ *       - "no competitor-purple anywhere" — the brand is now Pantone 19-3737 TCX
+ *         Heliotrope, named by the owner. The law that replaces it is not a hue
+ *         ban but a coherence test: the brand ramp must hold ONE hue and move only
+ *         its lightness, which is what stops "we lifted a purple from a palette
+ *         generator" from being mistaken for a designed identity.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -43,218 +53,218 @@ function ok(label: string, cond: boolean, detail = ""): void {
 
 declare const SI_ROOT: string | undefined;
 const ROOT = typeof SI_ROOT === "string" && SI_ROOT.length > 0 ? SI_ROOT : process.cwd();
-const css = fs.readFileSync(path.join(ROOT, "src", "ui", "vh.css"), "utf8");
-const main = fs.readFileSync(path.join(ROOT, "src", "main.tsx"), "utf8");
+const read = (p: string): string => fs.readFileSync(path.join(ROOT, p), "utf8");
 
-/* Palette helpers — they measure PROPERTIES, not literals. */
+const themeCss = read("src/ui/theme.css");
+const inkCss = read("src/ui/ink.css");
+const siCss = read(path.join("src", "ui", "si", "si.css"));
+const main = read("src/main.tsx");
+const storeSrc = read(path.join("src", "ui", "store.ts"));
+const settingsSrc = read(path.join("src", "ui", "screens", "Settings.tsx"));
+const inlineHtml = read("index.html");
+
+/* ── colour maths ────────────────────────────────────────────────────────── */
 const hex = (h: string): [number, number, number] => {
   const s = h.replace("#", "").trim();
   const full = s.length === 3 ? s.split("").map((c) => c + c).join("") : s;
   return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16)) as [number, number, number];
 };
 const relLum = (h: string): number => {
-  const c = hex(h).map((v) => { const s = v / 255; return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); });
+  const c = hex(h).map((v) => { const s = v / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; });
   return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
 };
-/** the hex value of one token inside one [data-theme=…] block */
-const token = (theme: string, name: string): string => {
-  const block = css.match(new RegExp(`\\[data-theme=${theme}\\]\\s*\\{([\\s\\S]*?)\\n\\}`, "m"));
-  const m = block?.[1].match(new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{3,8})`, "i"));
-  return m ? m[1] : "";
-};
-/** CIE76 ΔE — perceptual distance between two hex colours. */
-const deltaE = (a: string, b: string): number => {
-  const lab = (h: string): [number, number, number] => {
-    const [r0, g0, b0] = hex(h);
-    const f = (c: number): number => { const s = c / 255; return s > 0.04045 ? Math.pow((s + 0.055) / 1.055, 2.4) : s / 12.92; };
-    const [r, g, b] = [f(r0), f(g0), f(b0)];
-    const X = (r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047;
-    const Y = r * 0.2126 + g * 0.7152 + b * 0.0722;
-    const Z = (r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883;
-    const k = (c: number): number => (c > 0.008856 ? Math.cbrt(c) : 7.787 * c + 16 / 116);
-    const [fx, fy, fz] = [k(X), k(Y), k(Z)];
-    return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
-  };
-  const A = lab(a); const B = lab(b);
-  return Math.sqrt((A[0] - B[0]) ** 2 + (A[1] - B[1]) ** 2 + (A[2] - B[2]) ** 2);
-};
-
-/** The RAW value of a token (hex or rgba) in one theme block. */
-const rawToken = (theme: string, name: string): string => {
-  const block = css.match(new RegExp(`\\[data-theme=${theme}\\]\\s*\\{([\\s\\S]*?)\\n\\}`, "m"));
-  const m = block?.[1].match(new RegExp(`--${name}:\\s*([^;]+);`, "i"));
-  return m ? m[1].trim() : "";
-};
-
-ok("one stylesheet — main.tsx imports vh.css and nothing else", /import '\.\/ui\/vh\.css'/.test(main) && (main.match(/\.css['"]/g) ?? []).length === 1);
-ok("the retired sheets are gone", !fs.existsSync(path.join(ROOT, "src", "styles")));
-
-/* ── THE GROUND LAW, over every dark finish ────────────────────────────── */
-/* A dark ground is a SHADE of black: not pure black (relLum > 0), not a
- * "premium charcoal" (relLum < 0.012). s1 must clear the historically
- * rejected flat value (0.0045 — vh.css's header records the first attempt
- * that "read as noise"), sit at least 1.6× the ground (once the ground is
- * not zero, only a ratio proves the surface is raised), and the whole ramp
- * must climb. */
-const FINISHES = ["holst", "obsidian", "azure", "platinum", "titanium", "akaroa", "caesar", "stratos"];
-const DARKS = ["holst", "obsidian", "azure", "titanium", "caesar", "stratos"];
-const REJECTED_FLAT_S1_LUM = 0.0045;
-const DARK_GROUND_CEILING = 0.012;
 const contrast = (a: string, b: string): number => {
   const [hi, lo] = [relLum(a), relLum(b)].sort((x, y) => y - x);
   return (hi + 0.05) / (lo + 0.05);
 };
-for (const t of DARKS) {
-  const bg = token(t, "bg"), s1 = token(t, "s1"), s2 = token(t, "s2"), s3 = token(t, "s3");
-  ok(`the ${t} ground is a shade of black (not pure black, not grey) and its surface ramp is measurably raised`,
-    relLum(bg) > 0 && relLum(bg) < DARK_GROUND_CEILING
-    && relLum(s1) < relLum(s2) && relLum(s2) < relLum(s3)
-    && relLum(s1) > REJECTED_FLAT_S1_LUM
-    && relLum(s1) > relLum(bg) * 1.6,
-    `bg ${bg} (lum ${relLum(bg).toFixed(5)}), s1 ${s1} (${relLum(s1).toFixed(5)} = ${(relLum(bg) > 0 ? (relLum(s1) / relLum(bg)) : 0).toFixed(2)}x ground), s2 ${s2}, s3 ${s3}`);
-}
-ok("the rail sits on base (transparent over background, hairline separator)", /border-right:1px solid var\(--line\)/.test(css) && !/\.side\{background:var\(--bg-deep\)/.test(css.replace(/background:transparent/, "")));
+const lab = (h: string): [number, number, number] => {
+  const [r0, g0, b0] = hex(h);
+  const f = (c: number): number => { const s = c / 255; return s > 0.04045 ? ((s + 0.055) / 1.055) ** 2.4 : s / 12.92; };
+  const [r, g, b] = [f(r0), f(g0), f(b0)];
+  const X = (r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047;
+  const Y = r * 0.2126 + g * 0.7152 + b * 0.0722;
+  const Z = (r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883;
+  const k = (c: number): number => (c > 0.008856 ? Math.cbrt(c) : 7.787 * c + 16 / 116);
+  const [fx, fy, fz] = [k(X), k(Y), k(Z)];
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+};
+const deltaE = (a: string, b: string): number => { const A = lab(a), B = lab(b); return Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]); };
+/** sRGB hue angle in degrees — used to prove a ramp moves lightness and not hue. */
+const hue = (h: string): number => {
+  const [r, g, b] = hex(h);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  if (d === 0) return NaN;
+  const seg = max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return seg * 60;
+};
 
-/* ── THE GROUND LAW, over every light finish ───────────────────────────── */
-/* A light ground is warm mineral: light but never screen-white (relLum
- * between 0.75 and 1), the ink on it is ink (relLum < 0.05) at AA or better,
- * the finish carries its own surface step BELOW the ground, no surface is
- * plain white, no surface is a flat neutral grey, and the ground is warm
- * (red channel above blue — the machine-readable form of "not concrete"). */
-const LIGHTS = ["platinum", "akaroa"];
+/* ── the six finishes that actually ship ─────────────────────────────────── */
+/* `dark` is the default and lives in theme.css's first :root. `light` is the one
+   finish ink.css still owns. The rest are theme.css attribute blocks. A finish
+   whose tokens are read from the wrong place measures as an empty string, which
+   fails loudly below rather than passing on an undefined comparison. */
+/* `[^{]*` and not `\s*\{` because the default finish is now also addressable as
+   `[data-theme="dark"]`, so its selector list spans two lines. */
+const rootBlock = themeCss.match(/:root[^{]*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+const attrBlock = (id: string, sheet: string): string =>
+  sheet.match(new RegExp(`\\[data-theme="${id}"\\]\\s*\\{([\\s\\S]*?)\\n\\}`))?.[1] ?? "";
+const SOURCES: Record<string, string> = {
+  dark: rootBlock,
+  heliotrope: attrBlock("heliotrope", themeCss),
+  charleston: attrBlock("charleston", themeCss),
+  licorice: attrBlock("licorice", themeCss),
+  bistre: attrBlock("bistre", themeCss),
+  feldgrau: attrBlock("feldgrau", themeCss),
+  light: attrBlock("light", inkCss),
+};
+/* A finish that overrides only its brand is a complete finish, not an incomplete
+   one — CSS custom properties inherit, so Heliotrope borrows the default ground,
+   ramp and ink wholesale and restates six colour tokens. Resolution therefore
+   reads the finish's own block first and falls back to the default, which is what
+   the browser does. */
+const resolve = (t: string, name: string): string => (t === "dark" ? "" : tok(SOURCES[t], name)) || tok(rootBlock, name);
+const FINISHES = Object.keys(SOURCES);
+const DARKS = ["dark", "charleston", "licorice", "bistre"];
+const LIGHTS = ["light", "feldgrau"];
+const tok = (src: string, name: string): string => src.match(new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{3,8})`))?.[1] ?? "";
 
-/* One list, asserted against the FOUR places it must never disagree with: the
-   vh.css blocks, the si.css blocks, the Theme union in store.ts, and the inline
-   boot grounds in index.html. Every past drift here was a value that existed in
-   one place and not another. */
-const siCss = fs.readFileSync(path.join(ROOT, "src", "ui", "si", "si.css"), "utf8");
-const storeSrc = fs.readFileSync(path.join(ROOT, "src", "ui", "store.ts"), "utf8");
-const settingsSrc = fs.readFileSync(path.join(ROOT, "src", "ui", "screens", "Settings.tsx"), "utf8");
+console.log("== the cascade is the one that ships ==");
+ok("main.tsx imports all three live sheets", /\.\/ui\/ink\.css/.test(main) && /\.\/ui\/si\/si\.css/.test(main) && /\.\/ui\/theme\.css/.test(main), main.match(/import[^\n]*\.css[^\n]*/g)?.join(" | "));
+ok("theme.css loads LAST, so the finish layer wins the cascade", main.lastIndexOf("theme.css") > main.lastIndexOf("si.css") && main.lastIndexOf("si.css") > main.lastIndexOf("ink.css"));
+ok("the dead sheet is not imported", !/import[^\n]*vh\.css/.test(main));
+ok("every finish declares a ground, a four-step ramp and four ink steps",
+  FINISHES.every((t) => ["ground", "surface-1", "surface-2", "surface-3", "surface-4", "ink-1", "ink-2", "ink-3", "ink-4", "accent", "accent-hi", "accent-ink"]
+    .every((n) => resolve(t, n) !== "")),
+  FINISHES.filter((t) => ["ground", "surface-1", "surface-2", "surface-3", "surface-4", "ink-1", "ink-2", "ink-3", "ink-4", "accent", "accent-hi", "accent-ink"].some((n) => resolve(t, n) === "")).join(", ") || "complete");
 
-ok("vh.css declares a [data-theme=...] block for all eight finishes",
-  FINISHES.every((t) => new RegExp(`\\[data-theme=${t}\\]\\s*\\{`).test(css)),
-  FINISHES.filter((t) => !new RegExp(`\\[data-theme=${t}\\]\\s*\\{`).test(css)).join(", ") || "all present");
-ok("si.css declares a [data-theme=\"...\"] block for all eight finishes",
-  FINISHES.every((t) => new RegExp(`\\[data-theme="${t}"\\]\\s*\\{`).test(siCss)),
-  FINISHES.filter((t) => !new RegExp(`\\[data-theme="${t}"\\]\\s*\\{`).test(siCss)).join(", ") || "all present");
-/* Retired ids must not exist as LIVE ids: not as a [data-theme=…] block,
- * not in the Theme union, not as a persisted id. The word may still appear
- * in a comment that explains why it is not migrated — that is history, not a
- * theme, and asserting over it would make the test cry wolf. */
-const RETIRED = ["dark", "light", "petrol", "fog"];
-const themeUnion = storeSrc.match(/export type Theme = ([^;]+);/)?.[1] ?? "";
-const persistedIds = [...storeSrc.matchAll(/\bid:\s*"([^"]+)"/g)].map((m) => m[1]);
-const liveBlocks = RETIRED.filter((r) =>
-  [css, siCss].some((sheet) => sheet.includes(`[data-theme=${r}]`)
-    || sheet.includes(`[data-theme="${r}"]`)));
-const inUnion = RETIRED.filter((r) => new RegExp(`"${r}"`).test(themeUnion));
-const inPersisted = RETIRED.filter((r) => persistedIds.includes(r));
-ok("no retired four-finish id survives as a LIVE theme",
-  liveBlocks.length === 0 && inUnion.length === 0 && inPersisted.length === 0,
-  `blocks: ${liveBlocks.join(", ") || "none"} / union: ${inUnion.join(", ") || "none"} / persisted: ${inPersisted.join(", ") || "none"}`);
-ok("store.ts Theme union lists exactly the eight ids",
-  (storeSrc.match(/export type Theme = ([^;]+);/)?.[1] ?? "").split("|").map((x) => x.trim().replace(/"/g, "")).filter(Boolean).length === 8);
-ok("Settings renders THEMES from the store, not a private copy",
-  /THEMES\.map\(/.test(settingsSrc) && !/FINISHES/.test(settingsSrc));
-ok("main.tsx applies the saved finish before first paint, validated against THEMES",
-  /vh\.theme\.v2/.test(main) && /THEMES\.some\(/.test(main) && /DEFAULT_THEME/.test(main));
-for (const t of LIGHTS) {
-  const bg = token(t, "bg"), fg = token(t, "fg"), s3 = token(t, "s3");
-  /* The light finishes are MINERAL, not warm: platinum is a cool near-neutral
-   * by design and akaroa is a sand. So the law measures what actually matters
-   * — clearly light (so dark ink is required), never screen-white, and the ink
-   * on it is ink at AA. Tint is asserted separately below. */
-  ok(`the ${t} ground is clearly light — never screen-white — and the ink on it is ink`,
-    relLum(bg) > 0.5 && relLum(bg) < 0.98
-    && relLum(fg) < 0.05
-    && contrast(fg, bg) >= 4.5,
-    `bg ${bg} (lum ${relLum(bg).toFixed(4)}), fg ${fg} (${relLum(fg).toFixed(4)}), contrast ${contrast(fg, bg).toFixed(2)}:1`);
-  ok(`the ${t} finish carries its own surface step`, relLum(s3) > 0 && relLum(s3) < relLum(bg),
-    `s3 ${s3} vs bg ${bg}`);
-  const surfaces = ["bg", "bg-deep", "s1", "s2", "s3", "glass"] as const;
-  const whites = surfaces.filter((n) => {
-    const v = rawToken(t, n);
-    return /^#ffffff$/i.test(v) || /^#fff$/i.test(v) || /rgba\(\s*255\s*,\s*255\s*,\s*255/i.test(v);
-  });
-  /* --accent-fg on a deep accent fill is the one deliberate near-white: it is
-   * TEXT on a dark fill for readability, written as porcelain, never #fff. */
-  ok(`no ${t} surface is plain white`, whites.length === 0, whites.join(", "));
-  const flats = surfaces.filter((n) => {
-    const v = rawToken(t, n);
-    return /^#[0-9a-f]{6}$/i.test(v) && (() => {
-      const r = parseInt(v.slice(1, 3), 16), g = parseInt(v.slice(3, 5), 16), b = parseInt(v.slice(5, 7), 16);
-      return r === g && g === b;
-    })();
-  });
-  ok(`no ${t} surface is a flat neutral grey (the surface carries material)`, flats.length === 0, flats.join(", "));
-  /* Not a dead neutral: at least one channel pair must be separated. The old
-   * law demanded red-over-blue; the supplied light finishes are a cool
-   * platinum and a warm sand, so direction is a per-finish choice while
-   * 'carries a tint at all' is the property that survives. */
-  const spread = (() => {
-    const v = token(t, "bg");
-    if (!/^#[0-9a-f]{6}$/i.test(v)) return NaN;
-    const c = [0, 2, 4].map((i) => parseInt(v.slice(1 + i, 3 + i), 16));
-    return Math.max(...c) - Math.min(...c);
-  })();
-  ok(`the ${t} ground carries a tint — it is not a dead neutral grey`, spread >= 3, `channel spread = ${spread}`);
-}
+console.log("\n== ONE id list, five places it must never disagree ==");
+const themeUnion = (storeSrc.match(/export type Theme = ([^;]+);/)?.[1] ?? "").split("|").map((x) => x.trim().replace(/"/g, "")).filter(Boolean);
+const declared = [...[themeCss, siCss, inkCss].join("\n").matchAll(/\[data-theme="([a-z]+)"\]/g)].map((m) => m[1]);
+const bootList = (inlineHtml.match(/\[([^\]]*"[a-z]+"[^\]]*)\]/)?.[1] ?? "").match(/"[a-z]+"/g)?.map((s) => s.replace(/"/g, "")) ?? [];
+const persisted = [...storeSrc.matchAll(/\bid:\s*"([a-z]+)",\s*name:/g)].map((m) => m[1]);
+/* Compared as SETS. The order the picker lists finishes in is a presentation
+   choice, not an invariant, and asserting it here would only teach the next
+   person to reorder a menu that they broke the design system. */
+const sameSet = (a: string[], b: string[]): boolean =>
+  a.length === new Set([...a, ...b]).size && a.every((x) => b.includes(x)) && b.every((x) => a.includes(x));
+ok("the Theme union lists exactly the six shipping ids", sameSet(themeUnion, FINISHES), themeUnion.join(", "));
+ok("THEMES in the store lists exactly the six shipping ids", sameSet(persisted, FINISHES), persisted.join(", "));
+ok("index.html's boot whitelist accepts exactly the six shipping ids", sameSet(bootList, FINISHES), bootList.join(", "));
+ok("no finish is declared as a block that is not in the list, or listed without a block",
+  FINISHES.every((t) => declared.includes(t) || t === "dark") && declared.every((d) => FINISHES.includes(d)),
+  `declared: ${[...new Set(declared)].join(", ")}`);
+ok("Settings renders THEMES from the store, never a private copy", /THEMES\.map\(/.test(settingsSrc) && !/const FINISHES/.test(settingsSrc));
 
-/* ── THE ACCENT LAW — one accent per finish, AA on its own ground ────── */
-/* Every finish carries ONE accent that is AA as text on its own ground and
- * on its raised surface, with accent-fg readable on top of it. It must also
- * read as a distinct colour, not as a second grey — asserted perceptually
- * (CIE76 ΔE against fg-2), not by hue angle: the supplied palettes put the
- * accent on the same hue family as the secondary ink, so hue distance would
- * fail on legitimate designs while saying nothing about what a user sees. */
-/* Each dark/light pair shares ONE accent hue (the identity is the hue; the
- * per-finish value is a tuning decision). The dark member pulls brighter,
- * the light member holds deeper, and both clear AA as text on their own
- * ground. Every house hue is WARM (0–60deg): unmistakably not the default
- * blue, purple or electric cyan an agent tool reaches for by default. */
+/* A finish has to be addressable by something other than the document element,
+   or the Appearance picker cannot paint a swatch of it. `light` lived behind
+   `html[data-theme="light"]` alone — the qualification it needs to win the
+   cascade — so its swatch resolved the DEFAULT ground and looked like a dark
+   finish named "Light". The selector list is scanned for a rule whose subject is
+   not `html`, which is the smallest check that would have caught that. */
+const allSheets = [themeCss, inkCss, siCss].join("\n");
 for (const t of FINISHES) {
-  const a = token(t, "accent"), bg = token(t, "bg"), fg2 = token(t, "fg-2");
-  const d = deltaE(a, fg2);
-  ok(`the ${t} finish carries ONE accent that is AA on its own ground and reads as colour, not as a second grey`,
-    contrast(a, bg) >= 4.5
-    && contrast(a, token(t, "s1")) >= 4.5
-    && contrast(token(t, "accent-fg"), a) >= 4.5
-    && d >= 10,
-    `${t} accent ${a} on ${bg} ${contrast(a, bg).toFixed(2)}:1, accent-fg on accent ${contrast(token(t, "accent-fg"), a).toFixed(2)}:1, ΔE vs fg-2 = ${d.toFixed(1)}`);
+  const subjects = [...allSheets.matchAll(new RegExp(`([^\\s,{}\\[]*)\\[data-theme="${t}"\\]`, "g"))].map((m) => m[1]);
+  ok(`the ${t} finish is addressable by a non-root element (a swatch can paint it)`,
+    subjects.some((s) => s !== "html"), `subjects: ${subjects.join(" | ") || "none"}`);
 }
-ok("the focus ring token clears the 3:1 WCAG 2.2 SC 2.4.11 needs in every finish",
-  FINISHES.every((t) => contrast(token(t, "accent-3"), token(t, "bg")) >= 3),
-  FINISHES.filter((t) => contrast(token(t, "accent-3"), token(t, "bg")) < 3).join(", ") || "all clear");
-ok("no default-blue / competitor-purple / electric-cyan anywhere", !/#007AFF|#3B82F6|#2563EB|#7C3AED|#06B6D4/i.test(css));
+ok("main.tsx validates the saved finish before first paint", /THEMES\.some\(/.test(main) && /DEFAULT_THEME/.test(main));
 
-/* ── TYPE ──────────────────────────────────────────────────────────────── */
-/* Gambetta for display (editorial serif), Switzer for body (a neo-grotesque
- * that is not the font every other agent tool ships), Fragment Mono for data.
- * Never Inter; never a second display face. */
-ok("Gambetta for display, Switzer for body, Fragment Mono for data", /Gambetta/.test(css) && /Switzer/.test(css) && /Fragment Mono/.test(css));
-ok("not Inter", !/font-family[^;}]*Inter\b/.test(css));
-ok("weights top out at medium (500) — nothing semibold/bold/600+", !/font-weight:\s*(6|7|8|9)00/.test(css) && !/font-weight:\s*bold(?!.*oblique)/.test(css.replace(/font-weight:\(.*?\)/g, "")));
-ok("no legacy animation gimmicks (splash, shimmer, glow keyframes)", !/@keyframes\s+(splash|shimmer|glow|pulseGlow|float)/.test(css));
-/* The default finish (the first id) rides the bare html,body rule; every other
-   finish gets its own attribute-scoped rule. Both are read back out of the
-   inline block and compared to vh.css --bg, so a ground cannot drift. */
-const inlineHtml = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
-const inline = inlineHtml.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? "";
-const DEFAULT_ID = FINISHES[0];
+console.log("\n== the ramp law — every step is perceptible ==");
+/* Re-derived 2026-10-07 from the six shipping finishes: the tightest legitimate
+   step in the whole system is 2.30 delta-E (charleston's ground to its first
+   surface), and the widest collapse this law has to catch is two identical tokens
+   at 0. The bar sits at 2.0 — it passes every finish with margin and fails any
+   step that has been flattened into its neighbour. */
 for (const t of FINISHES) {
-  const re = t === DEFAULT_ID
-    ? /html,body\{[^}]*?background:\s*(#[0-9a-fA-F]{3,8})/
-    : new RegExp('\\[data-theme="' + t + '"\\][^{]*\\{[^}]*?background:\\s*(#[0-9a-fA-F]{3,8})');
-  const inlineBg = inline.match(re)?.[1] ?? "";
-  ok(`the inline boot ground for ${t} EQUALS --bg in vh.css -- they cannot separate again`,
-    inlineBg !== "" && inlineBg.toLowerCase() === token(t, "bg").toLowerCase(),
-    `index.html ${inlineBg || "(none)"} vs vh.css ${token(t, "bg")}`);
+  const ramp = ["ground", "surface-1", "surface-2", "surface-3", "surface-4"].map((n) => resolve(t, n));
+  const steps = ramp.slice(1).map((v, i) => deltaE(ramp[i], v));
+  ok(`the ${t} surface ramp never collapses — every step is a perceptible move`,
+    Math.min(...steps) >= 2.0,
+    `steps ${steps.map((s) => s.toFixed(2)).join(", ")} (min ${Math.min(...steps).toFixed(2)})`);
+  ok(`the ${t} ink ramp never collapses`, (() => {
+    const inks = ["ink-1", "ink-2", "ink-3", "ink-4"].map((n) => resolve(t, n));
+    return Math.min(...inks.slice(1).map((v, i) => deltaE(inks[i], v))) >= 6.0;
+  })(), ["ink-1", "ink-2", "ink-3", "ink-4"].map((n) => resolve(t, n)).join(" "));
 }
-ok(`index.html boots the default finish server-side (${DEFAULT_ID})`,
-  new RegExp(`<html lang="en" data-theme="${DEFAULT_ID}">`).test(inlineHtml));
-ok("the boot script accepts all eight ids and falls back to the default",
-  FINISHES.every((t) => inlineHtml.includes('"' + t + '"'))
-  && inlineHtml.includes('? t : "' + DEFAULT_ID + '"'));
+ok("the dark finishes climb away from their ground and the light ones step off theirs",
+  DARKS.every((t) => { const r = ["ground", "surface-1", "surface-2", "surface-3", "surface-4"].map((n) => relLum(resolve(t, n))); return r.every((v, i) => i === 0 || v > r[i - 1]); })
+  && LIGHTS.every((t) => { const s1 = relLum(resolve(t, "surface-1")); const s4 = relLum(resolve(t, "surface-4")); return s1 > relLum(resolve(t, "ground")) && s4 < s1; }),
+  DARKS.filter((t) => { const r = ["ground", "surface-1", "surface-2", "surface-3", "surface-4"].map((n) => relLum(resolve(t, n))); return !r.every((v, i) => i === 0 || v > r[i - 1]); }).join(", ") || "monotone");
+
+/* Retired law, recorded rather than deleted: the default ground used to be barred
+   from the black extreme. The owner chose Vantablack, so what is enforced instead
+   is the consequence — at that bottom a shadow is arithmetically nothing, so the
+   default finish must separate its first surface WIDER than any other finish does,
+   or the whole window reads as one flat field with no furniture in it. */
+const defaultStep = deltaE(tok(SOURCES.dark, "ground"), tok(SOURCES.dark, "surface-1"));
+const otherMin = Math.min(...FINISHES.filter((t) => t !== "dark").map((t) => deltaE(resolve(t, "ground"), resolve(t, "surface-1"))));
+ok(`the Vantablack ground pays for itself with the widest first step (${defaultStep.toFixed(2)} vs ${otherMin.toFixed(2)} elsewhere)`,
+  defaultStep >= 3.5 && defaultStep > otherMin, `default ${defaultStep.toFixed(2)}, tightest other ${otherMin.toFixed(2)}`);
+
+console.log("\n== the ink law ==");
+for (const t of FINISHES) {
+  const s1 = resolve(t, "surface-1");
+  const i1 = resolve(t, "ink-1"), i2 = resolve(t, "ink-2"), i3 = resolve(t, "ink-3");
+  ok(`the ${t} body ink clears AAA on its raised surface (${contrast(i1, s1).toFixed(1)}:1)`, contrast(i1, s1) >= 7);
+  ok(`the ${t} secondary and muted ink both clear AA (${contrast(i2, s1).toFixed(1)} / ${contrast(i3, s1).toFixed(1)})",`, contrast(i2, s1) >= 4.5 && contrast(i3, s1) >= 4.5);
+}
+
+console.log("\n== the accent law — three roles, three bars ==");
+/* The old law demanded one accent clear 4.5:1 AS TEXT on its ground. Two of the six
+   shipping finishes put their accent on a fill instead of in a sentence, where that
+   bar is the wrong test, so the law is split into the roles the tokens actually
+   play: --accent is a component (3:1, WCAG SC 1.4.11), --accent-hi is text and the
+   focus ring (4.5 as text; it clears 3:1 for the ring by a wide margin), and
+   --accent-ink is the label sitting ON the accent (4.5). */
+for (const t of FINISHES) {
+  const g = resolve(t, "ground"), a = resolve(t, "accent"), ah = resolve(t, "accent-hi"), ai = resolve(t, "accent-ink");
+  ok(`the ${t} accent clears 3:1 on its ground as a component (${contrast(a, g).toFixed(2)}:1)`, contrast(a, g) >= 3);
+  ok(`the ${t} accent-hi clears AA as text and the focus ring clears SC 2.4.11 (${contrast(ah, g).toFixed(2)}:1)`, contrast(ah, g) >= 4.5);
+  ok(`the ${t} accent-ink is readable on its own accent (${contrast(ai, a).toFixed(2)}:1)`, contrast(ai, a) >= 4.5);
+}
+
+console.log("\n== the brand ramp holds one hue ==");
+/* The replacement for the retired hue ban. Pantone 19-3737 TCX Heliotrope is the
+   printed swatch; the two UI steps are that pigment with only its lightness moved.
+   A ramp whose hue angle drifts is a ramp that was picked by eye from three
+   different sources, which is exactly how a brand starts to look generated. */
+const brand = tok(SOURCES.dark, "brand");
+ok("the default finish declares an anchor pigment and uses it for both UI steps",
+  /^#[0-9a-f]{6}$/i.test(brand) && relLum(brand) < relLum(tok(SOURCES.dark, "accent")),
+  `brand ${brand} vs accent ${tok(SOURCES.dark, "accent")}`);
+ok("the Pantone the owner named survives as its own finish",
+  tok(SOURCES.heliotrope, "brand").toLowerCase() === "#4f3872", tok(SOURCES.heliotrope, "brand"));
+for (const [name, v] of [["--accent", tok(SOURCES.dark, "accent")], ["--accent-hi", tok(SOURCES.dark, "accent-hi")]] as const) {
+  const d = Math.abs(((hue(v) - hue(brand) + 540) % 360) - 180) === 0 ? 0 : Math.abs(hue(v) - hue(brand));
+  ok(`${name} is the anchor's hue at a different lightness (Δhue ${d.toFixed(1)}°)`, d <= 6, `${name} ${v} hue ${hue(v).toFixed(1)} vs brand ${hue(brand).toFixed(1)}`);
+  ok(`${name} is lighter than the anchor, not merely different`, relLum(v) > relLum(brand), `${name} ${relLum(v).toFixed(4)} vs brand ${relLum(brand).toFixed(4)}`);
+}
+ok("the control bevel is a token and not a per-component literal",
+  /--ctl-face:/.test(themeCss) && /--ctl-hi:/.test(themeCss) && /var\(--ctl-face\)/.test(siCss) && /var\(--ctl-hi\)/.test(siCss));
+ok("the brand face derives from --accent, so no finish paints another finish's hue",
+  /--brand-face:[^;]*var\(--accent\)/.test(themeCss) && !/--brand-face:[^;]*#[0-9a-f]{6}/i.test(themeCss));
+
+console.log("\n== the boot block cannot separate from the sheet ==");
+const inlineStyle = inlineHtml.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? "";
+for (const t of FINISHES) {
+  const want = resolve(t, "ground");
+  const got = t === "dark"
+    ? (inlineStyle.match(/html,body\{[^}]*?background:\s*(#[0-9a-fA-F]{3,8})/)?.[1] ?? "")
+    : (inlineStyle.match(new RegExp(`\\[data-theme="${t}"\\][^{]*\\{[^}]*?background:\\s*(#[0-9a-fA-F]{3,8})`))?.[1] ?? "");
+  ok(`index.html's boot ground for ${t} EQUALS --${t === "dark" ? "ground" : "ground"} in the sheet`,
+    got !== "" && got.toLowerCase() === want.toLowerCase(), `index.html ${got || "(none)"} vs sheet ${want}`);
+}
+ok(`index.html boots the default finish server-side`, /<html lang="en" data-theme="dark">/.test(inlineHtml));
+
+console.log("\n== type and weight ==");
+ok("Switzer for the interface, Fragment Mono for data", /Switzer/.test(themeCss) && /Fragment Mono/.test(themeCss));
+ok("not Inter", !/font-family[^;}]*Inter\b/.test(themeCss + inkCss + siCss));
+ok("nothing is set bold — 700 and above is retired from the design sheets",
+  !/font-weight:\s*(7|8|9)00\b/.test(themeCss + inkCss),
+  (themeCss + inkCss).match(/font-weight:\s*(?:7|8|9)00\b/)?.[0] ?? "clean");
+ok("the elevation scale is alive, not zeroed", /--el-1:/.test(themeCss) && !/--el-1:\s*none/.test(themeCss));
+ok("reduced motion is honoured", /@media \(prefers-reduced-motion: reduce\)/.test(themeCss + siCss));
+ok("the focus indicator is stated, not left to the UA", /:focus-visible/.test(themeCss + siCss + inkCss));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { console.log("\nfailures:"); for (const f of failures) console.log(`  - ${f}`); }

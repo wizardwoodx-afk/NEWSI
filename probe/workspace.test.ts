@@ -218,8 +218,14 @@ async function main(): Promise<void> {
       !!planned.office && planned.office.desks.length > 0
       && planned.office.desks.every((d) => typeof d.consul === "string" && d.consul.startsWith(`${TITLES.consul} of `) && d.consulId.startsWith("captain."))
       && JSON.parse(responseCanonical({ ...planned, provenanceDigest: "" })).office.desks.every((d: { consul?: string }) => !!d.consul));
-    ok("the plan names 11WORKSPACE in words",
-      planned.reply.includes("11WORKSPACE") && planned.reply.includes("Autonomous"));
+    /* Re-anchored 2026-10-08. This used to require the reply to contain the literal
+       "Autonomous" — one of two tokens from a sentence the owner had taken out of
+       the answer bubble because it read as "floor 3/25 sub-agents of 1500 · 60
+       domain specialists (Adept+HR) across 30 desks". The PROPERTY worth pinning is
+       that a plan says which workspace ran and that the crew was not user-picked;
+       the words it said it in were a proxy. */
+    ok("the plan names 11WORKSPACE in words and says who picked the crew",
+      planned.reply.includes("11WORKSPACE") && /you did not pick the team/i.test(planned.reply));
     ok("the office rides inside the provenance digest",
       JSON.parse(responseCanonical({ ...planned, provenanceDigest: "" })).office?.name === "11WORKSPACE");
     ok("the filesystem workspace seam is a different field",

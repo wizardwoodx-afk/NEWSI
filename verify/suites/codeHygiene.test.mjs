@@ -79,7 +79,11 @@ var csp = String(tauriConf?.app?.security?.csp ?? "");
 ok("hygiene 8 \u2014 desktop CSP is set", csp.length > 0 && csp.includes("default-src 'self'"));
 ok(
   "hygiene 9 \u2014 script-src allows only 'self' (no unsafe-inline / unsafe-eval)",
-  csp.includes("script-src 'self'") && !csp.includes("unsafe-eval") && !/script-src[^;]*unsafe-inline/.test(csp)
+  csp.includes("script-src 'self'") && !/'unsafe-eval'/.test(csp) && !/script-src[^;]*unsafe-inline/.test(csp)
+);
+ok(
+  "hygiene 9b \u2014 the narrow wasm source is present because the OCR worker needs it",
+  csp.includes("'wasm-unsafe-eval'")
 );
 ok(
   "hygiene 10 \u2014 CSP connect-src keeps the local services (IPC + local LLM/SearXNG)",
